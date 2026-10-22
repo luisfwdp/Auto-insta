@@ -1,4 +1,4 @@
-# Tarefa Codex — F1: design tokens e componentes base Auto Insta
+# Tarefa Codex — F1: design tokens e componentes base CRIA PING
 
 > Responsável principal: **Codex**. Revisão: Claude Code. Regras gerais em `AGENTS.md`.
 > Roda em paralelo com o MVP, sem afetar produção: tudo atrás da flag `newDesign`
@@ -7,8 +7,10 @@
 ## Contexto
 
 - PRD §3 (design system) e roadmap F1: `docs/AUTO_INSTA_PRD.md`, `docs/ROADMAP.md`.
-- Identidade: preto `#090909`, verde-limão `#CAFF18` (texto sobre ele sempre `#090909`),
-  grafite `#202020`, branco `#F5F5F5`. Tema escuro como padrão, claro opcional, contraste
+- Marca: **CRIA PING — by Creator Lab Connect**, slogan "Automação inteligente para criadores".
+  O que renomear e o que manter interno: `docs/CRIAPING_REBRAND.md` (PR #14).
+- Identidade: preto `#0B0B0B`, verde-limão `#C7FF2F` (texto sobre ele sempre `#0B0B0B`),
+  grafite `#1A1A1A`, branco `#F5F5F5`. Tema escuro como padrão, claro opcional, contraste
   WCAG AA.
 
 ## Escopo (PRs pequenos, nesta ordem)
@@ -18,7 +20,7 @@
    servidor com `isFeatureEnabled("newDesign")`. Sem a flag, o visual atual não muda.
 2. `feat/f1-ui-primitives`: `components/ui/` com Button, Input/Textarea/Select, Card, Badge,
    Dialog, Toast, EmptyState, Skeleton e DataTable (PRD §3.3). Sem dependências novas.
-3. `feat/f1-app-shell`: sidebar, topbar e navegação inferior no mobile com o logo Auto Insta,
+3. `feat/f1-app-shell`: sidebar, topbar e navegação inferior no mobile com o logo CRIA PING,
    também atrás da flag.
 
 ## Regras
@@ -33,5 +35,5 @@
 
 ## Pronto quando
 
-Com `FEATURE_FLAGS=newDesign` no Preview, painel e login aparecem com a identidade Auto Insta;
+Com `FEATURE_FLAGS=newDesign` no Preview, painel e login aparecem com a identidade CRIA PING;
 sem a flag, a produção fica idêntica à atual.
