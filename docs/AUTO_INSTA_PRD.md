@@ -479,12 +479,18 @@ helpers em `lib/workspace-access.ts` são o único ponto de entrada.
 - 100% das strings do painel em pt-BR (teste de catálogo + verificação de chaves sem tradução).
 - Lighthouse mobile ≥ 90 em Painel e Campanhas; WCAG AA.
 
-## 8. Decisões em aberto (para o responsável pelo produto)
+## 8. Decisões do produto (aprovadas em 2026-10-22)
 
-1. **Zernio:** manter como provedor opcional escondido em "Integrações avançadas" (recomendado:
-   preserva compatibilidade e é código já testado) ou remover? Remover os links de patrocínio
-   da UI do Auto Insta é independente dessa decisão.
-2. **Upstream:** continuar puxando correções do OpenReply? Se sim, o rebrand deve tocar o mínimo
-   possível de arquivos do worker e manter nomes internos (pacote, enums) para reduzir conflitos.
-3. **Idiomas:** manter en/zh-TW como opcionais (recomendado, custo baixo) ou remover?
-4. **Páginas públicas de SEO** (`manychat-alternative`, etc.): reescrever em pt-BR ou remover?
+1. **Zernio:** permanece como integração opcional em Configurações → "Integrações avançadas".
+   Banners, links de patrocínio e recomendações comerciais saem da interface. A API oficial da
+   Meta é a opção principal e o fluxo padrão de conexão.
+2. **Upstream OpenReply:** manter a capacidade de incorporar correções do projeto original.
+   Não renomear arquivos, enums, modelos Prisma, nome do pacote ou estruturas internas sem
+   necessidade; o rebrand fica na camada visível (textos, marca, metadados). Licença MIT e
+   créditos preservados.
+3. **Idiomas:** pt-BR é o padrão em toda a plataforma, incluindo telas, e-mails de login e
+   páginas públicas. Inglês e chinês tradicional permanecem como idiomas opcionais.
+4. **SEO e páginas públicas:** reescritas para a identidade Auto Insta com conteúdo original
+   em português. Páginas promocionais antigas não aproveitadas (ex.: `manychat-alternative`)
+   são removidas, com redirecionamento 301/308 em `next.config.ts` quando houver tráfego ou
+   links externos a preservar.
