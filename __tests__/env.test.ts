@@ -3,6 +3,7 @@ import {
   getEncryptionKeyHex,
   getMetaGraphApiVersion,
   isEmailAllowedToSignIn,
+  isInstanceOperator,
   requireEnv,
 } from "../lib/env";
 
@@ -41,6 +42,25 @@ describe("sign-in allowlist", () => {
     expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(true);
   });
 
+  it("lets nobody in with an empty list when ALLOWED_EMAILS_REQUIRED is true", () => {
+    vi.stubEnv("ALLOWED_EMAILS_REQUIRED", "true");
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(false);
+    vi.stubEnv("ALLOWED_EMAILS", " , ");
+    expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(false);
+    vi.stubEnv("ALLOWED_EMAILS", "owner@example.com");
+    expect(isEmailAllowedToSignIn("owner@example.com")).toBe(true);
+    expect(isEmailAllowedToSignIn("stranger@example.com")).toBe(false);
+  });
+
+  it("keeps the open default unless ALLOWED_EMAILS_REQUIRED is exactly true", () => {
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    vi.stubEnv("ALLOWED_EMAILS_REQUIRED", "false");
+    expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(true);
+    vi.stubEnv("ALLOWED_EMAILS_REQUIRED", " TRUE ");
+    expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(false);
+  });
+
   it("only allows listed addresses once ALLOWED_EMAILS is set", () => {
     vi.stubEnv("ALLOWED_EMAILS", "owner@example.com,team@example.com");
     expect(isEmailAllowedToSignIn("owner@example.com")).toBe(true);
@@ -58,5 +78,21 @@ describe("sign-in allowlist", () => {
     expect(isEmailAllowedToSignIn(null)).toBe(false);
     expect(isEmailAllowedToSignIn(undefined)).toBe(false);
     expect(isEmailAllowedToSignIn("")).toBe(false);
+  });
+
+  it("treats nobody as an instance operator while OPERATOR_EMAILS is empty", () => {
+    vi.stubEnv("OPERATOR_EMAILS", "");
+    expect(isInstanceOperator("anyone@example.com")).toBe(false);
+    vi.stubEnv("OPERATOR_EMAILS", " , ,");
+    expect(isInstanceOperator("anyone@example.com")).toBe(false);
+    expect(isInstanceOperator(null)).toBe(false);
+  });
+
+  it("treats only listed addresses as operators, ignoring case and spaces", () => {
+    vi.stubEnv("OPERATOR_EMAILS", " Ops@Example.com ,second@example.com");
+    expect(isInstanceOperator("ops@example.com")).toBe(true);
+    expect(isInstanceOperator("SECOND@example.com")).toBe(true);
+    expect(isInstanceOperator("client@example.com")).toBe(false);
+    expect(isInstanceOperator(null)).toBe(false);
   });
 });

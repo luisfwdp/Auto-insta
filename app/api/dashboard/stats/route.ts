@@ -27,9 +27,17 @@ export async function GET(request: NextRequest) {
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const requestedInstagramAccountId =
     request.nextUrl.searchParams.get("instagramAccountId");
+  // Only an account of this workspace can be selected. An unknown id (another
+  // workspace's, or one disconnected since the browser remembered it) falls
+  // back to all accounts rather than being echoed back as the selection.
   const selectedAccountId =
     requestedInstagramAccountId && requestedInstagramAccountId !== "all"
-      ? requestedInstagramAccountId
+      ? (
+          await prisma.instagramAccount.findFirst({
+            where: { id: requestedInstagramAccountId, workspaceId },
+            select: { id: true },
+          })
+        )?.id ?? null
       : null;
   const accountFilter = selectedAccountId
     ? { instagramAccountId: selectedAccountId }
