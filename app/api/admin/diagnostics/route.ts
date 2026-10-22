@@ -1,19 +1,39 @@
 import { NextResponse } from "next/server";
-import { getCurrentWorkspaceId } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
+import { isInstanceOperator } from "@/lib/env";
+import {
+  canManageWorkspace,
+  getCurrentWorkspaceContext,
+} from "@/lib/workspace-access";
 import { getDMQueue } from "@/lib/queue/client";
 import { getWorkerAlerts, getWorkerHealth } from "@/lib/ops/worker-health";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  const workspaceId = await getCurrentWorkspaceId();
-  if (!workspaceId) {
+  const context = await getCurrentWorkspaceContext();
+  if (!context) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
     );
   }
+  if (!canManageWorkspace(context.role)) {
+    return NextResponse.json(
+      { success: false, error: "Only owners and admins can view diagnostics" },
+      { status: 403 }
+    );
+  }
+  const workspaceId = context.workspaceId;
+
+  // Worker alerts and events with no workspace belong to the whole instance and
+  // can name other workspaces' accounts and comments, so only the people who
+  // run the instance see them.
+  const user = await prisma.user.findUnique({
+    where: { id: context.userId },
+    select: { email: true },
+  });
+  const seesInstanceEvents = isInstanceOperator(user?.email);
 
   const [
     queueCounts,
@@ -26,7 +46,7 @@ export async function GET() {
   ] = await Promise.all([
     getDMQueue().getJobCounts("waiting", "active", "delayed", "failed"),
     getWorkerHealth(),
-    getWorkerAlerts(10),
+    seesInstanceEvents ? getWorkerAlerts(10) : Promise.resolve([]),
     prisma.webhookEvent.findMany({
       where: { workspaceId, status: "FAILED" },
       orderBy: { createdAt: "desc" },
@@ -76,7 +96,9 @@ export async function GET() {
     }),
     prisma.operationalEvent.findMany({
       where: {
-        OR: [{ workspaceId }, { workspaceId: null }],
+        OR: seesInstanceEvents
+          ? [{ workspaceId }, { workspaceId: null }]
+          : [{ workspaceId }],
       },
       orderBy: { createdAt: "desc" },
       take: 20,

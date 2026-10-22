@@ -16,7 +16,7 @@ Since everything runs on the same Dokploy server, you don't need the "public vs 
 
 ## Gotcha #1 — Node version
 
-The repo doesn't pin a Node version, so Nixpacks (Dokploy's default build system) will default to an old version — too old for this project's dependencies (Prisma 7 and Next.js 16 both require Node 20.19+, 22.12+, or 24+).
+`package.json` pins Node 24 through `engines`, the same version CI and the Docker image use. Nixpacks (Dokploy's default build system) reads that field, but an older Nixpacks may not have Node 24 at all, and without a pin it falls back to a version too old for this project (Prisma 7 and Next.js 16 both require Node 20.19+, 22.12+, or 24+).
 
 Depending on which Nixpacks version your Dokploy instance ships, you may also find:
 - Requesting Node 22 via `NIXPACKS_NODE_VERSION=22` resolves to a patch (e.g. 22.11.0) just below Prisma's 22.12 minimum
@@ -61,7 +61,7 @@ This is the one most likely to trip people up: **`prisma migrate deploy` cannot 
 Error: P1001: Can't reach database server at `<db-service-name>:5432`
 ```
 
-if you try to run migrations as part of the build (e.g. via the `vercel-build` script, which bundles `prisma generate && prisma migrate deploy && next build` together). The fix is the build/start command split shown above — `prisma generate` and `next build` happen at build time (no DB needed), while `prisma migrate deploy` runs in the start command, once the container is actually live and on the network.
+if you try to run migrations as part of the Docker build (e.g. a custom build command that adds `prisma migrate deploy`). The fix is the build/start command split shown above — `prisma generate` and `next build` happen at build time (no DB needed), while `prisma migrate deploy` runs in the start command, once the container is actually live and on the network.
 
 ## Gotcha #4 — Nothing runs the cron jobs
 
