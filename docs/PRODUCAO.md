@@ -37,6 +37,12 @@ Instagram ──webhook──▶ Vercel (web + API, projeto auto-insta) ──�
 - Os crons da Vercel só rodam em Production.
 - Se não houver staging, deixe o Preview sem `DATABASE_URL`: o build passa (o PR #4 tirou as
   migrações do build) e o preview serve para revisar páginas estáticas e o build.
+- **Proteção da Vercel:** o projeto está com *Vercel Authentication* em todos os deploys exceto
+  domínios próprios. É o certo enquanto o ambiente está incompleto. Mas o domínio de produção
+  precisa ficar público para a Meta (webhook e OAuth), para os links rastreados abertos pelos
+  seguidores e para as páginas de privacidade e termos. Antes de conectar a Meta, escolha:
+  adicionar um domínio próprio à produção (excluído da proteção), ou mudar a proteção para
+  *Standard Protection* (só previews). O painel continua fechado pelo `ALLOWED_EMAILS`.
 
 ## 3. Checklist de variáveis de produção
 
@@ -78,6 +84,25 @@ ponto no tempo no plano escolhido).
 - Valide em staging que o modo de pooler escolhido funciona com `@prisma/adapter-pg` antes de
   produção.
 - `sslmode=require` na URL.
+
+### Supabase (projeto `auto-insta`, `sa-east-1`, plano gratuito)
+
+- **Desligar a Data API antes das migrações** (Project Settings → Data API). O Supabase expõe o
+  schema `public` por REST com a chave `anon`, que é pública. As tabelas do Prisma ficam em
+  `public` sem RLS, então e-mails, logs e tokens cifrados ficariam legíveis por qualquer um com
+  a URL do projeto. O Auto Insta não usa a Data API, só a conexão Postgres. Depois das
+  migrações, rode o *Security Advisor* do Supabase e confirme que não sobra alerta de tabela
+  exposta. Se precisar manter a Data API, habilite RLS em todas as tabelas (sem políticas: o
+  Prisma conecta como `postgres`, que ignora RLS).
+- **Conexões:** a conexão direta (`db.<ref>.supabase.co`) só tem IPv6 no plano gratuito, e a
+  Vercel não conecta em IPv6. Use o pooler (Supabase → *Connect*):
+  - Vercel: *Transaction pooler* (porta 6543), com `DB_POOL_MAX` baixo (1 ou 2);
+  - worker na Fly e migrações: *Session pooler* (porta 5432).
+  Valide no primeiro deploy que o modo transação funciona com `@prisma/adapter-pg`. Se der erro
+  de *prepared statement*, use o pooler de sessão também na Vercel.
+- **Plano gratuito:** sem backup baixável e com pausa do projeto após um período sem atividade.
+  O worker conectado mantém atividade, mas acompanhe. Antes de migrações com dados reais, faça
+  `pg_dump` da URL de sessão. Subir de plano depende de aprovação de custo.
 
 ### Procedimento de migração (exige aprovação)
 
