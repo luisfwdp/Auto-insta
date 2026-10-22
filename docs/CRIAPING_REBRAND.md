@@ -24,7 +24,7 @@
 | `app/page.tsx` (landing, 21 ocorrências), `lib/seo-pages.ts` (7), páginas SEO | OpenReply / "ManyChat alternative" | Reescrever (decisão já aprovada) | Codex |
 | `app/privacy`, `app/terms`, `app/data-deletion` | OpenReply (5–6 ocorrências) | CRIA PING + controlador dos dados (Creator Lab Connect). **Revisão jurídica sua**: a Meta exige essas páginas no app review | Claude (rascunho) |
 | `lib/feature-flags.ts:22` (comentário) | "Auto Insta visual design system" | "CRIA PING" | Claude |
-| `fly.toml:1` (comentário) | "Auto Insta worker" | "CRIA PING worker" | Claude |
+| `fly.toml:1` (comentário) | "Auto Insta worker" | "CRIA PING worker" (feito no #16) | Claude |
 | Docs (`docs/*.md`) | OpenReply / Auto Insta | Atualizar aos poucos, mantendo "baseado no OpenReply" | Claude |
 
 ## Manter (interno ou com dependência externa)
@@ -41,7 +41,7 @@
 | `prisma/schema.prisma`, migrações, nomes de fila BullMQ | — | Renomear exige migração e drenar filas |
 | `docker-compose.yml`, `.github/workflows/ci.yml` (`openreply`, `openreply_ci`) | Bancos locais/CI | Descartáveis; sem ganho |
 | `.github/workflows/docker-publish.yml` `IMAGE_NAME: openreply` | Imagem Docker Hub | Trocar só se você publicar uma imagem própria |
-| `fly.toml` `app = "auto-insta-worker"` | Nome do app no Fly | Ainda não existe; dá para criar já como `criaping-worker`. **Decisão sua antes do primeiro deploy** |
+| `fly.toml` `app` | Nome do app no Fly | Renomeado para `criaping-worker` no PR #16, antes de existir no Fly |
 | Projeto Vercel `auto-insta`, projeto Supabase `auto-insta`, repositório `Auto-insta` | Recursos externos | Não renomear automaticamente. O nome do projeto não aparece para o usuário com domínio próprio |
 
 ## Domínio
