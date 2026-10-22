@@ -3,7 +3,34 @@
 > Complementa o [PRD](AUTO_INSTA_PRD.md). IDs entre colchetes (MC-1, CP-3…) remetem aos
 > requisitos do PRD. Cada fase entrega valor sozinha, deixa `main` verde e pode ser lançada.
 
-## Visão geral
+## Prioridade atual: trilha MVP (desenvolvimento contínuo, produção antecipada)
+
+Decisão de 2026-10-22: colocar um MVP operacional em produção **antes** das fases F1–F9,
+com o código atual do OpenReply (já funcional) e uma única conta real. As fases continuam
+valendo e passam a entrar em produção atrás de feature flags (`docs/feature-flags.md`).
+Operação e rollback em `docs/PRODUCAO.md`.
+
+| Etapa | Entrega | PRs | Gate para avançar |
+| --- | --- | --- | --- |
+| **M0 — Base segura** | build sem migração, CI com banco, testes de isolamento, flags, convenções, guia de produção | #4, #3, #5, #6, #1, #2, #7 | CI verde na `main`; nenhum vazamento entre workspaces |
+| **M1 — Infra de produção** | Postgres e Redis gerenciados, worker fora da Railway, variáveis por ambiente, `ALLOWED_EMAILS` | configuração (sem código) | `/api/health` ok com `worker.healthy`; login restrito testado |
+| **M2 — Migrações em produção** | `db:migrate` com backup | — | **aprovação específica** do responsável |
+| **M3 — Primeira conta** | 1 conta profissional; roteiro de 7 etapas do `docs/PRODUCAO.md` §8 | — | **aprovação específica** antes de cada envio real; todas as etapas `SENT` |
+| **M4 — Endurecimento pós-MVP** | achados da auditoria de isolamento (validar conta selecionada nas estatísticas; Diagnóstico só para ADMIN+), modo somente convite [SG-3], rate limit [SG-4], auditoria [SG-2] | PRs pequenos de F3 | — |
+| **M5 — Fases do roadmap atrás de flags** | F1 (`newDesign`), F2 (`workspaceSwitcher`), F4… | conforme a sequência abaixo | cada flag liga primeiro no Preview, depois em produção |
+
+Ordem de merge da M0 (cada PR é independente; a ordem minimiza retrabalho):
+
+1. **#4** `fix/deploy-separate-migrations`: destrava o deploy da Vercel.
+2. **#3** `chore/f0-ci-db-tests`: liga o job "Database checks".
+3. **#5** `test/f0-workspace-isolation`: passa a rodar no job do #3 (atualizar o branch com a `main` antes).
+4. **#6** `feat/f0-feature-flags`.
+5. **#1** `docs/f0-prd-roadmap` → **#2** `chore/f0-collab-conventions` (links do #2 apontam para o #1) → **#7** `docs/f0-production-runbook`.
+
+Regras durante a trilha MVP: produção sem `FEATURE_FLAGS`; nada de mudança no motor de DMs
+sem revisão específica; rollback documentado em todo PR.
+
+## Visão geral das fases
 
 | Fase | Tema | Resultado visível | Depende de |
 | --- | --- | --- | --- |
@@ -148,6 +175,9 @@ Fluxo por funcionalidade de ponta a ponta: **Claude** abre o PR de schema + API 
 (contrato), e só depois de mesclado o **Codex** abre o PR de UI consumindo o contrato.
 
 ### Sequência de PRs planejada
+
+A coluna `#` é a ordem planejada, não o número do PR no GitHub. Os PRs reais da trilha MVP
+(#4 a #7) estão na tabela da seção "Prioridade atual".
 
 | # | Branch | Dono | Conteúdo | Depende de |
 | --- | --- | --- | --- | --- |
