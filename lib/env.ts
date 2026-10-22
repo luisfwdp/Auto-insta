@@ -82,6 +82,10 @@ export async function isPublicDemoHost(): Promise<boolean> {
  * account gets its own workspace. ALLOWED_EMAILS closes it to a comma-separated
  * list of addresses. Left unset, sign-in behaves exactly as before, so an
  * existing deployment is unaffected.
+ *
+ * ALLOWED_EMAILS_REQUIRED=true makes the allowlist fail closed: an empty or
+ * missing ALLOWED_EMAILS then lets nobody in, so a deployment whose list was
+ * forgotten or wiped is locked instead of open to anyone.
  */
 export function isEmailAllowedToSignIn(
   email: string | null | undefined
@@ -91,7 +95,9 @@ export function isEmailAllowedToSignIn(
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
 
-  if (allowed.length === 0) return true;
+  if (allowed.length === 0) {
+    return process.env.ALLOWED_EMAILS_REQUIRED?.trim().toLowerCase() !== "true";
+  }
   if (!email) return false;
   return allowed.includes(email.toLowerCase());
 }

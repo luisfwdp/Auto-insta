@@ -41,6 +41,25 @@ describe("sign-in allowlist", () => {
     expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(true);
   });
 
+  it("lets nobody in with an empty list when ALLOWED_EMAILS_REQUIRED is true", () => {
+    vi.stubEnv("ALLOWED_EMAILS_REQUIRED", "true");
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(false);
+    vi.stubEnv("ALLOWED_EMAILS", " , ");
+    expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(false);
+    vi.stubEnv("ALLOWED_EMAILS", "owner@example.com");
+    expect(isEmailAllowedToSignIn("owner@example.com")).toBe(true);
+    expect(isEmailAllowedToSignIn("stranger@example.com")).toBe(false);
+  });
+
+  it("keeps the open default unless ALLOWED_EMAILS_REQUIRED is exactly true", () => {
+    vi.stubEnv("ALLOWED_EMAILS", "");
+    vi.stubEnv("ALLOWED_EMAILS_REQUIRED", "false");
+    expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(true);
+    vi.stubEnv("ALLOWED_EMAILS_REQUIRED", " TRUE ");
+    expect(isEmailAllowedToSignIn("anyone@example.com")).toBe(false);
+  });
+
   it("only allows listed addresses once ALLOWED_EMAILS is set", () => {
     vi.stubEnv("ALLOWED_EMAILS", "owner@example.com,team@example.com");
     expect(isEmailAllowedToSignIn("owner@example.com")).toBe(true);
