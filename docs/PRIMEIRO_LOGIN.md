@@ -16,29 +16,61 @@ O CRIA PING usa só a conexão Postgres; a Data API não é usada.
 
 1. Supabase → projeto **auto-insta** → **Project Settings → Data API** (em painéis mais novos: **Integrations → Data API → Settings**) → desligar **Enable Data API** → Save.
 2. Avisar o Claude. Ele repete a sondagem: a resposta `PGRST205` precisa deixar de aparecer.
-3. Na janela das migrações (Etapa 2), o Claude também revoga os privilégios padrão de `anon`/`authenticated` no schema `public`. É uma segunda camada caso a Data API seja religada por engano.
+3. Na migração (Etapa 2), o workflow também revoga os privilégios de `anon`/`authenticated` no schema `public`. É uma segunda camada caso a Data API seja religada por engano.
 
 ### 1.2 Senha do banco e URLs do pooler
 
 1. **Project Settings → Database → Reset database password**. Gere a senha no próprio painel e guarde no seu gerenciador de senhas.
 2. Botão **Connect** (topo do projeto) → **Connection string** → copiar:
-   - **Transaction pooler** (porta **6543**): vai para a Vercel e para o segredo `DATABASE_URL_POOLER`.
+   - **Transaction pooler** (porta **6543**): vai para a Vercel (`DATABASE_URL`) e para o segredo `DATABASE_URL_POOLER`.
    - **Session pooler** (porta **5432**): vai para o worker no Fly e para o segredo `DATABASE_URL_SESSION`.
    - O usuário das duas deve ser `postgres.qgojitqdpyzprapqazvi`. Se aparecer outro ref, você está no projeto errado (o `onde-tem-pagode` é `pixioansxkrlkmuleeip`).
 
-### 1.3 Validar o pooler com `npm run db:check`
+### 1.3 Ambiente protegido `production-database` no GitHub
 
-Sem colar URL no chat, use o workflow manual **Production database** (`.github/workflows/production-database.yml`, deste PR):
+O workflow **Production database** (`.github/workflows/production-database.yml`) só lê as URLs do banco desse ambiente. O job `guard` recusa rodar se a proteção abaixo não estiver ativa.
 
 1. GitHub → repositório → **Settings → Environments → New environment** → nome `production-database`.
-2. Nesse ambiente:
-   - **Required reviewers**: marque você. Toda execução espera o seu clique.
-   - **Deployment branches and tags** → *Selected branches* → `main`.
-   - **Environment secrets → Add secret**: `DATABASE_URL_POOLER` (6543) e `DATABASE_URL_SESSION` (5432).
-3. Depois do merge deste PR: **Actions → Production database → Run workflow → action: `check`**, e aprove a execução.
-4. O resultado esperado é `All checks passed.` no passo *Pooler compatibility*. O passo *Migration status before* mostra as 24 migrações pendentes; isso é normal agora.
+2. **Required reviewers**: adicione você. Deixe **Prevent self-review** desmarcado, senão você não consegue aprovar a própria execução.
+3. **Deployment branches and tags** → **Selected branches and tags** → **Add deployment branch or tag rule** → `main` (só ela).
+4. **Environment secrets → Add environment secret**:
+   - `DATABASE_URL_POOLER`: Transaction pooler, porta 6543;
+   - `DATABASE_URL_SESSION`: Session pooler, porta 5432.
+5. **Environment variables → Add environment variable**. Nenhum dos dois é segredo:
+   - `EXPECTED_PROJECT_REF` = `qgojitqdpyzprapqazvi`;
+   - `SUPABASE_PUBLISHABLE_KEY` = a chave *publishable* em **Project Settings → API Keys**. É pública; serve só para sondar a Data API.
 
-Alternativa local, se preferir: `DATABASE_URL='<transaction pooler>' npm run db:check` no seu terminal. Tudo é somente leitura.
+### 1.3.1 Validar o pooler (somente leitura)
+
+Depois do merge do PR #16: **Actions → Production database → Run workflow** → branch `main`, `action: check`, `first_deploy: true` → aprovar quando o GitHub pedir.
+
+Resultado esperado em **Preflight (read-only)**:
+```
+ok   session-pooler belongs to project qgojitqdpyzprapqazvi
+ok   transaction-pooler belongs to project qgojitqdpyzprapqazvi
+ok   Data API disabled (HTTP …)
+ok   connected over session pooler (read-only session)
+ok   database state (empty, 0 relations in public)
+ok   migration history consistent (23 local, 23 pending)
+ok   no privileges for anon/authenticated in public
+All checks passed.
+```
+e, no passo *Pooler compatibility*, `All checks passed.` do `db:check`.
+
+Qualquer `FAIL` encerra a execução com erro. Os casos que separam "pendente" de "falha real":
+
+| Situação | Resultado |
+| --- | --- |
+| Migrações ainda não aplicadas | `ok` (contadas como pendentes) |
+| URL de outro projeto, porta errada, host direto | `FAIL` antes de conectar |
+| Senha errada, rede, pooler fora | `FAIL unexpected error` (texto sem a URL) |
+| Data API respondendo, ou resposta não reconhecida | `FAIL` |
+| `public` com tabelas sem `_prisma_migrations` | `FAIL` (banco errado?) |
+| `public` não vazio com `first_deploy: true` | `FAIL` |
+| Migração que falhou pela metade, que só existe no banco, ou alterada depois de aplicada | `FAIL` |
+| Privilégios de `anon`/`authenticated` | aviso no `check`; `FAIL` no `verify` |
+
+Alternativa local, sem GitHub: `DATABASE_URL='<transaction pooler>' npm run db:check` no seu terminal.
 
 ### 1.4 Variáveis do Auth.js
 
@@ -60,50 +92,71 @@ Onde cadastrar: Vercel → projeto **auto-insta** → **Settings → Environment
 
 O Redis abre a conexão só quando é usado, então `REDIS_URL` não bloqueia o login.
 
-### 1.5 E-mail (Resend recomendado)
+### 1.5 E-mail com Resend
 
-1. resend.com → **Domains → Add Domain** → use um subdomínio de envio (ex.: `mail.seu-dominio`).
-2. Crie no seu DNS os registros que o Resend mostrar (SPF/MX e DKIM). Adicione um DMARC (`_dmarc`, `v=DMARC1; p=none;`). Depois clique em **Verify** até o domínio ficar *Verified*.
-3. **API Keys → Create API Key** → permissão *Sending access*, restrita a esse domínio → copie direto para a Vercel como `RESEND_API_KEY`.
-4. `EMAIL_FROM` = `CRIA PING <login@mail.seu-dominio>`.
+1. resend.com → **Domains → Add Domain** → use um subdomínio de envio do seu domínio (ex.: `mail.seu-dominio`) e a região mais próxima (São Paulo, se houver).
+2. No DNS do domínio, crie exatamente os registros que o Resend mostrar: MX e TXT (SPF) do subdomínio e o TXT do DKIM (`resend._domainkey…`). Recomendado: `_dmarc.seu-dominio` TXT `v=DMARC1; p=none;`.
+3. **Verify DNS Records** até o domínio aparecer como **Verified**. Pode levar de minutos a horas.
+4. **API Keys → Create API Key** → *Sending access* → *Domain*: só esse domínio → copie direto para a Vercel como `RESEND_API_KEY` (Sensitive). Não cole no chat.
+5. `EMAIL_FROM` = `CRIA PING <login@mail.seu-dominio>`. O endereço precisa ser do domínio verificado.
 
-Atalho só para o primeiro teste: sem domínio verificado, o Resend envia apenas de `onboarding@resend.dev` para o e-mail dono da conta Resend. Funciona para o seu primeiro login, não para convidar outras pessoas.
+Atalho só para o seu primeiro teste: sem domínio, o Resend aceita `EMAIL_FROM=CRIA PING <onboarding@resend.dev>`, mas entrega apenas para o e-mail dono da conta Resend.
 
-SMTP próprio: defina `EMAIL_SERVER=smtp://usuario:senha@host:587` (a Vercel guarda como Sensitive). Com ele, o Resend é ignorado.
+SMTP próprio em vez de Resend: `EMAIL_SERVER=smtp://usuario:senha@host:587` (Sensitive). Com ele definido, o Resend é ignorado.
 
 ### 1.6 Quem entra
 
-- `ALLOWED_EMAILS` = o seu e-mail de login (vários separados por vírgula).
-- `OPERATOR_EMAILS` = o mesmo e-mail. Dá acesso ao diagnóstico da instância inteira.
+- `ALLOWED_EMAILS` = o seu e-mail (vários: separados por vírgula). Com `ALLOWED_EMAILS_REQUIRED=true` já definido, lista vazia = ninguém entra.
+- `OPERATOR_EMAILS` = o seu e-mail. Só ele vê o diagnóstico da instância inteira.
 
-### 1.7 Deploy e validação
+### 1.7 Deploy e testes de login
 
-1. Só depois das migrações (Etapa 2): **Deployments** → último deploy de produção → **⋯ → Redeploy**. Variáveis novas só valem em deploy novo.
-2. Abra `NEXTAUTH_URL/login`. Primeiro aparece a tela da Vercel (proteção Standard; você passa como dono). Depois vem o login do CRIA PING.
-3. Digite o seu e-mail → tela *verify-request* → o e-mail chega (confira em Resend → **Emails**: *Delivered*) → clique no link → painel.
-4. O Claude confere, só com leituras: `User`, `Session` e `Workspace` com 1 linha cada.
-5. Teste negativo: um e-mail fora da lista não pode receber o link.
+Só depois das migrações (Etapa 2):
 
-## Etapa 2 — Plano de migrações (aguarda sua autorização)
+1. Vercel → **Deployments** → último deploy de produção → **⋯ → Redeploy**. Variáveis só valem em deploy novo.
+2. Abra `https://auto-insta-luisfwdp-2259s-projects.vercel.app/login`. Primeiro aparece o login da Vercel (Deployment Protection), e você passa como dono. Depois vem o login do CRIA PING.
+3. **E-mail permitido**: digite o seu e-mail → tela "verifique seu e-mail" → em Resend → **Emails** aparece *Delivered* → clique no link → painel do CRIA PING com o seu workspace.
+4. **E-mail bloqueado**: saia, use um e-mail fora de `ALLOWED_EMAILS` → o Auth.js mostra erro de acesso negado (`AccessDenied`) e **nenhum** e-mail novo aparece no Resend. O callback `signIn` recusa antes de enviar o link.
+5. O Claude confere, só com leituras: 1 linha em `User`, `Session` e `Workspace`, nenhuma para o e-mail bloqueado.
 
-| Passo | O que acontece | Quem |
-| --- | --- | --- |
-| 1. Verificar o destino | Confirmar ref `qgojitqdpyzprapqazvi`, nome `auto-insta`, `public` vazio, sem `_prisma_migrations` (já confirmado em 2026-10-22; repetido no dia) | Claude (leitura via MCP) |
-| 2. Migrations × schema | O job *Database checks* do CI aplica as 24 migrações num Postgres limpo e roda `prisma migrate diff --exit-code` (verde na `main`). Reproduzido localmente hoje | Claude |
-| 3. Ponto de recuperação | O banco está vazio e o plano grátis não tem PITR. O "backup" é o estado vazio registrado no passo 1. Recuperar = remover os objetos criados pela migração, com sua autorização. Depois que houver dados reais, ativar backups (plano pago) entra na decisão de custo | Claude registra |
-| 4. Endurecer privilégios | `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;` (e o mesmo para `SEQUENCES` e `FUNCTIONS`) | Claude (MCP), só com autorização |
-| 5. Pré-checagem | **Actions → Production database → `check`** | Você aprova |
-| 6. Aplicar | **Actions → Production database → `migrate`**: roda `prisma migrate deploy` pelo session pooler | Você aprova |
-| 7. Validar | O workflow roda `prisma migrate status` + `migrate diff --exit-code`. O Claude confere 18 tabelas + `_prisma_migrations` com 24 linhas concluídas, `has_table_privilege('anon', …) = false` nas tabelas, o advisor de segurança e que a Data API continua fechada | Workflow + Claude |
+## Etapa 2 — Migrações (só com sua autorização)
 
-**Parar imediatamente se:**
-- o ref ou o nome do projeto não for o esperado, ou `public` não estiver vazio;
-- a Data API ainda responder;
-- `check` falhar em qualquer passo (não migrar);
-- `migrate deploy` der erro. Nesse caso: não repetir, não usar `migrate reset` nem `--accept-data-loss`, e o Claude lê `_prisma_migrations` e propõe a correção;
-- o advisor apontar tabela exposta.
+**Antes** (tudo verificado pelo job *Preflight*, somente leitura):
+- project ref `qgojitqdpyzprapqazvi` nas duas URLs (o pooler roteia pelo usuário `postgres.<ref>`);
+- Data API desligada (sondagem REST; resposta não reconhecida conta como ligada);
+- `public` vazio (`first_deploy: true`) e histórico de migrações íntegro;
+- pooler compatível (`db:check`).
 
-## Etapa 3 — Infraestrutura de automação (depois do login)
+**Execução**: **Actions → Production database → Run workflow** → `main`, `action: migrate`, `first_deploy: true`. São **duas aprovações**: uma para o *Preflight* (leitura) e outra para o *Migrate* (escrita). O job *Migrate*, na ordem, para no primeiro erro:
+
+1. repete o preflight (o banco pode ter mudado enquanto esperava aprovação);
+2. `db-guard harden`: revoga privilégios padrão de `anon`, `authenticated` e `service_role` **antes**, para que as tabelas já nasçam sem acesso pela API;
+3. `prisma migrate deploy` pelo session pooler;
+4. `db-guard harden` de novo, cobrindo tabelas, sequences e funções já existentes;
+5. `prisma migrate status` (precisa sair 0);
+6. `prisma migrate diff --exit-code` contra `prisma/schema.prisma`;
+7. `db-guard verify`: todas as 23 migrações aplicadas, histórico íntegro, nenhum privilégio de `anon`/`authenticated` em tabelas, sequences, funções e privilégios padrão, e Data API desligada.
+
+O SQL do passo 2 e 4 está em `scripts/sql/supabase-revoke-api-roles.sql`: idempotente, transacional, e recusa rodar se os papéis do Supabase não existirem.
+
+Não há `|| true` nem `continue-on-error` em nenhum passo. Uma execução só termina verde se todas as verificações passarem.
+
+**Critérios de parada**: qualquer `FAIL` do preflight. Se `migrate deploy` falhar no meio:
+- não repita a execução;
+- não use `migrate reset`, `db push` nem `--accept-data-loss`;
+- o Claude lê `_prisma_migrations` (somente leitura) e propõe a correção (`prisma migrate resolve` ou SQL de reversão) para sua aprovação.
+
+**Backup e recuperação no plano Free do Supabase**:
+- o Free **não** oferece backups diários acessíveis nem PITR. Backups diários são do Pro em diante (7 dias), e PITR é um add-on pago;
+- na primeira migração o banco está vazio, então o ponto de recuperação é o próprio estado vazio. Reverter = apagar os objetos criados no schema `public`, com sua aprovação;
+- quando houver dados reais, faça um dump lógico antes de cada migração, no seu computador: `supabase db dump --db-url "$DATABASE_URL_SESSION" -f backup.sql` (e `--data-only` para os dados), e guarde fora do repositório;
+- alternativa paga: Pro, com backups diários.
+
+**Riscos residuais conhecidos**:
+- **Workflow de outra branch**: o `workflow_dispatch` usa o arquivo da branch escolhida, então uma branch alterada poderia remover o `guard`. O que protege de verdade é o ambiente: os segredos só são liberados para `main`, e só depois da sua aprovação.
+- **Leitura da proteção**: o `guard` lê a proteção do ambiente pela API do GitHub. Se a API negar a leitura, a execução falha (fail-closed).
+
+## Etapa 3 — Infraestrutura de automação (depois do login; não configurar ainda)
 
 ### Redis compatível com BullMQ
 
