@@ -82,6 +82,10 @@ export async function isPublicDemoHost(): Promise<boolean> {
  * account gets its own workspace. ALLOWED_EMAILS closes it to a comma-separated
  * list of addresses. Left unset, sign-in behaves exactly as before, so an
  * existing deployment is unaffected.
+ *
+ * ALLOWED_EMAILS_REQUIRED=true makes the allowlist fail closed: an empty or
+ * missing ALLOWED_EMAILS then lets nobody in, so a deployment whose list was
+ * forgotten or wiped is locked instead of open to anyone.
  */
 export function isEmailAllowedToSignIn(
   email: string | null | undefined
@@ -91,9 +95,30 @@ export function isEmailAllowedToSignIn(
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
 
-  if (allowed.length === 0) return true;
+  if (allowed.length === 0) {
+    return process.env.ALLOWED_EMAILS_REQUIRED?.trim().toLowerCase() !== "true";
+  }
   if (!email) return false;
   return allowed.includes(email.toLowerCase());
+}
+
+/**
+ * Whether this person runs the instance itself, as opposed to belonging to one
+ * of its workspaces. Operators see instance-wide diagnostics (worker alerts and
+ * events not tied to a workspace), which can mention other workspaces.
+ *
+ * OPERATOR_EMAILS is a comma-separated, case-insensitive list. Unset or
+ * empty, nobody is an operator: instance-wide events stay hidden from every
+ * workspace, so a missing setting never shows one client another's data.
+ */
+export function isInstanceOperator(email: string | null | undefined): boolean {
+  const operators = (process.env.OPERATOR_EMAILS ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (operators.length === 0 || !email) return false;
+  return operators.includes(email.toLowerCase());
 }
 
 export const serverEnvSchema = z.object({
