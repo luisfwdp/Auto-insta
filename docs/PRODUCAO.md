@@ -1,4 +1,4 @@
-# Produção do Auto Insta — guia de operação
+# Produção do CRIA PING — guia de operação
 
 > Guia para colocar o MVP no ar e mantê-lo estável enquanto Claude Code e Codex continuam
 > desenvolvendo. Complementa `docs/setup.md` (passo a passo da Meta, que continua valendo) e
@@ -57,7 +57,7 @@ Valores ficam só na Vercel e no host do worker, nunca no repositório nem no ch
 | `DATABASE_URL` | ✓ | ✓ | veja seção 5 |
 | `REDIS_URL` | ✓ | ✓ | `rediss://` (TLS), veja seção 6 |
 | `RESEND_API_KEY`, `EMAIL_FROM` | ✓ | | domínio verificado na Resend |
-| `ALLOWED_EMAILS` | ✓ | | **obrigatória no Auto Insta** (seção 4) |
+| `ALLOWED_EMAILS` | ✓ | | **obrigatória no CRIA PING** (seção 4) |
 | `META_GRAPH_API_VERSION`, `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `FACEBOOK_APP_SECRET`, `WEBHOOK_VERIFY_TOKEN` | ✓ | ✓ | app Meta próprio, `docs/setup.md` passos 4 a 8 |
 | `FEATURE_FLAGS` | ✓ | ✓ | **não definir em produção** no MVP |
 | `DB_POOL_MAX` | opcional | opcional | conexões por processo (padrão 3); some web + worker abaixo do limite do banco |
@@ -90,7 +90,7 @@ ponto no tempo no plano escolhido).
 - **Desligar a Data API antes das migrações** (Project Settings → Data API). O Supabase expõe o
   schema `public` por REST com a chave `anon`, que é pública. As tabelas do Prisma ficam em
   `public` sem RLS, então e-mails, logs e tokens cifrados ficariam legíveis por qualquer um com
-  a URL do projeto. O Auto Insta não usa a Data API, só a conexão Postgres. Depois das
+  a URL do projeto. O CRIA PING não usa a Data API, só a conexão Postgres. Depois das
   migrações, rode o *Security Advisor* do Supabase e confirme que não sobra alerta de tabela
   exposta. Se precisar manter a Data API, habilite RLS em todas as tabelas (sem políticas: o
   Prisma conecta como `postgres`, que ignora RLS).
