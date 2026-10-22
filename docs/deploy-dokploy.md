@@ -61,7 +61,7 @@ This is the one most likely to trip people up: **`prisma migrate deploy` cannot 
 Error: P1001: Can't reach database server at `<db-service-name>:5432`
 ```
 
-if you try to run migrations as part of the build (e.g. via the `vercel-build` script, which bundles `prisma generate && prisma migrate deploy && next build` together). The fix is the build/start command split shown above — `prisma generate` and `next build` happen at build time (no DB needed), while `prisma migrate deploy` runs in the start command, once the container is actually live and on the network.
+if you try to run migrations as part of the Docker build (e.g. a custom build command that adds `prisma migrate deploy`). The fix is the build/start command split shown above — `prisma generate` and `next build` happen at build time (no DB needed), while `prisma migrate deploy` runs in the start command, once the container is actually live and on the network.
 
 ## Gotcha #4 — Nothing runs the cron jobs
 

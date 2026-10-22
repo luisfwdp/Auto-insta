@@ -102,6 +102,25 @@ export function isEmailAllowedToSignIn(
   return allowed.includes(email.toLowerCase());
 }
 
+/**
+ * Whether this person runs the instance itself, as opposed to belonging to one
+ * of its workspaces. Operators see instance-wide diagnostics (worker alerts and
+ * events not tied to a workspace), which can mention other workspaces.
+ *
+ * OPERATOR_EMAILS is a comma-separated, case-insensitive list. Unset or
+ * empty, nobody is an operator: instance-wide events stay hidden from every
+ * workspace, so a missing setting never shows one client another's data.
+ */
+export function isInstanceOperator(email: string | null | undefined): boolean {
+  const operators = (process.env.OPERATOR_EMAILS ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (operators.length === 0 || !email) return false;
+  return operators.includes(email.toLowerCase());
+}
+
 export const serverEnvSchema = z.object({
   NEXTAUTH_URL: z.string().url(),
   NEXTAUTH_SECRET: z.string().min(16),
