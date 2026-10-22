@@ -2,6 +2,9 @@
   "name": "openreply",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
@@ -10,6 +13,7 @@
     "lint": "eslint",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
+    "db:check": "tsx scripts/check-db-pooler.ts",
     "worker": "tsx worker/dm-worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
