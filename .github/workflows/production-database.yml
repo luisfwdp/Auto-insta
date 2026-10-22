@@ -1,0 +1,88 @@
+name: Production database
+
+# Manual only. Checks the Supabase connection and, when asked, applies Prisma
+# migrations. The job runs in the "production-database" environment, so it
+# waits for a required reviewer to approve every run, and the database URLs
+# live only in that environment's secrets: they never appear in the repo, the
+# chat or the logs (GitHub masks secret values).
+#
+#   check   -> read-only: pooler compatibility (npm run db:check) + migration status
+#   migrate -> the same checks, then `prisma migrate deploy` and a drift check
+#
+# See docs/PRIMEIRO_LOGIN.md for when to run each one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "check (somente leitura) ou migrate (aplica migrações)"
+        type: choice
+        options: [check, migrate]
+        default: check
+
+permissions:
+  contents: read
+
+# Never run two of these at once against the same database.
+concurrency:
+  group: production-database
+  cancel-in-progress: false
+
+jobs:
+  database:
+    name: ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    environment: production-database
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Require secrets
+        env:
+          POOLER: ${{ secrets.DATABASE_URL_POOLER }}
+          SESSION: ${{ secrets.DATABASE_URL_SESSION }}
+        run: |
+          [ -n "$POOLER" ] || { echo "::error::DATABASE_URL_POOLER is not set in the production-database environment"; exit 1; }
+          [ -n "$SESSION" ] || { echo "::error::DATABASE_URL_SESSION is not set in the production-database environment"; exit 1; }
+
+      # Transaction pooler (port 6543), the same URL Vercel uses. Read-only.
+      - name: Pooler compatibility (read-only)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_POOLER }}
+        run: npm run db:check
+
+      # Session pooler (port 5432). `migrate status` exits non-zero while
+      # migrations are pending, which is expected before the first deploy.
+      - name: Migration status before
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_SESSION }}
+        run: npx prisma migrate status || echo "::notice::Migrations pending (expected before the first deploy)"
+
+      - name: Apply migrations
+        if: inputs.action == 'migrate'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_SESSION }}
+        run: npx prisma migrate deploy
+
+      # Fails the run if anything is still pending or the database does not
+      # match prisma/schema.prisma after the deploy.
+      - name: Verify after migrate
+        if: inputs.action == 'migrate'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_SESSION }}
+        run: |
+          npx prisma migrate status
+          npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code

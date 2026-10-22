@@ -3,7 +3,7 @@
 O worker (`npm run worker`) roda como uma *Machine* permanente na Fly.io, na região `gru`
 (São Paulo, perto do Supabase `sa-east-1`). O painel continua na Vercel. Arquivos:
 
-- `fly.toml`: app `auto-insta-worker`, sem serviços públicos, reinício `always`, 1 VM
+- `fly.toml`: app `criaping-worker`, sem serviços públicos, reinício `always`, 1 VM
   `shared-cpu-1x` com 512 MB.
 - `Dockerfile.worker`: imagem só do worker (sem `next build`, nenhum segredo no build).
 
@@ -15,7 +15,7 @@ O worker (`npm run worker`) roda como uma *Machine* permanente na Fly.io, na reg
 
 ```bash
 fly auth login
-fly apps create auto-insta-worker          # nome igual ao do fly.toml
+fly apps create criaping-worker          # nome igual ao do fly.toml
 ```
 
 Não use `fly launch`: ele reescreve o `fly.toml`.
@@ -86,12 +86,12 @@ Pausa de emergência sem perder a fila: `fly scale count 0` (a fila fica no Redi
 ## 6. Validar a imagem localmente (opcional)
 
 ```bash
-docker build -f Dockerfile.worker -t auto-insta-worker .
+docker build -f Dockerfile.worker -t criaping-worker .
 docker run --rm --network host \
   -e DATABASE_URL=postgresql://postgres:postgres@localhost:5432/openreply \
   -e REDIS_URL=redis://localhost:6379 \
   -e ENCRYPTION_KEY=<64 hex> -e NEXTAUTH_URL=http://localhost:3000 \
-  auto-insta-worker
+  criaping-worker
 ```
 
 Contra o `docker-compose.yml` local, com as migrações aplicadas, o log mostra
