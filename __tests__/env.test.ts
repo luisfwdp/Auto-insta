@@ -3,6 +3,7 @@ import {
   getEncryptionKeyHex,
   getMetaGraphApiVersion,
   isEmailAllowedToSignIn,
+  isInstanceOperator,
   requireEnv,
 } from "../lib/env";
 
@@ -58,5 +59,21 @@ describe("sign-in allowlist", () => {
     expect(isEmailAllowedToSignIn(null)).toBe(false);
     expect(isEmailAllowedToSignIn(undefined)).toBe(false);
     expect(isEmailAllowedToSignIn("")).toBe(false);
+  });
+
+  it("treats nobody as an instance operator while OPERATOR_EMAILS is empty", () => {
+    vi.stubEnv("OPERATOR_EMAILS", "");
+    expect(isInstanceOperator("anyone@example.com")).toBe(false);
+    vi.stubEnv("OPERATOR_EMAILS", " , ,");
+    expect(isInstanceOperator("anyone@example.com")).toBe(false);
+    expect(isInstanceOperator(null)).toBe(false);
+  });
+
+  it("treats only listed addresses as operators, ignoring case and spaces", () => {
+    vi.stubEnv("OPERATOR_EMAILS", " Ops@Example.com ,second@example.com");
+    expect(isInstanceOperator("ops@example.com")).toBe(true);
+    expect(isInstanceOperator("SECOND@example.com")).toBe(true);
+    expect(isInstanceOperator("client@example.com")).toBe(false);
+    expect(isInstanceOperator(null)).toBe(false);
   });
 });
