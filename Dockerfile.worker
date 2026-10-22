@@ -5,7 +5,7 @@
 # directly with tsx, so there is no `next build` here and nothing in this build
 # needs DATABASE_URL or any other secret. Secrets are injected at runtime.
 
-FROM node:20-slim
+FROM node:24-slim
 
 WORKDIR /app
 
