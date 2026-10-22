@@ -1,4 +1,4 @@
-# Auto Insta — Roadmap incremental
+# CRIA PING — Roadmap incremental
 
 > Complementa o [PRD](AUTO_INSTA_PRD.md). IDs entre colchetes (MC-1, CP-3…) remetem aos
 > requisitos do PRD. Cada fase entrega valor sozinha, deixa `main` verde e pode ser lançada.
@@ -35,7 +35,7 @@ sem revisão específica; rollback documentado em todo PR.
 | Fase | Tema | Resultado visível | Depende de |
 | --- | --- | --- | --- |
 | F0 | Fundação | Docs, convenções de colaboração, CI reforçado | — |
-| F1 | Marca e design system | Auto Insta escuro, verde-limão, pt-BR padrão | F0 |
+| F1 | Marca e design system | CRIA PING escuro, verde-limão, pt-BR padrão | F0 |
 | F2 | Multi-workspace e multi-conta | Seletores, página Contas, saúde por conta | F1 |
 | F3 | Segurança base | Auditoria, somente convite, rate limit, retenção | F0 (paralela a F1/F2) |
 | F4 | Campanhas v2 | Prioridade, agenda, conflitos, editor em etapas | F1, F3 (auditoria) |
@@ -61,7 +61,7 @@ sem revisão específica; rollback documentado em todo PR.
 
 1. Tokens de cor/tipografia em `app/globals.css`, tema escuro padrão + claro; Geist [PRD §3].
 2. `components/ui/*`: Button, Input, Card, Badge, Dialog, Toast, EmptyState, Skeleton, DataTable.
-3. Shell: sidebar, topbar, navegação mobile inferior, logo Auto Insta, `manifest.ts`, favicon.
+3. Shell: sidebar, topbar, navegação mobile inferior, logo CRIA PING, `manifest.ts`, favicon.
 4. Migrar páginas existentes para os componentes (uma página por PR: Painel, Campanhas,
    Editor, Caixa de entrada, Registros, Configurações, Diagnóstico, Login).
 5. pt-BR como idioma padrão (`lib/i18n`), revisão de tom do catálogo, e-mail de login em pt-BR.

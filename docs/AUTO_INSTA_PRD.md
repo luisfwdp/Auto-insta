@@ -1,5 +1,8 @@
-# Auto Insta — PRD (Documento de Requisitos de Produto)
+# CRIA PING — PRD (Documento de Requisitos de Produto)
 
+> Marca: **CRIA PING — by Creator Lab Connect** · Slogan: "Automação inteligente para criadores".
+> O arquivo mantém o nome `AUTO_INSTA_PRD.md` para não quebrar links; auditoria de nomes em `docs/CRIAPING_REBRAND.md`.
+>
 > Status: rascunho v1 · Data: 2026-10-22 · Base: fork do OpenReply (`main` em `dca8713`)
 > Escopo deste documento: diagnóstico do código atual, visão de produto, design system,
 > telas, modelo de dados alvo e requisitos por módulo. O plano de entrega incremental,
@@ -14,7 +17,7 @@
    de Instagram. Nenhum PR pode remover ou contornar `lib/meta/*`, `lib/instagram/*`
    ou a verificação de assinatura em `lib/meta/webhook.ts`.
 2. **Licença MIT preservada.** `LICENSE` (Anish Raj, Diwen Huang) permanece intacto. O
-   rebrand para Auto Insta mantém a seção de créditos do upstream (README e página "Sobre").
+   rebrand para CRIA PING mantém a seção de créditos do upstream (README e página "Sobre").
    Novos arquivos herdam a MIT; não introduzir dependências com licença incompatível
    (GPL/AGPL/SSPL) sem decisão explícita.
 3. **Reutilizar antes de reescrever.** O worker (`lib/queue/dm-worker.ts`, ~1.650 linhas)
@@ -23,7 +26,7 @@
    reescrita.
 4. **Segurança por padrão.** Tokens cifrados (AES via `ENCRYPTION_KEY`), checagem de papel
    em toda rota mutável, isolamento por workspace em toda query, LGPD.
-5. **100% pt-BR na interface do Auto Insta.** pt-BR como idioma padrão; o mecanismo i18n
+5. **100% pt-BR na interface do CRIA PING.** pt-BR como idioma padrão; o mecanismo i18n
    existente continua (en/zh-TW permanecem como opcionais para não quebrar o upstream).
 
 ---
@@ -119,7 +122,7 @@ Linha de base verificada nesta sessão: `vitest` 26 arquivos / 322 testes passan
 - G18. Sem log de auditoria (quem criou/editou/excluiu campanha, conectou conta, convidou).
 - G19. Sem rate limit nas rotas de API próprias (login por magic link, criação de campanha).
 - G20. `ALLOWED_EMAILS` é opcional: instância self-hosted aberta cria workspace para qualquer
-  e-mail. Para Auto Insta deve ser obrigatório ou substituído por "cadastro só por convite".
+  e-mail. Para CRIA PING deve ser obrigatório ou substituído por "cadastro só por convite".
 - G21. Sem fluxo LGPD de exportação/exclusão de dados do contato (só a página estática
   `data-deletion`), sem política de retenção para `WebhookEvent`/`DmLog`.
 - G22. Resíduos: `ProcessedComment` sem uso, `canManageBilling`, `SKIPPED_PLAN_LIMIT`,
@@ -130,7 +133,7 @@ Linha de base verificada nesta sessão: `vitest` 26 arquivos / 322 testes passan
 
 ## 2. Visão de produto
 
-**Auto Insta** é a central de automação self-hosted para quem opera **várias contas de
+**CRIA PING** é a central de automação self-hosted para quem opera **várias contas de
 Instagram** — agências, social media e marcas com múltiplos perfis — usando apenas a API
 oficial da Meta. Ela transforma comentários e DMs em conversas, leads e relatórios, sem
 mensalidade por conta.
@@ -182,23 +185,23 @@ Tema **escuro como padrão** (identidade da marca), com tema claro opcional.
 
 | Token | Escuro (padrão) | Claro | Uso |
 | --- | --- | --- | --- |
-| `--color-background` | `#090909` | `#F5F5F5` | Fundo da aplicação |
-| `--color-surface` | `#202020` | `#FFFFFF` | Cards, painéis, sidebar |
+| `--color-background` | `#0B0B0B` | `#F5F5F5` | Fundo da aplicação |
+| `--color-surface` | `#1A1A1A` | `#FFFFFF` | Cards, painéis, sidebar |
 | `--color-surface-raised` | `#2A2A2A` | `#FAFAFA` | Hover, popovers, modais |
 | `--color-border` | `#2E2E2E` | `#E2E2E2` | Divisores, bordas de campo |
-| `--color-foreground` | `#F5F5F5` | `#090909` | Texto principal |
+| `--color-foreground` | `#F5F5F5` | `#0B0B0B` | Texto principal |
 | `--color-muted` | `#9A9A9A` | `#5C5C5C` | Texto secundário (contraste ≥ 4.5:1) |
-| `--color-accent` | `#CAFF18` | `#CAFF18` | CTA primário, foco, estado ativo |
-| `--color-accent-foreground` | `#090909` | `#090909` | Texto sobre o verde-limão (nunca branco) |
-| `--color-accent-subtle` | `#CAFF18` @ 12% | `#CAFF18` @ 20% | Fundo de badge/realce |
+| `--color-accent` | `#C7FF2F` | `#C7FF2F` | CTA primário, foco, estado ativo |
+| `--color-accent-foreground` | `#0B0B0B` | `#0B0B0B` | Texto sobre o verde-limão (nunca branco) |
+| `--color-accent-subtle` | `#C7FF2F` @ 12% | `#C7FF2F` @ 20% | Fundo de badge/realce |
 | `--color-success` | `#4ADE80` | `#15803D` | Enviado, ativo |
 | `--color-warning` | `#FBBF24` | `#B45309` | Atenção, limite próximo |
 | `--color-error` | `#F87171` | `#B91C1C` | Falha |
 | `--color-info` | `#60A5FA` | `#1D4ED8` | Informativo |
 
 Regras:
-- `#CAFF18` **nunca** como cor de texto sobre fundo claro (contraste insuficiente); no tema
-  claro o acento aparece como preenchimento com texto `#090909`.
+- `#C7FF2F` **nunca** como cor de texto sobre fundo claro (contraste insuficiente); no tema
+  claro o acento aparece como preenchimento com texto `#0B0B0B`.
 - Máximo de um botão primário (verde) por área de tela.
 - Cores de estado não dependem só de cor: sempre ícone ou rótulo.
 - Os tokens substituem o bloco `@theme inline` em `app/globals.css`; aliases legados
@@ -236,7 +239,7 @@ Primitivos sem dependência externa nova (Tailwind + React), testáveis isoladam
 | `WorkspaceSwitcher` | lista de workspaces do usuário |
 | `PhonePreview` | evolução de `components/campaign-preview.tsx` (prévia da DM no estilo Instagram) |
 | `Chart` wrappers | Recharts com paleta da marca, tema escuro/claro |
-| `Logo` | wordmark "Auto Insta" + ícone (SVG), favicon e ícones PWA |
+| `Logo` | wordmark "CRIA PING" + ícone (SVG), favicon e ícones PWA |
 
 ### 3.4 Layout e responsividade
 
@@ -368,7 +371,7 @@ Prioridade: **P0** = v1.0 obrigatório · **P1** = v1.0 desejável · **P2** = p
 | --- | --- | --- |
 | SG-1 | `proxy.ts` cobre todas as rotas do painel; testes garantem que toda rota em `app/api/**` (exceto webhook, cron, health, `r/`, relatórios públicos) chama `getCurrentWorkspaceContext` | P0 |
 | SG-2 | Log de auditoria (`AuditLog`: ator, ação, alvo, workspace, IP com hash, data) | P0 |
-| SG-3 | Modo "somente convite": novo usuário só entra com convite ou e-mail em `ALLOWED_EMAILS`; documentado como padrão do Auto Insta | P0 |
+| SG-3 | Modo "somente convite": novo usuário só entra com convite ou e-mail em `ALLOWED_EMAILS`; documentado como padrão do CRIA PING | P0 |
 | SG-4 | Rate limit (Redis) em login por magic link, criação de convites e rotas mutáveis | P0 |
 | SG-5 | Retenção: `WebhookEvent` 30 dias, `OperationalEvent` 30 dias, `Comment` 90 dias, configuráveis por env | P0 |
 | SG-6 | Cabeçalhos de segurança (CSP, HSTS, `frame-ancestors`) em `next.config.ts` | P1 |
@@ -490,7 +493,7 @@ helpers em `lib/workspace-access.ts` são o único ponto de entrada.
    créditos preservados.
 3. **Idiomas:** pt-BR é o padrão em toda a plataforma, incluindo telas, e-mails de login e
    páginas públicas. Inglês e chinês tradicional permanecem como idiomas opcionais.
-4. **SEO e páginas públicas:** reescritas para a identidade Auto Insta com conteúdo original
+4. **SEO e páginas públicas:** reescritas para a identidade CRIA PING com conteúdo original
    em português. Páginas promocionais antigas não aproveitadas (ex.: `manychat-alternative`)
    são removidas, com redirecionamento 301/308 em `next.config.ts` quando houver tráfego ou
    links externos a preservar.
