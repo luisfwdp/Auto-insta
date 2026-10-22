@@ -101,10 +101,9 @@ export function isEmailAllowedToSignIn(
  * of its workspaces. Operators see instance-wide diagnostics (worker alerts and
  * events not tied to a workspace), which can mention other workspaces.
  *
- * OPERATOR_EMAILS is a comma-separated, case-insensitive list. Unset, every
- * workspace admin counts as an operator, which is the single-team self-hosted
- * case and keeps existing deployments unchanged. Set it as soon as workspaces
- * belong to different clients.
+ * OPERATOR_EMAILS is a comma-separated, case-insensitive list. Unset or
+ * empty, nobody is an operator: instance-wide events stay hidden from every
+ * workspace, so a missing setting never shows one client another's data.
  */
 export function isInstanceOperator(email: string | null | undefined): boolean {
   const operators = (process.env.OPERATOR_EMAILS ?? "")
@@ -112,8 +111,7 @@ export function isInstanceOperator(email: string | null | undefined): boolean {
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
 
-  if (operators.length === 0) return true;
-  if (!email) return false;
+  if (operators.length === 0 || !email) return false;
   return operators.includes(email.toLowerCase());
 }
 

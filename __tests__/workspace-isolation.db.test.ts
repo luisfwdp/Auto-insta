@@ -302,6 +302,19 @@ describe.skipIf(!DATABASE_URL)("workspace isolation on a real Postgres", () => {
       }
     });
 
+    it("hides instance-wide events and worker alerts while OPERATOR_EMAILS is empty", async () => {
+      vi.stubEnv("OPERATOR_EMAILS", "");
+      try {
+        const res = await diagnosticsRoute.GET();
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(JSON.stringify(body)).not.toContain("instance-wide worker failure");
+        expect(body.data.workerAlerts).toEqual([]);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it("shows instance-wide events and worker alerts to instance operators", async () => {
       vi.stubEnv("OPERATOR_EMAILS", "b@test.dev");
       try {

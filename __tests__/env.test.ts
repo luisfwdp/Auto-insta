@@ -61,11 +61,18 @@ describe("sign-in allowlist", () => {
     expect(isEmailAllowedToSignIn("")).toBe(false);
   });
 
-  it("treats every admin as an instance operator until OPERATOR_EMAILS is set", () => {
+  it("treats nobody as an instance operator while OPERATOR_EMAILS is empty", () => {
     vi.stubEnv("OPERATOR_EMAILS", "");
-    expect(isInstanceOperator("anyone@example.com")).toBe(true);
+    expect(isInstanceOperator("anyone@example.com")).toBe(false);
+    vi.stubEnv("OPERATOR_EMAILS", " , ,");
+    expect(isInstanceOperator("anyone@example.com")).toBe(false);
+    expect(isInstanceOperator(null)).toBe(false);
+  });
+
+  it("treats only listed addresses as operators, ignoring case and spaces", () => {
     vi.stubEnv("OPERATOR_EMAILS", " Ops@Example.com ,second@example.com");
     expect(isInstanceOperator("ops@example.com")).toBe(true);
+    expect(isInstanceOperator("SECOND@example.com")).toBe(true);
     expect(isInstanceOperator("client@example.com")).toBe(false);
     expect(isInstanceOperator(null)).toBe(false);
   });
