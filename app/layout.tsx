@@ -1,6 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
+import "./criaping-tokens.css";
+import { isFeatureEnabled } from "@/lib/feature-flags";
+import { sora, inter } from "./fonts/criaping";
 
 export const metadata: Metadata = {
   title: "OpenReply - Open source Instagram comment-to-DM automation",
@@ -42,8 +45,13 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const newDesign = isFeatureEnabled("newDesign");
   return (
-    <html lang="en" className="h-full dark">
+    <html
+      lang="en"
+      data-design={newDesign ? "criaping" : undefined}
+      className={`h-full dark${newDesign ? ` ${sora.variable} ${inter.variable}` : ""}`}
+    >
       <body
         className="min-h-full bg-background text-foreground font-sans antialiased"
         // Clears the home indicator when installed; 0 everywhere else.

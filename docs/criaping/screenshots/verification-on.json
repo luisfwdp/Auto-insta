@@ -1,0 +1,20 @@
+[
+  {
+    "device": "desktop",
+    "preview": 200,
+    "axeViolations": 0,
+    "keyboard": "passed",
+    "overflow": false,
+    "reducedMotion": "passed",
+    "pageErrors": []
+  },
+  {
+    "device": "mobile",
+    "preview": 200,
+    "axeViolations": 0,
+    "keyboard": "passed",
+    "overflow": false,
+    "reducedMotion": "passed",
+    "pageErrors": []
+  }
+]

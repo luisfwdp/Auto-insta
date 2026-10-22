@@ -1,0 +1,70 @@
+/* Opt-in foundations. Legacy Tailwind semantics remain unchanged until their
+   consumers migrate with verified foreground/background pairs. */
+[data-design="criaping"] {
+  --cp-black: #0B0B0B;
+  --cp-charcoal: #1A1A1A;
+  --cp-neon: #C7FF2F;
+  --cp-white: #F5F5F5;
+  --cp-background: var(--cp-black);
+  --cp-surface: var(--cp-charcoal);
+  --cp-surface-hover: #252525;
+  --cp-text: var(--cp-white);
+  --cp-text-muted: #B5B5B5;
+  --cp-border: #494949;
+  --cp-control-border: #828282;
+  --cp-action: var(--cp-neon);
+  --cp-action-hover: #D5FF68;
+  --cp-action-pressed: #B3E629;
+  --cp-on-action: var(--cp-black);
+  --cp-focus: var(--cp-neon);
+  --cp-disabled-background: #303030;
+  --cp-disabled-text: #A3A3A3;
+  /* Feedback colors supplement text and icons; never use color alone. */
+  --cp-success: #91E5AB;
+  --cp-error: #FF9B9B;
+  --cp-warning: #F5D57A;
+  --cp-info: #A6D4FF;
+  --cp-font-heading: var(--font-criaping-sora), "Arial", sans-serif;
+  --cp-font-body: var(--font-criaping-inter), "Arial", sans-serif;
+  --cp-weight-regular: 400;
+  --cp-weight-medium: 500;
+  --cp-weight-semibold: 600;
+  --cp-weight-bold: 700;
+  --cp-text-xs: 0.75rem;
+  --cp-text-sm: 0.875rem;
+  --cp-text-base: 1rem;
+  --cp-text-lg: 1.25rem;
+  --cp-text-xl: 1.5rem;
+  --cp-text-2xl: 2rem;
+  --cp-text-display: clamp(2rem, 5vw, 3.5rem);
+  --cp-leading-tight: 1.15;
+  --cp-leading-body: 1.5;
+  --cp-space-1: 0.25rem;
+  --cp-space-2: 0.5rem;
+  --cp-space-3: 0.75rem;
+  --cp-space-4: 1rem;
+  --cp-space-5: 1.25rem;
+  --cp-space-6: 1.5rem;
+  --cp-space-8: 2rem;
+  --cp-space-12: 3rem;
+  --cp-space-16: 4rem;
+  --cp-radius-sm: 0.375rem;
+  --cp-radius-md: 0.75rem;
+  --cp-radius-lg: 1.25rem;
+  --cp-radius-pill: 999px;
+  --cp-border-width: 1px;
+  --cp-focus-width: 2px;
+  --cp-focus-offset: 3px;
+  --cp-shadow-sm: 0 2px 8px rgb(0 0 0 / 20%);
+  --cp-shadow-dialog: 0 24px 64px rgb(0 0 0 / 48%);
+  --cp-overlay: rgb(0 0 0 / 72%);
+  --cp-duration: 140ms;
+  --cp-easing: cubic-bezier(0.2, 0, 0, 1);
+  --cp-control-height: 2.75rem;
+  --cp-z-dropdown: 40;
+  --cp-z-dialog: 50;
+  --cp-z-toast: 60;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-design="criaping"] { --cp-duration: 0ms; }
+}
