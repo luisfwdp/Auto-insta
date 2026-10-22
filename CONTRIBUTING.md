@@ -37,6 +37,15 @@ npm test
 npm run build
 ```
 
+Some suites need a real Postgres and are skipped unless `TEST_DATABASE_URL` is set. Each run builds its own throwaway schema from `prisma/migrations` and drops it afterwards, so point it at a disposable database, never production:
+
+```bash
+docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=postgres postgres:16
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:55432/postgres npm test
+```
+
+CI runs these in a separate **Database checks** job, which also applies every migration to an empty database and fails if `prisma/schema.prisma` and the migrations disagree. If you change the schema, commit the matching migration in the same pull request.
+
 If a check cannot run in your environment, say why in the pull request body. A small, clear pull request is easier to merge than a large one that touches many things at once.
 
 ## A note on the codebase
