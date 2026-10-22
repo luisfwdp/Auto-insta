@@ -6,7 +6,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # Colaboração entre agentes (Claude Code × Codex)
 
-Este repositório é o **Auto Insta**, um fork do OpenReply. Estas regras valem para qualquer
+Este repositório é o **CRIA PING** (by Creator Lab Connect), um fork do OpenReply. Estas regras valem para qualquer
 agente (Claude Code, Codex ou outro) e para pessoas. O produto e o plano estão em
 [docs/AUTO_INSTA_PRD.md](docs/AUTO_INSTA_PRD.md) e [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -88,6 +88,6 @@ quando `TEST_DATABASE_URL` aponta para um Postgres descartável — veja o cabe�
 - pt-BR é o idioma padrão; en e zh-TW continuam opcionais. Todo texto novo entra nos três
   catálogos de `lib/i18n/` com as mesmas chaves (o typecheck acusa chave faltando). Regras em
   `docs/localization.md`.
-- Identidade: preto `#090909`, verde-limão `#CAFF18` (texto sobre ele sempre `#090909`),
-  grafite `#202020`, branco `#F5F5F5`. Tokens definidos no PRD, seção 3.
+- Identidade: preto `#0B0B0B`, verde-limão `#C7FF2F` (texto sobre ele sempre `#0B0B0B`),
+  grafite `#1A1A1A`, branco `#F5F5F5`. Tokens definidos no PRD, seção 3.
 - Zernio fica só em "Integrações avançadas", sem banners, patrocínio ou recomendação comercial.
