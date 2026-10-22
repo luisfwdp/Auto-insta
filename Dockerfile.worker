@@ -1,0 +1,31 @@
+# Worker-only image (used by fly.toml).
+#
+# The main Dockerfile builds the Next.js web app too. The worker only needs the
+# source and the generated Prisma client: `npm run worker` runs the TypeScript
+# directly with tsx, so there is no `next build` here and nothing in this build
+# needs DATABASE_URL or any other secret. Secrets are injected at runtime.
+
+FROM node:24-slim
+
+WORKDIR /app
+
+# ca-certificates for TLS to Postgres, Redis and graph.instagram.com.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+# Dev dependencies included on purpose: tsx, which runs the worker, is one.
+# npm can die with "Exit handler never called" and still exit 0, so check that
+# the two binaries the worker needs actually exist before going on.
+RUN npm ci \
+ && test -x node_modules/.bin/tsx \
+ && test -x node_modules/.bin/prisma
+
+COPY . .
+RUN npm run db:generate
+
+ENV NODE_ENV=production
+
+# No EXPOSE: the worker only makes outbound connections.
+CMD ["npm", "run", "worker"]
