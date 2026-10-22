@@ -25,7 +25,7 @@ Mudar `FEATURE_FLAGS` na Vercel só vale a partir do próximo deploy (faça um *
 
 | Flag | Padrão | Uso |
 | --- | --- | --- |
-| `newDesign` | desligada | Design system Auto Insta (F1) |
+| `newDesign` | desligada | Fundações visuais CRIA PING (F1), inspeção em `/design-system` |
 | `workspaceSwitcher` | desligada | Seletores de workspace e conta (F2) |
 | `commentsCenter` | desligada | Central de comentários e moderação (F6) |
 | `contacts` | desligada | Contatos, tags e painel do contato (F5) |

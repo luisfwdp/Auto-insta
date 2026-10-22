@@ -19,7 +19,7 @@
  */
 
 export const FEATURE_FLAGS = {
-  /** Auto Insta visual design system (roadmap F1). */
+  /** CRIA PING visual design system (roadmap F1). */
   newDesign: { default: false },
   /** Workspace and Instagram account switchers (roadmap F2). */
   workspaceSwitcher: { default: false },
