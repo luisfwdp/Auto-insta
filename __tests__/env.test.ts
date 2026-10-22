@@ -3,6 +3,7 @@ import {
   getEncryptionKeyHex,
   getMetaGraphApiVersion,
   isEmailAllowedToSignIn,
+  isInstanceOperator,
   requireEnv,
 } from "../lib/env";
 
@@ -58,5 +59,14 @@ describe("sign-in allowlist", () => {
     expect(isEmailAllowedToSignIn(null)).toBe(false);
     expect(isEmailAllowedToSignIn(undefined)).toBe(false);
     expect(isEmailAllowedToSignIn("")).toBe(false);
+  });
+
+  it("treats every admin as an instance operator until OPERATOR_EMAILS is set", () => {
+    vi.stubEnv("OPERATOR_EMAILS", "");
+    expect(isInstanceOperator("anyone@example.com")).toBe(true);
+    vi.stubEnv("OPERATOR_EMAILS", " Ops@Example.com ,second@example.com");
+    expect(isInstanceOperator("ops@example.com")).toBe(true);
+    expect(isInstanceOperator("client@example.com")).toBe(false);
+    expect(isInstanceOperator(null)).toBe(false);
   });
 });

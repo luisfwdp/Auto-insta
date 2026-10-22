@@ -60,7 +60,9 @@ vi.mock("@/lib/queue/client", () => ({
 }));
 vi.mock("@/lib/ops/worker-health", () => ({
   getWorkerHealth: async () => ({ healthy: true }),
-  getWorkerAlerts: async () => [],
+  getWorkerAlerts: async () => [
+    { level: "error", message: "alert for account_a", instagramAccountId: "account_a", createdAt: "2026-01-01T00:00:00Z" },
+  ],
 }));
 
 import * as automationsRoute from "../app/api/automations/route";
@@ -178,7 +180,8 @@ describe.skipIf(!DATABASE_URL)("workspace isolation on a real Postgres", () => {
       INSERT INTO "WebhookEvent" ("id", "workspaceId", "payload", "status", "errorMessage") VALUES
         ('webhook_a', '${A.workspace}', '{}', 'FAILED', 'commenter_a webhook failure');
       INSERT INTO "OperationalEvent" ("id", "workspaceId", "source", "level", "message") VALUES
-        ('event_a', '${A.workspace}', 'WORKER', 'ERROR', 'commenter_a worker failure');
+        ('event_a', '${A.workspace}', 'WORKER', 'ERROR', 'commenter_a worker failure'),
+        ('event_global', NULL, 'WORKER', 'ERROR', 'instance-wide worker failure');
     `);
 
     state.db = new PrismaClient({
@@ -256,18 +259,24 @@ describe.skipIf(!DATABASE_URL)("workspace isolation on a real Postgres", () => {
         const res = await statsRoute.GET(request("GET", url));
         expect(res.status).toBe(200);
         const body = await res.json();
-        // The route echoes the requested account id back as the selection; it
-        // is the caller's own input, not workspace A's data, so leave it out.
-        const { selectedInstagramAccountId: _echo, ...data } = body.data;
-        void _echo;
-        expectNoWorkspaceAData(data);
-        expect(data.totalClicks).toBe(0);
+        expectNoWorkspaceAData(body);
+        // Another workspace's account is never accepted as the selection: the
+        // request falls back to this workspace's own totals.
+        expect(body.data.selectedInstagramAccountId).toBeNull();
+        expect(body.data.totalAutomations).toBe(1);
+        expect(body.data.totalDMs).toBe(1);
+        expect(body.data.contactsCount).toBe(1);
+        expect(body.data.totalClicks).toBe(0);
       }
-      const res = await statsRoute.GET(request("GET", "http://localhost/api/dashboard/stats"));
+    });
+
+    it("still filters stats by one of the workspace's own accounts", async () => {
+      const res = await statsRoute.GET(
+        request("GET", `http://localhost/api/dashboard/stats?instagramAccountId=${B.account}`)
+      );
       const { data } = await res.json();
+      expect(data.selectedInstagramAccountId).toBe(B.account);
       expect(data.totalAutomations).toBe(1);
-      expect(data.totalDMs).toBe(1);
-      expect(data.contactsCount).toBe(1);
     });
 
     it("lists only the signed-in workspace's members and invitations", async () => {
@@ -279,9 +288,31 @@ describe.skipIf(!DATABASE_URL)("workspace isolation on a real Postgres", () => {
     });
 
     it("shows diagnostics for the signed-in workspace only", async () => {
-      const res = await diagnosticsRoute.GET();
-      expect(res.status).toBe(200);
-      expectNoWorkspaceAData(await res.json());
+      vi.stubEnv("OPERATOR_EMAILS", "operator@test.dev");
+      try {
+        const res = await diagnosticsRoute.GET();
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expectNoWorkspaceAData(body);
+        // Not an operator: no instance-wide events or worker alerts either.
+        expect(JSON.stringify(body)).not.toContain("instance-wide worker failure");
+        expect(body.data.workerAlerts).toEqual([]);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("shows instance-wide events and worker alerts to instance operators", async () => {
+      vi.stubEnv("OPERATOR_EMAILS", "b@test.dev");
+      try {
+        const res = await diagnosticsRoute.GET();
+        const body = await res.json();
+        expect(JSON.stringify(body)).toContain("instance-wide worker failure");
+        expect(body.data.workerAlerts).toHaveLength(1);
+        expect(JSON.stringify(body)).not.toContain("commenter_a worker failure");
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
   });
 
@@ -401,6 +432,12 @@ describe.skipIf(!DATABASE_URL)("workspace isolation on a real Postgres", () => {
         request("POST", "http://localhost/api/workspace/members", { email: "x@test.dev" })
       );
       expect([disconnect.status, invite.status]).toEqual([403, 403]);
+    });
+
+    it("does not let a MEMBER view diagnostics", async () => {
+      state.userId = A.extraUser;
+      const res = await diagnosticsRoute.GET();
+      expect(res.status).toBe(403);
     });
   });
 });
