@@ -1,11 +1,11 @@
-# Fly.io app for the Auto Insta worker (npm run worker). See docs/fly-worker.md.
+# Fly.io app for the CRIA PING worker (npm run worker). See docs/fly-worker.md.
 #
 # One always-on Machine with no public services: the worker only connects out
 # to Postgres, Redis and the Meta Graph API. The web app stays on Vercel.
 # Secrets (DATABASE_URL, REDIS_URL, ENCRYPTION_KEY, ...) are set with
 # `fly secrets set`, never in this file.
 
-app = "auto-insta-worker"
+app = "criaping-worker"
 primary_region = "gru"
 
 [build]

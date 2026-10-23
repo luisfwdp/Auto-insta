@@ -1,0 +1,226 @@
+name: Production database
+
+# Manual only. Fail-closed checks for the Supabase production database and,
+# with separate approval, Prisma migrations. See docs/PRIMEIRO_LOGIN.md.
+#
+#   check   -> guard + read-only preflight. Never writes.
+#   migrate -> guard + preflight, then (second approval) harden -> migrate
+#              deploy -> harden -> verify. Any failed check stops the run.
+#
+# Database URLs exist only as secrets of the protected `production-database`
+# environment, which must require a reviewer and allow only `main`. The guard
+# job refuses to start when that protection is missing. Nothing prints a
+# connection string: db-guard redacts its output, and URL parts are masked.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "check (somente leitura) ou migrate (aplica migrações)"
+        type: choice
+        options: [check, migrate]
+        default: check
+      first_deploy:
+        description: "Primeira migração: exige o schema public vazio"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read # read the environment's protection rules in the guard job
+
+# Never two runs against the same database, and never cancel a migration.
+concurrency:
+  group: production-database
+  cancel-in-progress: false
+
+env:
+  ENVIRONMENT_NAME: production-database
+
+jobs:
+  guard:
+    name: Guard (ref and environment protection)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only main, only manual
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "::error::Run this workflow manually from main (got $GITHUB_EVENT_NAME on $GITHUB_REF)."
+            exit 1
+          fi
+
+      - name: Environment requires a reviewer and allows only main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          env_json=$(gh api "repos/$GITHUB_REPOSITORY/environments/$ENVIRONMENT_NAME") || {
+            echo "::error::Could not read environment $ENVIRONMENT_NAME. Create it first (docs/PRIMEIRO_LOGIN.md)."; exit 1; }
+
+          reviewers=$(jq '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]?] | length' <<<"$env_json")
+          if [ "$reviewers" -lt 1 ]; then
+            echo "::error::$ENVIRONMENT_NAME has no required reviewers."; exit 1
+          fi
+
+          custom=$(jq -r '.deployment_branch_policy.custom_branch_policies // false' <<<"$env_json")
+          if [ "$custom" != "true" ]; then
+            echo "::error::$ENVIRONMENT_NAME must use 'Selected branches and tags' limited to main."; exit 1
+          fi
+          branches=$(gh api "repos/$GITHUB_REPOSITORY/environments/$ENVIRONMENT_NAME/deployment-branch-policies" \
+            --jq '[.branch_policies[] | .type + ":" + .name] | sort | join(",")')
+          if [ "$branches" != "branch:main" ]; then
+            echo "::error::$ENVIRONMENT_NAME must allow only branch main (found: ${branches:-none})."; exit 1
+          fi
+          echo "Environment $ENVIRONMENT_NAME: $reviewers required reviewer(s), branches: main only."
+
+  preflight:
+    name: Preflight (read-only)
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: production-database
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Confirm the checked-out commit is main
+        run: |
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Not main."; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ] || { echo "::error::Checkout does not match the run's commit."; exit 1; }
+
+      - name: Mask URL parts
+        env:
+          DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_POOLER }}
+          DATABASE_URL_SESSION: ${{ secrets.DATABASE_URL_SESSION }}
+        run: |
+          node -e '
+            for (const raw of [process.env.DATABASE_URL_POOLER, process.env.DATABASE_URL_SESSION]) {
+              if (!raw) continue;
+              try {
+                const u = new URL(raw);
+                for (const part of [u.password, decodeURIComponent(u.password), u.username, u.hostname]) {
+                  if (part && part.length >= 4) console.log("::add-mask::" + part);
+                }
+              } catch {}
+            }'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      # Project ref, Data API off, database state, migration history and API
+      # role privileges. Pending migrations are expected; anything else fails.
+      - name: Database preflight
+        env:
+          DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_POOLER }}
+          DATABASE_URL_SESSION: ${{ secrets.DATABASE_URL_SESSION }}
+          EXPECTED_PROJECT_REF: ${{ vars.EXPECTED_PROJECT_REF }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          REQUIRE_EMPTY: ${{ inputs.first_deploy }}
+        run: npx tsx scripts/db-guard.ts preflight
+
+      # Same transaction-pooler URL Vercel uses. Read-only queries.
+      - name: Pooler compatibility
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_POOLER }}
+        run: npm run db:check
+
+  migrate:
+    name: Migrate (writes, second approval)
+    needs: preflight
+    if: inputs.action == 'migrate'
+    runs-on: ubuntu-latest
+    environment: production-database
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Confirm the checked-out commit is main
+        run: |
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Not main."; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ] || { echo "::error::Checkout does not match the run's commit."; exit 1; }
+
+      - name: Mask URL parts
+        env:
+          DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_POOLER }}
+          DATABASE_URL_SESSION: ${{ secrets.DATABASE_URL_SESSION }}
+        run: |
+          node -e '
+            for (const raw of [process.env.DATABASE_URL_POOLER, process.env.DATABASE_URL_SESSION]) {
+              if (!raw) continue;
+              try {
+                const u = new URL(raw);
+                for (const part of [u.password, decodeURIComponent(u.password), u.username, u.hostname]) {
+                  if (part && part.length >= 4) console.log("::add-mask::" + part);
+                }
+              } catch {}
+            }'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      # Again: the database may have changed while this job waited for approval.
+      - name: Database preflight (repeated)
+        env:
+          DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_POOLER }}
+          DATABASE_URL_SESSION: ${{ secrets.DATABASE_URL_SESSION }}
+          EXPECTED_PROJECT_REF: ${{ vars.EXPECTED_PROJECT_REF }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          REQUIRE_EMPTY: ${{ inputs.first_deploy }}
+        run: npx tsx scripts/db-guard.ts preflight
+
+      # Default privileges first, so the tables Prisma creates are never
+      # granted to anon/authenticated, not even for a moment.
+      - name: Revoke API role privileges (before)
+        env:
+          DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_POOLER }}
+          DATABASE_URL_SESSION: ${{ secrets.DATABASE_URL_SESSION }}
+          EXPECTED_PROJECT_REF: ${{ vars.EXPECTED_PROJECT_REF }}
+        run: npx tsx scripts/db-guard.ts harden
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_SESSION }}
+        run: npx prisma migrate deploy
+
+      - name: Revoke API role privileges (after)
+        env:
+          DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_POOLER }}
+          DATABASE_URL_SESSION: ${{ secrets.DATABASE_URL_SESSION }}
+          EXPECTED_PROJECT_REF: ${{ vars.EXPECTED_PROJECT_REF }}
+        run: npx tsx scripts/db-guard.ts harden
+
+      # Every step below must pass; no `|| true` anywhere in this job.
+      - name: Verify migration status
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_SESSION }}
+        run: npx prisma migrate status
+
+      - name: Verify schema matches prisma/schema.prisma
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_SESSION }}
+        run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+
+      - name: Verify history, privileges and Data API
+        env:
+          DATABASE_URL_POOLER: ${{ secrets.DATABASE_URL_POOLER }}
+          DATABASE_URL_SESSION: ${{ secrets.DATABASE_URL_SESSION }}
+          EXPECTED_PROJECT_REF: ${{ vars.EXPECTED_PROJECT_REF }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+        run: npx tsx scripts/db-guard.ts verify
