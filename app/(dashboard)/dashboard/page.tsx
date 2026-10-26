@@ -11,6 +11,8 @@ import { useEffect, useState } from "react";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import StatCard from "@/components/stat-card";
 import StatusBadge from "@/components/status-badge";
+import CriapingDashboard from "@/components/criaping-dashboard";
+import { useNewDesign } from "@/components/dashboard-shell";
 
 interface DashboardStats {
   userName: string | null;
@@ -45,7 +47,10 @@ export default function DashboardPage() {
   const { t, label } = useI18n();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [requestVersion, setRequestVersion] = useState(0);
   const [selectedAccountId, setSelectedAccountId] = useState("all");
+  const newDesign = useNewDesign();
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -57,14 +62,20 @@ export default function DashboardPage() {
       .then((r) => r.json())
       .then((data) => {
         if (data.success) setStats(data.data);
+        else setError(true);
       })
-      .catch(console.error)
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [selectedAccountId]);
+  }, [selectedAccountId, requestVersion]);
 
   function handleAccountChange(accountId: string) {
     setLoading(true);
+    setError(false);
     setSelectedAccountId(accountId);
+  }
+
+  if (newDesign) {
+    return <CriapingDashboard stats={stats} loading={loading} error={error} selectedAccountId={selectedAccountId} onAccountChange={handleAccountChange} onRetry={() => { setLoading(true); setError(false); setRequestVersion((value) => value + 1); }} />;
   }
 
   if (loading) {

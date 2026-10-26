@@ -16,6 +16,7 @@ interface AccountSelectProps {
   onChange: (value: string) => void;
   includeAll?: boolean;
   label?: string;
+  newDesign?: boolean;
 }
 
 export default function AccountSelect({
@@ -24,17 +25,18 @@ export default function AccountSelect({
   onChange,
   includeAll = true,
   label,
+  newDesign = false,
 }: AccountSelectProps) {
   const { t } = useI18n();
   return (
     <label className="flex flex-col gap-2 text-sm">
-      <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+      <span className={`text-xs font-semibold uppercase tracking-wide ${newDesign ? "text-[#B5B5B5]" : "text-zinc-500"}`}>
         {label ?? t("Instagram account")}
       </span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="min-w-52 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-accent/40"
+        className={`min-w-52 rounded-xl border px-3 py-2 text-sm outline-none transition-colors ${newDesign ? "border-[#828282] bg-[#1A1A1A] text-[#F5F5F5] focus:border-[#C7FF2F]" : "border-border bg-surface text-foreground focus:border-accent/40"}`}
       >
         {includeAll && <option value="all">{t("All accounts")}</option>}
         {accounts.map((account) => (

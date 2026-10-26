@@ -28,12 +28,14 @@ interface TopBarProps {
   onMenuClick: () => void;
   instagramUsername: string | null;
   instagramAccountCount: number;
+  newDesign?: boolean;
 }
 
 export default function TopBar({
   onMenuClick,
   instagramUsername,
   instagramAccountCount,
+  newDesign = false,
 }: TopBarProps) {
   const { t } = useI18n();
   const pathname = usePathname();
@@ -44,7 +46,7 @@ export default function TopBar({
 
   return (
     <header
-      className="sticky top-0 z-30 flex items-center justify-between gap-3 px-4 lg:px-8 border-b border-border bg-background"
+      className={`sticky top-0 z-30 flex items-center justify-between gap-3 px-4 lg:px-8 border-b ${newDesign ? "border-[#494949] bg-[#0B0B0B]" : "border-border bg-background"}`}
       // Installed to the home screen the app starts at the very top of the
       // display, so without this the title sits under the clock and battery.
       // The inset is 0 in a browser tab and on desktop.
@@ -55,13 +57,14 @@ export default function TopBar({
     >
       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
         <button
+          type="button"
           onClick={onMenuClick}
           className="lg:hidden shrink-0 px-2.5 py-1.5 rounded border border-border text-sm text-muted hover:text-foreground"
           aria-label={t("Toggle sidebar")}
         >
           {t("Menu")}
         </button>
-        <h1 className="truncate text-base font-semibold sm:text-lg">{t(title)}</h1>
+        <h1 className={`truncate text-base font-semibold sm:text-lg ${newDesign ? "font-[family-name:var(--cp-font-heading)]" : ""}`}>{t(title)}</h1>
       </div>
 
       {instagramAccountCount > 0 ? (
@@ -73,7 +76,7 @@ export default function TopBar({
       ) : (
         <a
           href="/api/instagram/connect"
-          className="shrink-0 whitespace-nowrap text-sm font-medium px-3 py-1.5 rounded bg-accent text-white hover:bg-accent-hover"
+          className={`shrink-0 whitespace-nowrap text-sm font-medium px-3 py-1.5 rounded ${newDesign ? "bg-[#C7FF2F] text-[#0B0B0B] hover:bg-[#D5FF68]" : "bg-accent text-white hover:bg-accent-hover"}`}
         >
           {/* Full label needs more room than a 360px header has to spare. */}
           <span className="sm:hidden">{t("Connect")}</span>
