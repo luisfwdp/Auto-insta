@@ -1,0 +1,18 @@
+.gallery { min-height:100vh; background:var(--cp-background); color:var(--cp-text); color-scheme:dark; font:400 var(--cp-text-base)/var(--cp-leading-body) var(--cp-font-body); padding:var(--cp-space-8) var(--cp-space-6); }
+.container { max-width:1120px; margin:auto; }
+.header { display:flex; align-items:center; justify-content:space-between; gap:var(--cp-space-4); flex-wrap:wrap; margin-bottom:var(--cp-space-12); }
+.header > a { font:700 var(--cp-text-xl)/1 var(--cp-font-heading); }
+.header > a span { color:var(--cp-neon); }
+/* The existing locale switcher keeps its behavior; only this fixture adapts its colors. */
+.header label { color:var(--cp-text-muted); }
+.header select { background:var(--cp-surface); color:var(--cp-text); border-color:var(--cp-control-border); }
+.gallery h1 { font:700 var(--cp-text-display)/var(--cp-leading-tight) var(--cp-font-heading); }
+.gallery h2 { font:600 var(--cp-text-lg)/var(--cp-leading-tight) var(--cp-font-heading); margin-bottom:var(--cp-space-6); }
+.gallery a:focus-visible { outline:2px solid var(--cp-focus); outline-offset:3px; }
+.intro { color:var(--cp-text-muted); margin-block:var(--cp-space-4) var(--cp-space-8); }
+.grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:var(--cp-space-6); }
+.stack { display:grid; gap:var(--cp-space-5); min-width:0; align-content:start; }
+.row { display:flex; flex-wrap:wrap; gap:var(--cp-space-3); margin-top:var(--cp-space-5); }
+.wide { grid-column:1/-1; }
+.gallery footer { color:var(--cp-text-muted); margin-top:var(--cp-space-8); }
+@media(max-width:700px) { .grid { grid-template-columns:minmax(0,1fr); } .gallery { padding:var(--cp-space-6) var(--cp-space-4); } }

@@ -1,0 +1,20 @@
+[
+  {
+    "device": "desktop",
+    "enabled": false,
+    "status": 404,
+    "axe": "N/A",
+    "keyboard": "N/A",
+    "pageErrors": [],
+    "mutations": []
+  },
+  {
+    "device": "mobile",
+    "enabled": false,
+    "status": 404,
+    "axe": "N/A",
+    "keyboard": "N/A",
+    "pageErrors": [],
+    "mutations": []
+  }
+]

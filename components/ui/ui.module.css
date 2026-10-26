@@ -1,0 +1,55 @@
+/* Each class is opt-in: importing the kit never styles legacy elements. */
+.button,.control,.toggle,.tabs,.card,.empty,.dialog,.tableScroll,.toastRegion,.badge,.skeleton { font-family: var(--cp-font-body); color: var(--cp-text); }
+.button { display:inline-flex; align-items:center; justify-content:center; gap:var(--cp-space-2); min-height:var(--cp-control-height); padding:var(--cp-space-2) var(--cp-space-5); border:1px solid transparent; border-radius:var(--cp-radius-md); font-weight:500; cursor:pointer; transition:background var(--cp-duration) var(--cp-easing); }
+.primary { background:var(--cp-action); color:var(--cp-on-action); }
+.primary:hover:not(:disabled) { background:var(--cp-action-hover); }
+.primary:active:not(:disabled) { background:var(--cp-action-pressed); }
+.secondary { background:var(--cp-surface); border-color:var(--cp-control-border); }
+.secondary:hover:not(:disabled) { background:var(--cp-surface-hover); }
+.danger { background:var(--cp-error); color:var(--cp-black); }
+.button:disabled,.control:disabled { background:var(--cp-disabled-background); color:var(--cp-disabled-text); cursor:not-allowed; }
+.button:focus-visible,.control:focus-visible,.toggle input:focus-visible + .track,.tabs button:focus-visible,.tabs [role="tabpanel"]:focus-visible,.tableScroll:focus-visible,.toastRegion button:focus-visible { outline:var(--cp-focus-width) solid var(--cp-focus); outline-offset:var(--cp-focus-offset); }
+.card { min-width:0; background:var(--cp-surface); padding:var(--cp-space-6); border:1px solid var(--cp-border); border-radius:var(--cp-radius-lg); }
+.title { font:600 var(--cp-text-lg)/var(--cp-leading-tight) var(--cp-font-heading); margin-bottom:var(--cp-space-3); }
+.field { display:grid; gap:var(--cp-space-2); min-width:0; }
+.field label { font-weight:500; }
+.control { width:100%; min-height:var(--cp-control-height); background:var(--cp-background); border:1px solid var(--cp-control-border); border-radius:var(--cp-radius-sm); padding:var(--cp-space-3); font-size:var(--cp-text-base); }
+textarea.control { resize:vertical; min-height:7rem; }
+.control::placeholder { color:var(--cp-text-muted); }
+.control[aria-invalid="true"] { border-color:var(--cp-error); }
+.hint,.empty p:not(.title) { color:var(--cp-text-muted); font-size:var(--cp-text-sm); }
+.error { color:var(--cp-error); }
+.badge { display:inline-flex; width:fit-content; align-items:center; padding:var(--cp-space-1) var(--cp-space-3); border:1px solid currentColor; border-radius:var(--cp-radius-pill); font-size:var(--cp-text-sm); }
+.badge[data-tone="success"],.toast[data-tone="success"] { color:var(--cp-success); }
+.badge[data-tone="error"],.toast[data-tone="error"] { color:var(--cp-error); }
+.badge[data-tone="warning"],.toast[data-tone="warning"] { color:var(--cp-warning); }
+.toggle { position:relative; display:flex; align-items:center; gap:var(--cp-space-3); min-height:var(--cp-control-height); cursor:pointer; }
+.toggle input { position:absolute; width:44px; height:24px; opacity:0; }
+.track { flex-shrink:0; width:44px; height:24px; border:1px solid var(--cp-control-border); background:var(--cp-background); border-radius:var(--cp-radius-pill); padding:3px; }
+.track::after { content:""; display:block; width:16px; height:16px; border-radius:50%; background:var(--cp-text); transition:transform var(--cp-duration) var(--cp-easing); }
+.toggle input:checked + .track { background:var(--cp-action); }
+.toggle input:checked + .track::after { transform:translateX(19px); background:var(--cp-on-action); }
+.toggle input:disabled ~ span { color:var(--cp-disabled-text); cursor:not-allowed; }
+.toggle input:disabled + .track { background:var(--cp-disabled-background); }
+.tablist { display:flex; gap:var(--cp-space-2); overflow-x:auto; padding:var(--cp-space-2); margin-bottom:var(--cp-space-4); }
+.tablist button { padding:var(--cp-space-3); min-height:var(--cp-control-height); border-bottom:2px solid transparent; white-space:nowrap; cursor:pointer; }
+.tablist button[aria-selected="true"] { border-color:var(--cp-neon); color:var(--cp-neon); }
+.tablist button:disabled { color:var(--cp-disabled-text); cursor:not-allowed; }
+.dialog { width:min(90vw, 32rem); max-height:85dvh; overflow:auto; margin:auto; background:var(--cp-surface); border:1px solid var(--cp-control-border); border-radius:var(--cp-radius-lg); padding:var(--cp-space-8); box-shadow:var(--cp-shadow-dialog); }
+.dialog::backdrop { background:var(--cp-overlay); }
+.dialog > * + * { margin-top:var(--cp-space-5); }
+.empty { text-align:center; padding:var(--cp-space-8); border:1px dashed var(--cp-control-border); border-radius:var(--cp-radius-md); }
+.empty > * + * { margin-top:var(--cp-space-3); }
+.skeleton { min-height:4rem; background:var(--cp-disabled-background); border-radius:var(--cp-radius-md); }
+.spinner { width:1em; height:1em; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.tableScroll { overflow-x:auto; max-width:100%; }
+.table { width:100%; border-collapse:collapse; text-align:left; font-size:var(--cp-text-sm); }
+.table caption { text-align:left; color:var(--cp-text-muted); padding-bottom:var(--cp-space-3); }
+.table th,.table td { padding:var(--cp-space-3); border-bottom:1px solid var(--cp-border); vertical-align:top; overflow-wrap:anywhere; }
+.table th { font-weight:600; }
+.toastRegion { position:fixed; bottom:calc(var(--cp-space-6) + env(safe-area-inset-bottom)); right:var(--cp-space-6); z-index:var(--cp-z-toast); display:flex; max-width:calc(100vw - 3rem); background:var(--cp-surface); border-radius:var(--cp-radius-md); box-shadow:var(--cp-shadow-dialog); }
+.toastRegion:has(.toast:empty) { border:0; }
+.toast:not(:empty) { padding:var(--cp-space-4); border:1px solid currentColor; border-radius:var(--cp-radius-md); }
+.toastRegion button { min-width:44px; min-height:44px; cursor:pointer; font-size:1.5rem; }
+@media (prefers-reduced-motion:reduce) { .spinner { animation:none; } }

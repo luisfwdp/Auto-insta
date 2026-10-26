@@ -3,7 +3,7 @@ import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import "./criaping-tokens.css";
 import { isFeatureEnabled } from "@/lib/feature-flags";
-import { sora, inter } from "./fonts/criaping";
+import { criapingSora, criapingInter } from "./fonts/criaping";
 
 export const metadata: Metadata = {
   title: "OpenReply - Open source Instagram comment-to-DM automation",
@@ -50,7 +50,7 @@ export default function RootLayout({
     <html
       lang="en"
       data-design={newDesign ? "criaping" : undefined}
-      className={`h-full dark${newDesign ? ` ${sora.variable} ${inter.variable}` : ""}`}
+      className={`h-full dark${newDesign ? ` ${criapingSora.variable} ${criapingInter.variable}` : ""}`}
     >
       <body
         className="min-h-full bg-background text-foreground font-sans antialiased"

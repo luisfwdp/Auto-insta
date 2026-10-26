@@ -45,3 +45,12 @@ Mudar `FEATURE_FLAGS` na Vercel só vale a partir do próximo deploy (faça um *
 - Rollback de uma funcionalidade atrás de flag: remover o nome de `FEATURE_FLAGS` e fazer
   *redeploy*. Rollback de código: *Instant Rollback* da Vercel para o deploy anterior (veja
   `docs/PRODUCAO.md`).
+
+## Build e runtime do novo design
+
+`newDesign` precisa ter o mesmo valor no build e no processo web. Páginas estáticas
+(incluindo `/design-system`) usam o valor capturado no build; páginas dinâmicas leem
+a flag no servidor por requisição. Alterar apenas o runtime pode produzir estados
+diferentes entre rotas. Para ativar, desativar ou fazer rollback, reconstrua e
+reimplante com `FEATURE_FLAGS` consistente. A galeria `/design-system/components`
+verifica a flag antes de ler a preferência de idioma.
