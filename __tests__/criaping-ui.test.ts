@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Button } from "../components/ui/primitives";
 import { Input } from "../components/ui/fields";
 import { DataTable } from "../components/ui/data-table";
+import { Toast } from "../components/ui/toast";
 
 vi.mock("next/headers", () => ({ cookies: vi.fn(async () => ({ get: () => undefined })) }));
 vi.mock("next/navigation", () => ({ notFound: () => { throw new Error("404"); } }));
@@ -32,10 +33,20 @@ describe("UI semantics", () => {
     expect(renderToStaticMarkup(DataTable({ ...props, rows: [] }))).toContain("Nothing here");
     const loading = renderToStaticMarkup(DataTable({ ...props, loading: true }));
     expect(loading).toContain('role="status"');
+    expect(loading).toContain('aria-busy="true"');
     expect(loading).not.toContain("<table");
     const error = renderToStaticMarkup(DataTable({ ...props, error: "Fetch failed" }));
     expect(error).toContain('role="alert"');
     expect(error).not.toContain("<table");
+  });
+  it("announces errors urgently without making success feedback disruptive", () => {
+    const common = { dismissLabel: "Dismiss", onDismiss: () => undefined };
+    const success = renderToStaticMarkup(createElement(Toast, { ...common, message: "Saved" }));
+    const error = renderToStaticMarkup(createElement(Toast, { ...common, message: "Failed", tone: "error" }));
+    expect(success).toContain('role="status"');
+    expect(success).toContain('aria-live="polite"');
+    expect(error).toContain('role="alert"');
+    expect(error).toContain('aria-live="assertive"');
   });
   it("gates the gallery before reading request cookies", async () => {
     vi.stubEnv("FEATURE_FLAGS", "-newDesign");

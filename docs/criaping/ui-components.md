@@ -4,11 +4,11 @@ O kit em `components/ui/` prepara a migração visual sem mudar telas operaciona
 
 | Módulo | Componentes / contrato |
 | --- | --- |
-| `primitives.tsx` | Button (`primary`, `secondary`, `danger`; loading bloqueia cliques; `type="button"` padrão), Card, Badge (tom + texto), Skeleton (label obrigatório), EmptyState (título, descrição e ação opcional) |
+| `primitives.tsx` | Button (`primary`, `secondary`, `danger`; loading bloqueia cliques; `type="button"` padrão), Card, Badge (tom + texto), Skeleton (label obrigatório e `aria-busy`), EmptyState (título, descrição e ação opcional) |
 | `fields.tsx` | Input, Select e Textarea com label obrigatório, hint/erro ligados por IDs, props/ref nativos e IDs automáticos; Toggle nativo com `role="switch"`, checked/onChange e disabled |
 | `tabs.tsx` | Tabs controladas por `value/onValueChange`; IDs estáveis, setas, Home/End, salto de tabs desabilitadas; painéis ficam montados para preservar rascunhos |
 | `dialog.tsx` | Dialog controlado por open/onClose; `showModal`, fundo inerte, ciclo Tab/Shift+Tab, Escape, restauração de foco e bloqueio de scroll; título e rótulo de fechar obrigatórios |
-| `toast.tsx` | Toast persistente e dispensável, região live educada; manter montado antes de alterar mensagem. Sem timeout que limite o tempo de leitura |
+| `toast.tsx` | Toast persistente e dispensável; sucesso/aviso usam região live educada e erro usa alerta assertivo. Manter montado antes de alterar mensagem. Sem timeout que limite o tempo de leitura |
 | `data-table.tsx` | DataTable genérica com caption, cabeçalhos de coluna/linha, keys e renderizadores de célula; loading/erro/vazio explícitos, sem linhas antigas nesses estados; região com scroll e foco no mobile |
 
 Os componentes recebem copy traduzida de quem os consome; não têm strings de produto fixas. A galeria `/design-system/components` é uma rota técnica com noindex e gate servidor antes de ler cookies. Usa pt-BR sem preferência e aceita en/zh-TW pelo seletor existente. Os catálogos atuais têm inglês como chave-fonte, além dos JSONs pt-BR e zh-TW; todas as novas chaves foram adicionadas aos dois JSONs. O fallback global legado não mudou neste PR.
@@ -54,4 +54,4 @@ A validação automatizada de AA se limita à galeria e aos estados exercitados.
 
 ## Resultado desta revisão
 
-Typecheck, lint e os dois builds passaram. Suíte com a flag ligada e desligada: **379 passaram, 40 ignorados por condições preexistentes** em cada execução. Os JSONs registram 200/404 esperados em desktop/mobile e nenhum erro JavaScript. O teste de teclado passou, e axe não detectou violações nas situações verificadas, incluindo diálogo aberto e os três idiomas. As capturas do login on/off são idênticas por SHA-256 nas duas resoluções, inclusive às capturas do PR A. Sem novas fontes baixadas no login com a flag off.
+Typecheck, lint e os dois builds passaram. Suíte com a flag ligada e desligada: **380 passaram, 40 ignorados por condições preexistentes** em cada execução. Os JSONs registram 200/404 esperados em desktop/mobile e nenhum erro JavaScript. O teste de teclado passou, e axe não detectou violações nas situações verificadas, incluindo diálogo aberto e os três idiomas. As capturas do login on/off são idênticas por SHA-256 nas duas resoluções, inclusive às capturas do PR A. Sem novas fontes baixadas no login com a flag off.

@@ -12,7 +12,7 @@ export function Badge({ tone = "neutral", children }: { tone?: Tone; children: R
   return <span className={styles.badge} data-tone={tone}>{children}</span>;
 }
 export function Skeleton({ label, className = "" }: { label: string; className?: string }) {
-  return <div role="status" aria-label={label} className={`${styles.skeleton} ${className}`}><span aria-hidden="true">&nbsp;</span></div>;
+  return <div role="status" aria-label={label} aria-busy="true" className={`${styles.skeleton} ${className}`}><span aria-hidden="true">&nbsp;</span></div>;
 }
 export function EmptyState({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
   return <div className={styles.empty}><p className={styles.title}>{title}</p>{description ? <p>{description}</p> : null}{action}</div>;
