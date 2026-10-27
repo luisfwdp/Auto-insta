@@ -27,12 +27,14 @@ interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
   workspaceName: string;
+  newDesign?: boolean;
 }
 
 export default function Sidebar({
   isOpen,
   onClose,
   workspaceName,
+  newDesign = false,
 }: SidebarProps) {
   const { t } = useI18n();
   const pathname = usePathname();
@@ -41,7 +43,9 @@ export default function Sidebar({
     <>
       {/* Mobile overlay */}
       {isOpen && (
-        <div
+        <button
+          type="button"
+          aria-label={t("Close menu")}
           className="fixed inset-0 z-40 bg-black/60 lg:hidden"
           onClick={onClose}
         />
@@ -49,21 +53,25 @@ export default function Sidebar({
 
       <aside
         className={`
-          fixed top-0 left-0 z-50 h-dvh w-64 max-w-[85vw] shrink-0 bg-surface border-r border-border flex flex-col
+          fixed top-0 left-0 z-50 h-dvh w-64 max-w-[85vw] shrink-0 border-r flex flex-col
           transition-transform duration-200 ease-out
           lg:h-full lg:translate-x-0 lg:static lg:z-auto
           ${isOpen ? "translate-x-0" : "-translate-x-full"}
+          ${newDesign ? "bg-[#1A1A1A] border-[#494949]" : "bg-surface border-border"}
         `}
       >
         {/* Same reason as the top bar: the drawer is full height, so the
             wordmark would otherwise land under the status bar. */}
         <div
-          className="px-6 py-5 border-b border-border"
+          className={`px-6 py-5 border-b ${newDesign ? "border-[#494949]" : "border-border"}`}
           style={{ paddingTop: "calc(1.25rem + env(safe-area-inset-top))" }}
         >
-          <Link href="/dashboard" className="text-base font-semibold">
-            OpenReply
-          </Link>
+          <div className="flex items-center justify-between gap-3">
+            <Link href="/dashboard" className={newDesign ? "font-[family-name:var(--cp-font-heading)] text-lg font-bold tracking-tight" : "text-base font-semibold"}>
+              {newDesign ? <>CRIA <span className="text-[#C7FF2F]">PING</span></> : "OpenReply"}
+            </Link>
+            <button type="button" onClick={onClose} className="min-h-11 min-w-11 rounded border border-[#828282] lg:hidden" aria-label={t("Close menu")}>×</button>
+          </div>
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
@@ -80,8 +88,8 @@ export default function Sidebar({
                   block px-3 py-2.5 rounded text-sm
                   ${
                     isActive
-                      ? "bg-surface-hover text-foreground font-medium"
-                      : "text-muted hover:text-foreground hover:bg-surface-hover"
+                      ? newDesign ? "bg-[#C7FF2F] text-[#0B0B0B] font-semibold" : "bg-surface-hover text-foreground font-medium"
+                      : newDesign ? "text-[#B5B5B5] hover:text-[#F5F5F5] hover:bg-[#252525]" : "text-muted hover:text-foreground hover:bg-surface-hover"
                   }
                 `}
               >
@@ -91,10 +99,10 @@ export default function Sidebar({
           })}
         </nav>
 
-        <div className="px-5 py-4 border-t border-border">
+        <div className={`px-5 py-4 border-t ${newDesign ? "border-[#494949]" : "border-border"}`}>
           <div className="mb-4"><LanguageSwitcher /></div>
-          <p className="text-sm text-foreground truncate">{workspaceName}</p>
-          <p className="text-xs text-muted">{t("Self-hosted")}</p>
+          <p className={`text-sm truncate ${newDesign ? "text-[#F5F5F5]" : "text-foreground"}`}>{workspaceName}</p>
+          <p className={`text-xs ${newDesign ? "text-[#B5B5B5]" : "text-muted"}`}>{t("Self-hosted")}</p>
           <a
             href={zernioLink({ placement: "sidebar" })}
             target="_blank"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import Sidebar from "@/components/sidebar";
 import TopBar from "@/components/top-bar";
 
@@ -9,21 +9,39 @@ interface DashboardShellProps {
   workspaceName: string;
   instagramUsername: string | null;
   instagramAccountCount: number;
+  newDesign: boolean;
 }
+
+const NewDesignContext = createContext(false);
+export const useNewDesign = () => useContext(NewDesignContext);
 
 export default function DashboardShell({
   children,
   workspaceName,
   instagramUsername,
   instagramAccountCount,
+  newDesign,
 }: DashboardShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [sidebarOpen]);
 
   return (
     // h-dvh, not h-screen: on mobile browsers the URL bar eats into 100vh, which
     // would push the composer and pagination controls below the fold.
-    <div className="flex h-dvh overflow-hidden bg-background">
+    <NewDesignContext.Provider value={newDesign}>
+      <div
+        data-design={newDesign ? "criaping" : undefined}
+        className={`flex h-dvh overflow-hidden ${newDesign ? "bg-[#0B0B0B] text-[#F5F5F5]" : "bg-background"}`}
+      >
       <Sidebar
+        newDesign={newDesign}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         workspaceName={workspaceName}
@@ -31,6 +49,7 @@ export default function DashboardShell({
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar
+          newDesign={newDesign}
           onMenuClick={() => setSidebarOpen(true)}
           instagramUsername={instagramUsername}
           instagramAccountCount={instagramAccountCount}
@@ -45,6 +64,7 @@ export default function DashboardShell({
           </div>
         </main>
       </div>
-    </div>
+      </div>
+    </NewDesignContext.Provider>
   );
 }

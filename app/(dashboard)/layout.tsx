@@ -5,6 +5,8 @@ import DashboardShell from "@/components/dashboard-shell";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
 import { ensureWorkspaceForUser } from "@/lib/workspace";
+import { isFeatureEnabled } from "@/lib/feature-flags";
+import { criapingInter, criapingSora } from "@/app/fonts/criaping";
 
 export async function generateMetadata() {
   const { t } = await getI18n();
@@ -17,6 +19,7 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const { locale } = await getI18n();
+  const newDesign = isFeatureEnabled("newDesign");
   const session = await auth();
 
   if (!session?.user?.id) {
@@ -36,11 +39,14 @@ export default async function DashboardLayout({
   return (
     <I18nProvider locale={locale}>
       <DashboardShell
+        newDesign={newDesign}
         workspaceName={workspace.name}
         instagramUsername={accounts[0]?.username ?? null}
         instagramAccountCount={accounts.length}
       >
-        {children}
+        <div className={newDesign ? `${criapingSora.variable} ${criapingInter.variable}` : undefined}>
+          {children}
+        </div>
       </DashboardShell>
     </I18nProvider>
   );

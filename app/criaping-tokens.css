@@ -67,6 +67,9 @@
   --cp-z-dialog: 50;
   --cp-z-toast: 60;
 }
+[data-design="criaping"] :focus-visible {
+  outline-color: #C7FF2F;
+}
 @media (prefers-reduced-motion: reduce) {
   [data-design="criaping"] { --cp-duration: 0ms; }
 }
