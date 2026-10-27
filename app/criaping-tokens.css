@@ -10,11 +10,13 @@
   --cp-surface-hover: #252525;
   --cp-text: var(--cp-white);
   --cp-text-muted: #B5B5B5;
+  /* Decorative separators only; controls use --cp-control-border (>= 3:1). */
   --cp-border: #494949;
   --cp-control-border: #828282;
   --cp-action: var(--cp-neon);
   --cp-action-hover: #D5FF68;
   --cp-action-pressed: #B3E629;
+  /* Never use soft white text on neon; action text is always black. */
   --cp-on-action: var(--cp-black);
   --cp-focus: var(--cp-neon);
   --cp-disabled-background: #303030;
@@ -24,8 +26,8 @@
   --cp-error: #FF9B9B;
   --cp-warning: #F5D57A;
   --cp-info: #A6D4FF;
-  --cp-font-heading: var(--font-criaping-sora), "Arial", sans-serif;
-  --cp-font-body: var(--font-criaping-inter), "Arial", sans-serif;
+  --cp-font-heading: var(--font-criaping-sora, sans-serif);
+  --cp-font-body: var(--font-criaping-inter, sans-serif);
   --cp-weight-regular: 400;
   --cp-weight-medium: 500;
   --cp-weight-semibold: 600;

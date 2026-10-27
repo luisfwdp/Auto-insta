@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { isFeatureEnabled } from "../lib/feature-flags";
 
 vi.mock("next/font/local", () => ({
-  default: ({ variable }: { variable: string }) => ({ variable }),
+  default: vi.fn(({ variable }: { variable: string }) => ({ variable })),
 }));
 vi.mock("@vercel/analytics/next", () => ({ Analytics: () => null }));
 vi.mock("next/navigation", () => ({ notFound: () => { throw new Error("404"); } }));
@@ -69,4 +69,18 @@ describe("WCAG AA token pairings", () => {
   it.each(["action", "action-hover", "action-pressed"])("black text on %s", (background) => {
     expect(contrast("on-action", background)).toBeGreaterThanOrEqual(4.5);
   });
+});
+
+it("keeps font loading opt-in and all token declarations scoped", async () => {
+  await import("../app/fonts/criaping");
+  const { default: localFont } = await import("next/font/local");
+  const calls = vi.mocked(localFont).mock.calls;
+  expect(calls).toHaveLength(2);
+  for (const [options] of calls) {
+    expect(options).toMatchObject({ preload: false, display: "swap" });
+  }
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const [, selector, body] of withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (body.includes("--cp-")) expect(selector.trim()).toBe('[data-design="criaping"]');
+  }
 });
