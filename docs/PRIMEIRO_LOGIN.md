@@ -2,7 +2,7 @@
 
 > Roteiro operacional do MVP. Estado verificado em 2026-10-22:
 > - Supabase `auto-insta` (ref `qgojitqdpyzprapqazvi`, sa-east-1): `public` vazio, nenhuma migração aplicada, advisor de segurança sem alertas.
-> - **Data API ligada**: o PostgREST responde com `PGRST205`. Os privilégios padrão do schema `public` dão `ALL` a `anon` e `authenticated`, então qualquer tabela criada pelo Prisma ficaria exposta pela chave pública.
+> - Data API: estava ligada em 22/10. Em 28/10, depois da restauração do projeto, está **desligada**: os logs do PostgREST mostram `db-schemas=pg_pgrst_no_exposed_schemas`, e a sondagem REST devolve `503 PGRST002` a qualquer tabela. Os privilégios padrão do schema `public` continuam dando `ALL` a `anon` e `authenticated`; a migração os revoga.
 > - Vercel `auto-insta`: só `NEXTAUTH_URL`, `ALLOWED_EMAILS_REQUIRED=true` e `META_GRAPH_API_VERSION`. O login fica fechado até `ALLOWED_EMAILS` existir.
 > - Vercel Deployment Protection: Standard (`all_except_custom_domains`). Toda URL `*.vercel.app` pede login da Vercel antes do app.
 >
@@ -65,6 +65,7 @@ Qualquer `FAIL` encerra a execução com erro. Os casos que separam "pendente" d
 | URL de outro projeto, porta errada, host direto | `FAIL` antes de conectar |
 | Senha errada, rede, pooler fora | `FAIL unexpected error` (texto sem a URL) |
 | Data API respondendo, ou resposta não reconhecida | `FAIL` |
+| `503 PGRST002` em 3 sondagens seguidas (10 s) | `ok`: é o que a Data API desligada devolve. Uma queda do banco ainda falha no passo seguinte, que conecta ao Postgres |
 | `public` com tabelas sem `_prisma_migrations` | `FAIL` (banco errado?) |
 | `public` não vazio com `first_deploy: true` | `FAIL` |
 | Migração que falhou pela metade, que só existe no banco, ou alterada depois de aplicada | `FAIL` |
