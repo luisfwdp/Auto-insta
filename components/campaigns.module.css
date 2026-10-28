@@ -47,3 +47,4 @@
 :is(.picker,.phone) [class~="bg-background"] { background:var(--cp-background); }
 :is(.picker,.phone) [class~="border-border"] { border-color:var(--cp-control-border); }
 :is(.picker,.phone) [class~="bg-accent"] { background:var(--cp-neon); color:var(--cp-black); }
+.picker [class~="border-accent"] { border-color:var(--cp-neon); }

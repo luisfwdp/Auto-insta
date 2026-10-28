@@ -2,7 +2,7 @@
 
 Entrega solicitada como PR #19; o GitHub atribuiu #20 porque #19 já existe como uma correção de operações. Este é o único PR aberto para campanhas e wizard.
 
-Base: `da4a2d8` (main, PRs #17 e #18 integrados). Uma única entrega: gerenciamento de campanhas e reorganização do CampaignBuilder, sem alteração de contrato/backend. A flag `newDesign` continua desligada por padrão e não foi alterada em produção. Build e runtime precisam ter o mesmo valor, conforme `docs/feature-flags.md`.
+Base inicial: `da4a2d8` (main, PRs #17 e #18 integrados). Uma única entrega: gerenciamento de campanhas e reorganização do CampaignBuilder, sem alteração de contrato/backend. A flag `newDesign` continua desligada por padrão e não foi alterada em produção. Build e runtime precisam ter o mesmo valor, conforme `docs/feature-flags.md`.
 
 ## Arquivos e escopo
 
@@ -76,7 +76,7 @@ Também há capturas desktop de erro e vazio. JSONs `checks-on/off.json` registr
 - Importação e páginas de detalhes/relatórios continuam com sua apresentação existente; o novo wizard mantém o contrato. Campos de negócio que não faziam parte do builder não foram criados.
 - O draft em memória é perdido ao sair/recarregar, conforme o escopo. Não há recuperação automática de rascunho novo.
 
-Próximo PR recomendado, **após concluir/revisar este**: adaptar detalhes e relatórios de campanha ao design CRIA PING, preservando compartilhamento e analytics reais. Antes de abrir produção, executar o roteiro autenticado com a infraestrutura pronta. Revisão obrigatória de Claude Code conforme AGENTS.md; merge humano.
+Próximo PR recomendado, **após integração autorizada deste PR**: adaptar detalhes e relatórios de campanha ao design CRIA PING, preservando compartilhamento e analytics reais. Antes de abrir produção, executar o roteiro autenticado com a infraestrutura pronta. Revisão obrigatória de Claude Code conforme AGENTS.md; merge humano.
 
 A topbar das capturas pertence à rota técnica da fixture; na rota operacional, o título contextual vem de `/campaigns` pelo shell existente. Os dados de exemplo aparecem somente nos scripts/capturas de teste, nunca como fallback operacional.
 
@@ -85,9 +85,24 @@ A topbar das capturas pertence à rota técnica da fixture; na rota operacional,
 | Check | Resultado |
 | --- | --- |
 | Typecheck / ESLint | Passaram |
-| Testes, flag ligada | 395 passaram, 40 ignorados por condições preexistentes |
-| Testes, flag desligada | 395 passaram, 40 ignorados por condições preexistentes |
+| Testes, flag ligada | 396 passaram, 40 ignorados por condições preexistentes |
+| Testes, flag desligada | 396 passaram, 40 ignorados por condições preexistentes |
 | Builds on/off | Ambos passaram, sem fixture; nenhuma rota de revisão temporária no manifesto final |
 | Navegador on | Passou em desktop/tablet/mobile; ações, payload, teclado, etapas e axe no conteúdo exercitado |
 | Navegador off | Comparação de listagem e criação com a main passou nas três resoluções, tolerância 1/255 por canal |
 | Banco/Meta reais | Não executados localmente; precisam de infraestrutura pronta e sessão autenticada |
+
+
+## Revalidação final — 28/10/2026
+
+A branch incorporou `main` em `eae3ec5eddfd3f362bbce28299b0fcd31dd3d384` por merge (`f08feaa`), sem conflitos e sem reescrever histórico. A correção de preflight herdada da main não foi modificada pelo frontend e não aparece no diff líquido deste PR.
+
+Revisados os **34 arquivos** do diff contra a main: seis de apresentação/validação de UI, dois catálogos, um teste unitário, dois scripts de revisão, esta documentação, dois relatórios JSON e vinte capturas. Manifestos/lockfile e áreas de API, auth, Prisma, banco, Meta, webhook e worker não têm alterações no PR. `newDesign` continua `default: false`, confirmado pelo teste existente de flags e por importação local com `FEATURE_FLAGS` vazia. Nenhuma configuração de produção foi acessada ou alterada.
+
+A revalidação de navegador foi ampliada para confirmar também os payloads dos gatilhos **qualquer publicação e próximo Reel**, a preferência de conta recebida por URL, o fallback de uma conta desconhecida para uma disponível, o fluxo de **edição via PATCH** e a recusa de uma resposta **HTTP 200 com `success:false`**. Todos os cenários passaram em desktop, tablet e mobile, sem erros JavaScript, overflow horizontal ou violações axe no conteúdo exercitado. Não houve POST/PATCH antes da confirmação. As mensagens/links/follow gate/follow-up permaneceram no payload e a conta continuou bloqueada na edição.
+
+As vinte capturas foram inspecionadas em conjunto e os detalhes de configuração, mensagens e revisão foram examinados nas resoluções correspondentes. A única correção visual foi tornar a borda selecionada do picker verde neon, via CSS local da nova interface. Os componentes legados e estilos globais permanecem intactos. A comparação visual do legado passou nas três resoluções.
+
+Typecheck, ESLint e builds com `newDesign` ligada/desligada passaram novamente. Em cada configuração de testes: **396 aprovados e 40 ignorados por condições preexistentes**; a diferença de um teste em relação à execução inicial vem do PR #19 já integrado à main. Os builds foram executados com valores locais de teste, sem fixture temporária; o manifesto final não contém a rota de revisão. O teste autenticado completo e a entrega real na Meta continuam aguardando a infraestrutura e o primeiro login, fora desta validação de frontend.
+
+A passagem para ready for review será feita somente com os checks remotos verdes no SHA publicado. Merge continua condicionado à autorização humana. Nenhuma interface de detalhes/relatórios e nenhum outro PR foram iniciados.

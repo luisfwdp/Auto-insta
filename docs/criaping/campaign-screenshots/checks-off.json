@@ -2,21 +2,33 @@
   {
     "device": "desktop",
     "enabled": false,
+    "scenarios": [
+      "legacy list/new screenshots match main"
+    ],
     "keyboardAndActions": "passed",
+    "axe": "N/A: legacy comparison",
     "pageErrors": [],
     "evidence": "temporary local fixture with intercepted API responses; no real sends or database writes"
   },
   {
     "device": "tablet",
     "enabled": false,
+    "scenarios": [
+      "legacy list/new screenshots match main"
+    ],
     "keyboardAndActions": "passed",
+    "axe": "N/A: legacy comparison",
     "pageErrors": [],
     "evidence": "temporary local fixture with intercepted API responses; no real sends or database writes"
   },
   {
     "device": "mobile",
     "enabled": false,
+    "scenarios": [
+      "legacy list/new screenshots match main"
+    ],
     "keyboardAndActions": "passed",
+    "axe": "N/A: legacy comparison",
     "pageErrors": [],
     "evidence": "temporary local fixture with intercepted API responses; no real sends or database writes"
   }

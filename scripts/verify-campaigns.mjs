@@ -10,6 +10,7 @@ const { default: AxeBuilder } = require("@axe-core/playwright");
 const pt = JSON.parse(await readFile("lib/i18n/pt-BR.json", "utf8"));
 const t = (key) => pt[key] || key;
 const enabled = process.argv[2] !== "off";
+const scenarioCoverage = ["specific/any/next triggers", "account selection and fixed edit account", "public/opening/main DM, links, follow gate and follow-up", "back preserves draft", "zero writes before confirmation", "HTTP/logical failures and confirmed success", "edit PATCH", "keyboard and axe"];
 const base = process.env.CRIAPING_REVIEW_URL || "http://localhost:3000";
 const output = "docs/criaping/campaign-screenshots";
 await mkdir(output, { recursive: true });
@@ -24,6 +25,7 @@ function campaign(id, account, active = true) {
 }
 const results = [];
 async function audit(page) {
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "Horizontal viewport overflow");
   const result = await new AxeBuilder({ page }).include("main").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
   assert.deepEqual(result.violations.map(({ id, nodes }) => ({ id, targets: nodes.map((n) => ({ target: n.target, html: n.html, reason: n.failureSummary })) })), []);
 }
@@ -35,13 +37,14 @@ try {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   let rows = [campaign("c1", accounts[0]), campaign("c2", accounts[1], false)];
-  let failAction = false, failList = false, failSave = false, noAccounts = false;
+  let failAction = false, failList = false, failSave = false, noAccounts = false, logicalFailure = false;
   const mutations = [];
   await page.route("**/api/**", async (route) => {
     const req = route.request(), url = new URL(req.url());
     const success = (data) => route.fulfill({ json: { success: true, data } });
     if (req.method() !== "GET") {
       mutations.push({ path: url.pathname, id: url.searchParams.get("id"), method: req.method(), body: req.postDataJSON() });
+      if (logicalFailure) return route.fulfill({ status: 200, json: { success: false, error: "Fixture logical failure" } });
       if (failAction || failSave) return route.fulfill({ status: 403, json: { success: false, error: "Fixture rejected" } });
       const id = url.searchParams.get("id");
       if (url.pathname === "/api/automations/duplicate") { const source = rows.find((c) => c.id === id); const copy = { ...source, id: "copy", name: `${source.name} copy`, isActive: false }; rows.push(copy); return success(copy); }
@@ -105,6 +108,11 @@ print(json.dumps({"maxChannelDifference":max(v[1] for v in diff.getextrema())}))
     await page.getByText(t("Campaign action failed. Nothing was confirmed. Please try again."), { exact: true }).waitFor();
     assert.equal(await card.getByRole("button", { name: t("Pause"), exact: true }).count(), 1);
     failAction = false;
+    logicalFailure = true;
+    await card.getByRole("button", { name: t("Pause"), exact: true }).click();
+    await page.getByText(t("Campaign action failed. Nothing was confirmed. Please try again."), { exact: true }).waitFor();
+    assert.equal(await card.getByRole("button", { name: t("Pause"), exact: true }).count(), 1);
+    logicalFailure = false;
     await card.getByRole("button", { name: t("Pause"), exact: true }).click();
     await card.getByRole("button", { name: t("Activate"), exact: true }).waitFor();
     await card.getByRole("button", { name: t("Duplicate"), exact: true }).click();
@@ -169,6 +177,8 @@ print(json.dumps({"maxChannelDifference":max(v[1] for v in diff.getextrema())}))
     await page.getByRole("button", { name: t("Confirm campaign"), exact: true }).click();
     await page.getByText(t("Could not save the campaign. Check the settings and try again."), { exact: true }).waitFor();
     assert.equal(mutations.length, 1);
+    assert.equal(mutations[0].method, "POST");
+    assert.equal(mutations[0].path, "/api/automations");
     const payload = mutations[0].body;
     assert.equal(payload.instagramAccountId, "a2"); assert.equal(payload.postId, "p2");
     assert.deepEqual(payload.keywords, ["link", "preco"]); assert.equal(payload.isActive, false);
@@ -183,9 +193,58 @@ print(json.dumps({"maxChannelDifference":max(v[1] for v in diff.getextrema())}))
     await visit("edit");
     const selectedAccount = page.getByLabel(t("Instagram account"), { exact: true });
     await selectedAccount.waitFor(); assert.equal(await selectedAccount.isDisabled(), true); assert.equal(await selectedAccount.inputValue(), "a1");
+    const beforeEdit = mutations.length;
+    await page.getByLabel(t("Campaign name"), { exact: true }).fill("Campanha editada");
+    await page.getByRole("button", { name: t("Continue"), exact: true }).click();
+    await page.getByLabel(t("Main DM message"), { exact: true }).fill("Mensagem editada no navegador");
+    await page.getByRole("button", { name: t("Continue"), exact: true }).click();
+    await audit(page);
+    assert.equal(mutations.length, beforeEdit, "Edit wrote before confirmation");
+    failSave = true;
+    await page.getByRole("button", { name: t("Confirm changes"), exact: true }).click();
+    await page.getByText(t("Could not save the campaign. Check the settings and try again."), { exact: true }).waitFor();
+    assert.equal(mutations.length, beforeEdit + 1);
+    assert.equal(mutations.at(-1).method, "PATCH"); assert.equal(mutations.at(-1).id, "c1");
+    assert.equal(mutations.at(-1).body.instagramAccountId, "a1");
+    assert.equal(mutations.at(-1).body.dmMessage, "Mensagem editada no navegador");
+    failSave = false;
+    await page.getByRole("button", { name: t("Confirm changes"), exact: true }).click();
+    await page.waitForURL(`${base}/campaigns?instagramAccountId=a1`);
+    assert.equal(mutations.length, beforeEdit + 2);
+    assert.equal(rows.find((row) => row.id === "c1").name, "Campanha editada");
+    for (const scope of ["any", "next"]) {
+      const beforeScope = mutations.length;
+      await visit("new&instagramAccountId=a2");
+      await page.getByLabel(t("Campaign name"), { exact: true }).waitFor();
+      assert.equal(await page.getByLabel(t("Instagram account"), { exact: true }).inputValue(), "a2");
+      await page.getByRole("radio", { name: t(scope === "any" ? "any post or reel" : "next post or reel"), exact: true }).check();
+      await page.getByRole("radio", { name: t("any word"), exact: true }).check();
+      await page.getByRole("button", { name: t("Continue"), exact: true }).click();
+      await page.getByLabel(t("Main DM message"), { exact: true }).fill(`Mensagem para ${scope}`);
+      await page.getByRole("button", { name: t("Continue"), exact: true }).click();
+      await page.getByRole("heading", { name: t("Review campaign settings"), exact: true }).waitFor();
+      assert.equal(mutations.length, beforeScope);
+      await audit(page);
+      failSave = true;
+      await page.getByRole("button", { name: t("Confirm campaign"), exact: true }).click();
+      await page.getByText(t("Could not save the campaign. Check the settings and try again."), { exact: true }).waitFor();
+      assert.equal(mutations.length, beforeScope + 1);
+      const request = mutations.at(-1);
+      assert.equal(request.method, "POST"); assert.equal(request.body.instagramAccountId, "a2");
+      assert.equal(request.body.postId, null); assert.equal(request.body.postUrl, null);
+      assert.equal(request.body.matchAnyPost, scope === "any"); assert.equal(request.body.pendingNextReel, scope === "next");
+      assert.equal(request.body.matchAnyWord, true); assert.deepEqual(request.body.keywords, []);
+      failSave = false;
+    }
+    const beforeInvalidAccount = mutations.length;
+    await visit("new&instagramAccountId=unknown-account");
+    await page.getByLabel(t("Campaign name"), { exact: true }).waitFor();
+    assert.equal(await page.getByLabel(t("Instagram account"), { exact: true }).inputValue(), "a1");
+    assert.equal(mutations.length, beforeInvalidAccount);
+
   }
   assert.deepEqual(errors, []);
-  results.push({ device, enabled, keyboardAndActions: "passed", pageErrors: errors, evidence: "temporary local fixture with intercepted API responses; no real sends or database writes" });
+  results.push({ device, enabled, scenarios: enabled ? scenarioCoverage : ["legacy list/new screenshots match main"], keyboardAndActions: "passed", axe: enabled ? "passed in exercised content" : "N/A: legacy comparison", pageErrors: errors, evidence: "temporary local fixture with intercepted API responses; no real sends or database writes" });
   await context.close();
  }
 } finally { await browser.close(); }
