@@ -1,0 +1,23 @@
+[
+  {
+    "device": "desktop",
+    "enabled": true,
+    "keyboardAndActions": "passed",
+    "pageErrors": [],
+    "evidence": "temporary local fixture with intercepted API responses; no real sends or database writes"
+  },
+  {
+    "device": "tablet",
+    "enabled": true,
+    "keyboardAndActions": "passed",
+    "pageErrors": [],
+    "evidence": "temporary local fixture with intercepted API responses; no real sends or database writes"
+  },
+  {
+    "device": "mobile",
+    "enabled": true,
+    "keyboardAndActions": "passed",
+    "pageErrors": [],
+    "evidence": "temporary local fixture with intercepted API responses; no real sends or database writes"
+  }
+]

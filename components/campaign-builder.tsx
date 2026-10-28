@@ -12,6 +12,12 @@
  * follow / email / follow-up steps arrive in later turns.
  */
 
+import { useNewDesign } from "./dashboard-shell";
+import CampaignWizard from "./campaign-wizard";
+import { validateCampaignDraft } from "./campaign-validation";
+import { Button, EmptyState, Skeleton } from "./ui/primitives";
+import { Input, Select, Textarea, Toggle as UiToggle } from "./ui/fields";
+import wizardStyles from "./campaigns.module.css";
 import { useI18n } from "@/lib/i18n/provider";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -133,6 +139,11 @@ function Toggle({
 export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderProps) {
   const { t } = useI18n();
   const router = useRouter();
+  const newDesign = useNewDesign();
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [accountsError, setAccountsError] = useState(false);
+  const [loadVersion, setLoadVersion] = useState(0);
+  const [editError, setEditError] = useState(false);
 
   const [loading, setLoading] = useState(mode === "edit");
   const [notFound, setNotFound] = useState(false);
@@ -171,14 +182,14 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [dmMessage, setDmMessage] = useState("");
   const [linkOpen, setLinkOpen] = useState(false);
   const [trackedDestinationUrl, setTrackedDestinationUrl] = useState("");
-  const [linkButtonLabel, setLinkButtonLabel] = useState("Open link");
+  const [linkButtonLabel, setLinkButtonLabel] = useState(newDesign ? t("Open link") : "Open link");
   const [secondLinkOpen, setSecondLinkOpen] = useState(false);
   const [secondaryDestinationUrl, setSecondaryDestinationUrl] = useState("");
-  const [secondaryButtonLabel, setSecondaryButtonLabel] = useState("Open link");
+  const [secondaryButtonLabel, setSecondaryButtonLabel] = useState(newDesign ? t("Open link") : "Open link");
   const [requireFollow, setRequireFollow] = useState(false);
   const [followPromptMessage, setFollowPromptMessage] = useState("");
   const [followPromptButtonLabel, setFollowPromptButtonLabel] =
-    useState("i'm following");
+    useState(newDesign ? t("i'm following") : "i'm following");
   const [followUpEnabled, setFollowUpEnabled] = useState(false);
   const [followUpMessage, setFollowUpMessage] = useState("");
   const [followUpDelayMinutes, setFollowUpDelayMinutes] = useState(0);
@@ -230,17 +241,21 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   // Load accounts (both modes need them for the preview username + selector).
   useEffect(() => {
     fetch("/api/dashboard/stats")
-      .then((r) => r.json())
+      .then(async (r) => { if (newDesign && !r.ok) throw Error(); return r.json(); })
       .then((payload) => {
-        if (!payload.success) return;
+        if (!payload.success) { if (newDesign) setAccountsError(true); return; }
         const next: AccountOption[] = payload.data.instagramAccounts ?? [];
         setAccounts(next);
         setSelectedAccountId(
-          (prev) => prev || payload.data.selectedInstagramAccountId || next[0]?.id || ""
+          (prev) => {
+            const preferred = newDesign && mode === "new" ? new URLSearchParams(window.location.search).get("instagramAccountId") : null;
+            return (newDesign ? (next.some((a) => a.id === prev) ? prev : "") : prev) || (next.some((a) => a.id === preferred) ? preferred! : null) || payload.data.selectedInstagramAccountId || next[0]?.id || "";
+          }
         );
       })
-      .catch(() => setAccounts([]));
-  }, []);
+      .catch(() => { setAccounts([]); if (newDesign) setAccountsError(true); })
+      .finally(() => setAccountsLoading(false));
+  }, [newDesign, mode, loadVersion]);
 
   // Prefill when editing.
   useEffect(() => {
@@ -248,7 +263,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     fetch("/api/automations", { cache: "no-store" })
       .then((r) => r.json())
       .then((payload) => {
-        if (!payload.success) return setNotFound(true);
+        if (!payload.success) { if (newDesign) setEditError(true); else setNotFound(true); return; }
         const c = (payload.data as LoadedCampaign[]).find((x) => x.id === campaignId);
         if (!c) return setNotFound(true);
         setName(c.name);
@@ -291,9 +306,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setFollowUpMessage(c.followUpMessage ?? "");
         setFollowUpDelayMinutes(c.followUpDelayMinutes ?? 0);
       })
-      .catch(() => setNotFound(true))
+      .catch(() => { if (newDesign) setEditError(true); else setNotFound(true); })
       .finally(() => setLoading(false));
-  }, [mode, campaignId]);
+  }, [mode, campaignId, newDesign, loadVersion]);
 
   // Track which posts on the selected account are already assigned to an
   // automation, so the picker can highlight them. The campaign being edited is
@@ -375,6 +390,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     thumb?: string,
     caption?: string
   ) {
+    if (newDesign) setError(null);
     setPostId(id);
     setPostUrl(url ?? null);
     setPostThumb(thumb ?? null);
@@ -385,7 +401,14 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     setDmMessage((cur) => (cur.includes("{link}") ? cur : `${cur.trim()} {link}`.trim()));
   }
 
+  const draft = { selectedAccountId, triggerScope, postId, matchMode, keywords, name, dmMessage, openingDmEnabled, openingDmMessage, openingDmButtonLabel, publicReplyEnabled, publicReplyMessages, trackedDestinationUrl, secondaryDestinationUrl, linkButtonLabel, secondaryButtonLabel, requireFollow, followPromptMessage, followPromptButtonLabel, followUpEnabled, followUpMessage, followUpDelayMinutes };
+
   async function handleSubmit(activeValue: boolean) {
+    if (newDesign) {
+      if (saving) return;
+      const issue = validateCampaignDraft(draft);
+      if (issue) { setError(t(issue)); return; }
+    }
     setError(null);
 
     if (!selectedAccountId) return setError(t("Connect an Instagram account first."));
@@ -400,7 +423,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     setSaving(true);
 
     const payload = {
-      name: name.trim() || `Campaign for @${username}`,
+      name: name.trim() || (newDesign ? t("Campaign for @{username}", { username }) : `Campaign for @${username}`),
       instagramAccountId: selectedAccountId,
       postId: triggerScope === "specific" ? postId : null,
       postUrl: triggerScope === "specific" ? postUrl : null,
@@ -418,13 +441,13 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         ? publicReplyMessages.map((m) => m.trim()).filter(Boolean)
         : [],
       trackedDestinationUrl: trackedDestinationUrl.trim() || "",
-      linkButtonLabel: linkButtonLabel.trim() || "Open link",
+      linkButtonLabel: linkButtonLabel.trim() || (newDesign ? t("Open link") : "Open link"),
       secondaryDestinationUrl: secondaryDestinationUrl.trim() || "",
-      secondaryButtonLabel: secondaryButtonLabel.trim() || "Open link",
+      secondaryButtonLabel: secondaryButtonLabel.trim() || (newDesign ? t("Open link") : "Open link"),
       requireFollow,
       followPromptMessage: requireFollow ? followPromptMessage.trim() : "",
       followPromptButtonLabel: requireFollow
-        ? followPromptButtonLabel.trim() || "i'm following"
+        ? followPromptButtonLabel.trim() || (newDesign ? t("i'm following") : "i'm following")
         : "",
       followUpEnabled,
       followUpMessage: followUpEnabled ? followUpMessage.trim() : "",
@@ -446,7 +469,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               body: JSON.stringify(payload),
             });
       const data = await res.json();
-      if (data.success) {
+      if (data.success && (!newDesign || res.ok)) {
         // The post we just assigned is now in use. Reflect it immediately so
         // the picker flags it on the next imported row — the fetch that builds
         // this map doesn't re-run while the builder stays mounted through the
@@ -482,9 +505,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         }
         // refresh() busts the router cache so the list reflects the save
         // instead of landing on a stale (empty) campaigns page.
-        router.push("/campaigns");
+        router.push(newDesign ? `/campaigns?${new URLSearchParams({ instagramAccountId: selectedAccountId })}` : "/campaigns");
         router.refresh();
       } else {
+        if (newDesign) { setError(t("Could not save the campaign. Check the settings and try again.")); return; }
         // Surface the specific field that failed validation instead of a
         // generic "Invalid input".
         const fieldErrors = data.details?.fieldErrors as
@@ -534,10 +558,15 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     router.refresh();
   }
 
+  if (newDesign && (loading || accountsLoading)) return <Skeleton label={t("Loading campaign settings")} />;
+  if (newDesign && (accountsError || editError)) return <EmptyState title={t("Campaign settings unavailable")} action={<Button onClick={() => { setAccountsLoading(true); setAccountsError(false); setEditError(false); setLoadVersion((n) => n + 1); if (mode === "edit") setLoading(true); }}>{t("Try again")}</Button>} />;
+  if (newDesign && !accounts.length) return <EmptyState title={t("Connect Instagram")} action={<a className={wizardStyles.primaryLink} href="/api/instagram/connect">{t("Connect Instagram")}</a>} />;
+
   if (loading) {
     return <div className="panel h-64 rounded" />;
   }
 
+  if (newDesign && notFound) return <EmptyState title={t("Campaign not found.")} action={<Button onClick={() => router.push("/campaigns")}>{t("Back to campaigns")}</Button>} />;
   if (notFound) {
     return (
       <div className="panel rounded p-8 text-center">
@@ -550,6 +579,41 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         </button>
       </div>
     );
+  }
+
+  if (newDesign) {
+    const configuration = <>
+      {importQueue && <div><p>{t("Imported campaigns are confirmed one at a time.")}</p><Button variant="secondary" onClick={skipRow}>{t("Skip")}</Button></div>}
+      <Input label={t("Campaign name")} value={name} maxLength={100} onChange={(e) => setName(e.target.value)} hint={t("(optional)")} />
+      <Select label={t("Instagram account")} value={selectedAccountId} disabled={mode === "edit"} onChange={(e) => { setSelectedAccountId(e.target.value); setPostId(null); setPostUrl(null); setPostThumb(null); setPostCaption(""); setAvatarUrl(null); }}>
+        {accounts.map((a) => <option key={a.id} value={a.id}>@{a.username}</option>)}
+      </Select>
+      {mode === "edit" && <p className={wizardStyles.muted}>{t("This campaign's account is fixed. Create a new campaign to use another account.")}</p>}
+      <fieldset><legend>{t("When someone comments on")}</legend>{(["specific", "any", "next"] as const).map((scope) => <label className={wizardStyles.radio} key={scope}><input type="radio" name="trigger-scope" checked={triggerScope === scope} onChange={() => setTriggerScope(scope)} />{t(scope === "specific" ? "a specific post or reel" : scope === "any" ? "any post or reel" : "next post or reel")}</label>)}</fieldset>
+      {triggerScope === "specific" && <div className={wizardStyles.picker}><PostPicker key={selectedAccountId} selectedPostId={postId} instagramAccountId={selectedAccountId} usedPostIds={usedPosts} onSelect={handlePostSelect} /></div>}
+      <fieldset><legend>{t("And this comment has")}</legend>{(["specific", "any"] as const).map((match) => <label className={wizardStyles.radio} key={match}><input type="radio" name="keyword-mode" checked={matchMode === match} onChange={() => setMatchMode(match)} />{t(match === "specific" ? "a specific word or words" : "any word")}</label>)}</fieldset>
+      {matchMode === "specific" && <Input label={t("Keywords")} value={keywordText} onChange={(e) => setKeywordText(e.target.value)} hint={t("Use commas to separate words")} />}
+      <UiToggle label={t("also reply when someone DMs")} checked={dmTriggerEnabled} onChange={(e) => setDmTriggerEnabled(e.target.checked)} />
+      {dmTriggerEnabled && <p className={wizardStyles.muted}>{t(matchMode === "any" ? "Every DM to this account gets the reply below — use with care." : "A DM containing any of these words gets the same reply, no comment needed.")}</p>}
+    </>;
+    const messages = <>
+      <UiToggle label={t("reply to their comments under the post")} checked={publicReplyEnabled} onChange={(e) => setPublicReplyEnabled(e.target.checked)} />
+      {publicReplyEnabled && <>{publicReplyMessages.map((message, index) => <div className={wizardStyles.stack} key={index}><Textarea label={t("Public reply {number}", { number: index + 1 })} maxLength={1000} value={message} onChange={(e) => setPublicReplyMessages((list) => list.map((m, i) => i === index ? e.target.value : m))} />{publicReplyMessages.length > 1 && <Button variant="secondary" onClick={() => setPublicReplyMessages((list) => list.filter((_, i) => i !== index))}>{t("Remove reply")}</Button>}</div>)}{publicReplyMessages.length < 10 && <Button variant="secondary" onClick={() => setPublicReplyMessages((list) => [...list, ""])}>{t("+ Add another reply")}</Button>}</>}
+      {publicReplyEnabled && <p className={wizardStyles.muted}>{t("One is picked at random each time, so replies don't look identical.")}</p>}
+      <UiToggle label={t("an opening DM")} checked={openingDmEnabled} onChange={(e) => setOpeningDmEnabled(e.target.checked)} />
+      {openingDmEnabled && <><Textarea label={t("Opening DM message")} maxLength={1000} value={openingDmMessage} onChange={(e) => setOpeningDmMessage(e.target.value)} /><Input label={t("Opening button label")} maxLength={64} value={openingDmButtonLabel} onChange={(e) => setOpeningDmButtonLabel(e.target.value)} /></>}
+      <Textarea label={t("Main DM message")} maxLength={1000} value={dmMessage} onChange={(e) => setDmMessage(e.target.value)} hint={t("Use {username} to personalize and {link} for the tracked link.", { username: "{username}", link: "{link}" })} />
+      <UiToggle label={t("Include a tracked link")} checked={linkOpen} onChange={(e) => { setLinkOpen(e.target.checked); if (!e.target.checked) { setTrackedDestinationUrl(""); setSecondaryDestinationUrl(""); setSecondLinkOpen(false); } }} />
+      {linkOpen && <><Input label={t("Link URL")} type="url" value={trackedDestinationUrl} onChange={(e) => setTrackedDestinationUrl(e.target.value)} onBlur={ensureLinkToken} /><Input label={t("Link button label")} maxLength={20} value={linkButtonLabel} onChange={(e) => setLinkButtonLabel(e.target.value)} /><UiToggle label={t("Include a second link")} checked={secondLinkOpen} onChange={(e) => { setSecondLinkOpen(e.target.checked); if (!e.target.checked) setSecondaryDestinationUrl(""); }} />{secondLinkOpen && <><Input label={t("Second link URL")} type="url" value={secondaryDestinationUrl} onChange={(e) => setSecondaryDestinationUrl(e.target.value)} /><Input label={t("Second button label")} maxLength={20} value={secondaryButtonLabel} onChange={(e) => setSecondaryButtonLabel(e.target.value)} /></>}</>}
+      <UiToggle label={t("a follow requirement first")} checked={requireFollow} onChange={(e) => setRequireFollow(e.target.checked)} />
+      {requireFollow && <><Textarea label={t("Follow prompt message")} maxLength={1000} value={followPromptMessage} onChange={(e) => setFollowPromptMessage(e.target.value)} /><Input label={t("Follow button label")} maxLength={20} value={followPromptButtonLabel} onChange={(e) => setFollowPromptButtonLabel(e.target.value)} /><p className={wizardStyles.muted}>{t("We send the link only after they tap the button and Instagram confirms the follow. If it can't be verified, we send it anyway.")}</p></>}
+      <UiToggle label={t("a follow-up thank-you message")} checked={followUpEnabled} onChange={(e) => setFollowUpEnabled(e.target.checked)} />
+      {followUpEnabled && <><Textarea label={t("Follow-up message")} maxLength={1000} value={followUpMessage} onChange={(e) => setFollowUpMessage(e.target.value)} /><Input label={t("Follow-up delay in minutes")} type="number" min={0} max={1440} step={1} value={followUpDelayMinutes} onChange={(e) => setFollowUpDelayMinutes(Number(e.target.value))} /></>}
+    </>;
+    const review = <><h2>{t("Review campaign settings")}</h2><dl className={wizardStyles.summary}>
+      {[[t("Campaign name"), name.trim() || t("Campaign for @{username}", { username })], [t("Instagram account"), `@${username}`], [t("When someone comments on"), triggerScope === "specific" ? `${postId ?? ""} ${postUrl ?? ""}` : t(triggerScope === "any" ? "any post or reel" : "next post or reel")], [t("Keywords"), matchMode === "any" ? t("any word") : keywords.join(", ")], [t("also reply when someone DMs"), t(dmTriggerEnabled ? "Enabled" : "Disabled")], [t("Public reply"), publicReplyEnabled ? publicReplyMessages.map((m) => m.trim()).filter(Boolean).join("\n\n") : t("Disabled")], [t("Opening DM message"), openingDmEnabled ? openingDmMessage : t("Disabled")], [t("Opening button label"), openingDmEnabled ? openingDmButtonLabel : t("Disabled")], [t("Main DM message"), dmMessage], [t("Link URL"), trackedDestinationUrl || t("Disabled")], [t("Link button label"), trackedDestinationUrl ? linkButtonLabel.trim() || t("Open link") : t("Disabled")], [t("Second link URL"), secondaryDestinationUrl || t("Disabled")], [t("Second button label"), secondaryDestinationUrl ? secondaryButtonLabel.trim() || t("Open link") : t("Disabled")], [t("Follow prompt message"), requireFollow ? followPromptMessage || t("No text configured") : t("Disabled")], [t("Follow button label"), requireFollow ? followPromptButtonLabel.trim() || t("i'm following") : t("Disabled")], [t("Follow-up message"), followUpEnabled ? followUpMessage || t("No text configured") : t("Disabled")], [t("Follow-up delay in minutes"), followUpEnabled ? String(followUpDelayMinutes) : t("Disabled")]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || t("No text configured")}</dd></div>)}
+    </dl><UiToggle label={t("Activate after confirmation")} checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /><p className={wizardStyles.muted}>{t("Activation allows future matching events to run. Confirmation does not send a test DM.")}</p></>;
+    return <CampaignWizard key={importQueue ? importQueue.length : "draft"} configuration={configuration} messages={messages} review={review} preview={<CampaignPreview tab={previewTab} onTabChange={setPreviewTab} username={username} avatarUrl={avatarUrl} postThumb={postThumb} caption={postCaption} sampleComment={keywords[0] ?? ""} dmTriggerEnabled={dmTriggerEnabled} publicReplyEnabled={publicReplyEnabled} publicReplyMessage={publicReplyMessages.find((m) => m.trim()) ?? ""} openingDmEnabled={openingDmEnabled} openingDmMessage={openingDmMessage} openingDmButtonLabel={openingDmButtonLabel} revealMessage={dmMessage} hasLink={!!trackedDestinationUrl.trim()} linkButtonLabel={linkButtonLabel} linkUrl={trackedDestinationUrl.trim() || undefined} hasSecondLink={!!secondaryDestinationUrl.trim()} secondLinkButtonLabel={secondaryButtonLabel} requireFollow={requireFollow} followPromptMessage={followPromptMessage} followPromptButtonLabel={followPromptButtonLabel} followUpEnabled={followUpEnabled} followUpMessage={followUpMessage} followUpDelayMinutes={followUpDelayMinutes} />} error={error} saving={saving} editing={mode === "edit"} validate={(step) => { const issue = validateCampaignDraft(draft, step); setError(issue ? t(issue) : null); return !issue; }} onCancel={() => router.push("/campaigns")} onSave={() => void handleSubmit(isActive)} />;
   }
 
   return (
