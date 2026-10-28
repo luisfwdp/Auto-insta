@@ -1,4 +1,6 @@
-# Campanhas e wizard — PR #19
+# Campanhas e wizard — PR #20
+
+Entrega solicitada como PR #19; o GitHub atribuiu #20 porque #19 já existe como uma correção de operações. Este é o único PR aberto para campanhas e wizard.
 
 Base: `da4a2d8` (main, PRs #17 e #18 integrados). Uma única entrega: gerenciamento de campanhas e reorganização do CampaignBuilder, sem alteração de contrato/backend. A flag `newDesign` continua desligada por padrão e não foi alterada em produção. Build e runtime precisam ter o mesmo valor, conforme `docs/feature-flags.md`.
 
