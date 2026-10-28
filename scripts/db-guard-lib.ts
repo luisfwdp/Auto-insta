@@ -149,15 +149,17 @@ export function classifyDatabaseState(publicRelations: string[]): DatabaseState 
   return publicRelations.includes("_prisma_migrations") ? "managed" : "foreign";
 }
 
-export type DataApiState = "enabled" | "disabled" | "unknown";
+export type DataApiState = "enabled" | "disabled" | "no-schema-cache" | "unknown";
 
 /**
  * Reads the Data API state from a REST probe for a table name. With the API
  * on, PostgREST answers from the `public` schema cache (200, 401/42501 for a
  * real table, or PGRST205 naming `public.<table>`). With it off, Supabase
- * points PostgREST at an empty placeholder schema, so nothing mentions
- * `public`. Anything not recognised is "unknown" and the workflow treats it
- * as a failure.
+ * points PostgREST at a placeholder schema that does not exist, so PostgREST
+ * never loads a schema cache and answers 503 PGRST002 to everything
+ * ("no-schema-cache"). That answer alone could also be a short outage, so the
+ * caller only accepts it as "disabled" when it persists while the database
+ * itself is reachable. Anything not recognised is "unknown" and fails.
  */
 export function classifyDataApiProbe(status: number, body: string): DataApiState {
   if (body.includes("pg_pgrst_no_exposed_schemas") || body.includes("pgrst_no_exposed_schemas")) {
@@ -165,6 +167,7 @@ export function classifyDataApiProbe(status: number, body: string): DataApiState
   }
   if (status >= 200 && status < 300) return "enabled";
   if (/public\./.test(body) || body.includes("42501")) return "enabled";
+  if (status === 503 && body.includes("PGRST002")) return "no-schema-cache";
   if (status === 404 && !body.includes("PGRST")) return "disabled";
   return "unknown";
 }

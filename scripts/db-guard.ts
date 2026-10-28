@@ -80,6 +80,15 @@ function checkTargets() {
   }
 }
 
+const DATA_API_PROBES = 3;
+const DATA_API_PROBE_INTERVAL_MS = 10_000;
+
+/**
+ * Passes only when the REST API serves nothing. A persistent PGRST002 counts:
+ * it is what a disabled Data API returns (PostgREST points at a schema that
+ * does not exist). The preflight connects to the database right after this,
+ * so a database outage still fails the run instead of passing here.
+ */
 async function checkDataApi() {
   const key = process.env.SUPABASE_PUBLISHABLE_KEY;
   if (!key) {
@@ -89,19 +98,31 @@ async function checkDataApi() {
   // A table that exists once migrations are applied. Its name is not secret.
   const probe = `https://${expectedRef}.supabase.co/rest/v1/Session?select=id&limit=1`;
   try {
-    const response = await fetch(probe, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(15_000),
-    });
-    const body = await response.text();
-    const state = classifyDataApiProbe(response.status, body);
-    if (state === "disabled") pass("Data API disabled", `HTTP ${response.status}`);
-    else {
+    for (let attempt = 1; attempt <= DATA_API_PROBES; attempt++) {
+      const response = await fetch(probe, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body = await response.text();
+      const state = classifyDataApiProbe(response.status, body);
+      if (state === "disabled") {
+        pass("Data API disabled", `HTTP ${response.status}`);
+        return;
+      }
+      if (state === "no-schema-cache") {
+        if (attempt < DATA_API_PROBES) {
+          await new Promise((resolve) => setTimeout(resolve, DATA_API_PROBE_INTERVAL_MS));
+          continue;
+        }
+        pass("Data API disabled", `REST serves no schema, HTTP ${response.status} PGRST002 x${DATA_API_PROBES}`);
+        return;
+      }
       fail("Data API disabled", [
         state === "enabled"
           ? `the REST API still answers from the public schema (HTTP ${response.status})`
           : `unrecognised REST response (HTTP ${response.status}); treating as enabled`,
       ]);
+      return;
     }
   } catch (error) {
     fail("Data API disabled", [`probe failed: ${(error as Error).message}`]);
