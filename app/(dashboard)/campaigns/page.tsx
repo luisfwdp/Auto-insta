@@ -6,6 +6,8 @@
  * Shows all campaigns as cards with toggle and delete.
  */
 
+import { useNewDesign } from "@/components/dashboard-shell";
+import CriapingCampaigns from "@/components/criaping-campaigns";
 import { useI18n } from "@/lib/i18n/provider";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -64,6 +66,10 @@ interface Campaign {
 }
 
 export default function CampaignsPage() {
+  return useNewDesign() ? <CriapingCampaigns /> : <LegacyCampaignsPage />;
+}
+
+function LegacyCampaignsPage() {
   const { t, label } = useI18n();
   const router = useRouter();
   const [automations, setAutomations] = useState<Campaign[]>([]);

@@ -1,0 +1,56 @@
+[
+  {
+    "device": "desktop",
+    "enabled": true,
+    "scenarios": [
+      "specific/any/next triggers",
+      "account selection and fixed edit account",
+      "public/opening/main DM, links, follow gate and follow-up",
+      "back preserves draft",
+      "zero writes before confirmation",
+      "HTTP/logical failures and confirmed success",
+      "edit PATCH",
+      "keyboard and axe"
+    ],
+    "keyboardAndActions": "passed",
+    "axe": "passed in exercised content",
+    "pageErrors": [],
+    "evidence": "temporary local fixture with intercepted API responses; no real sends or database writes"
+  },
+  {
+    "device": "tablet",
+    "enabled": true,
+    "scenarios": [
+      "specific/any/next triggers",
+      "account selection and fixed edit account",
+      "public/opening/main DM, links, follow gate and follow-up",
+      "back preserves draft",
+      "zero writes before confirmation",
+      "HTTP/logical failures and confirmed success",
+      "edit PATCH",
+      "keyboard and axe"
+    ],
+    "keyboardAndActions": "passed",
+    "axe": "passed in exercised content",
+    "pageErrors": [],
+    "evidence": "temporary local fixture with intercepted API responses; no real sends or database writes"
+  },
+  {
+    "device": "mobile",
+    "enabled": true,
+    "scenarios": [
+      "specific/any/next triggers",
+      "account selection and fixed edit account",
+      "public/opening/main DM, links, follow gate and follow-up",
+      "back preserves draft",
+      "zero writes before confirmation",
+      "HTTP/logical failures and confirmed success",
+      "edit PATCH",
+      "keyboard and axe"
+    ],
+    "keyboardAndActions": "passed",
+    "axe": "passed in exercised content",
+    "pageErrors": [],
+    "evidence": "temporary local fixture with intercepted API responses; no real sends or database writes"
+  }
+]

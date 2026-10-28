@@ -1,0 +1,50 @@
+.page { font:400 1rem/1.5 var(--cp-font-body); color:var(--cp-text); display:grid; gap:1.5rem; }
+.page h1 { font:700 clamp(1.75rem,4vw,2.5rem)/1.15 var(--cp-font-heading); }
+.page h2 { font:600 1.25rem/1.3 var(--cp-font-heading); overflow-wrap:anywhere; }
+.header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; }
+.header p,.muted { color:var(--cp-text-muted); }
+.actions { display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; }
+.link,.primaryLink { display:inline-flex; align-items:center; justify-content:center; min-height:44px; padding:0.5rem 1rem; border:1px solid var(--cp-control-border); border-radius:var(--cp-radius-md); }
+.primaryLink { background:var(--cp-neon); color:var(--cp-black); border-color:var(--cp-neon); font-weight:600; }
+.page a:focus-visible,.page button:focus-visible,.wizard button:focus-visible,.wizard a:focus-visible,.wizard input:focus-visible { outline:2px solid var(--cp-focus); outline-offset:3px; }
+.filters { display:grid; grid-template-columns:1fr 2fr 1fr; gap:1rem; align-items:end; }
+.list,.stack { display:grid; gap:1rem; }
+.wrap,.message,.summary { overflow-wrap:anywhere; white-space:pre-wrap; }
+.message { margin-block:1rem; color:var(--cp-text-muted); }
+.metrics { display:flex; flex-wrap:wrap; gap:1.5rem; margin-block:1rem; }
+.metrics dt { color:var(--cp-text-muted); font-size:0.875rem; }
+.metrics dd { font-size:1.25rem; font-weight:600; }
+.wizard { display:grid; gap:1.5rem; font-family:var(--cp-font-body); color:var(--cp-text); }
+.steps { display:flex; flex-wrap:wrap; gap:0.5rem; }
+.steps button { min-height:44px; padding:0.5rem 1rem; border:1px solid var(--cp-control-border); border-radius:var(--cp-radius-md); }
+.steps button[aria-current="step"] { color:var(--cp-neon); border-color:var(--cp-neon); }
+.steps button:disabled { color:var(--cp-disabled-text); }
+.columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(300px,400px); gap:2rem; }
+.columns > * { min-width:0; }
+.wizard fieldset { min-width:0; }
+.wizard h1 { font:700 clamp(1.75rem,4vw,2.5rem)/1.15 var(--cp-font-heading); }
+.wizard h2 { font:600 1.25rem/1.3 var(--cp-font-heading); margin-bottom:1rem; }
+.wizard legend { font-weight:600; margin-bottom:0.5rem; }
+.radio { display:flex; align-items:center; gap:0.75rem; min-height:44px; }
+.radio input { accent-color:var(--cp-neon); }
+.error { color:var(--cp-error); border:1px solid currentColor; padding:1rem; border-radius:var(--cp-radius-md); }
+.preview { display:flex; justify-content:center; padding:1rem 0; }
+.summary dt { color:var(--cp-text-muted); margin-top:1rem; }
+.summary dd { margin-top:0.25rem; }
+/* Adapt only the reused picker/Instagram mockup; never recolor legacy pages. */
+.picker { --color-surface:var(--cp-surface); --color-foreground:var(--cp-text); --color-muted:var(--cp-text-muted); --color-border:var(--cp-control-border); --color-border-hover:var(--cp-text-muted); --color-accent:var(--cp-neon); }
+.picker [class~="bg-accent"] { color:var(--cp-black); }
+.phone { --color-background:var(--cp-black); --color-surface:var(--cp-charcoal); --color-foreground:var(--cp-text); --color-muted:var(--cp-text-muted); --color-accent:var(--cp-neon); }
+.phone [class~="bg-accent"],.phone [class~="bg-accent"] * { color:var(--cp-black); }
+.phone [class~="text-zinc-500"] { color:var(--cp-text-muted); }
+@media(max-width:900px) { .filters,.columns { grid-template-columns:minmax(0,1fr); } }
+.wizard [hidden] { display:none !important; }
+/* Existing Tailwind inline tokens compile to literals; scoped overrides are
+   explicit so the reused widgets adopt CP colors without changing globals. */
+:is(.picker,.phone) [class~="text-muted"] { color:var(--cp-text-muted); }
+:is(.picker,.phone) [class~="text-foreground"] { color:var(--cp-text); }
+:is(.picker,.phone) [class~="bg-surface"] { background:var(--cp-surface); }
+:is(.picker,.phone) [class~="bg-background"] { background:var(--cp-background); }
+:is(.picker,.phone) [class~="border-border"] { border-color:var(--cp-control-border); }
+:is(.picker,.phone) [class~="bg-accent"] { background:var(--cp-neon); color:var(--cp-black); }
+.picker [class~="border-accent"] { border-color:var(--cp-neon); }
