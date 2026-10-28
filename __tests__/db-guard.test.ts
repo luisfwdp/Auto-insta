@@ -128,9 +128,16 @@ describe("classifyDataApiProbe", () => {
     expect(classifyDataApiProbe(404, "Not Found")).toBe("disabled");
   });
 
+  it("recognises the schema-cache failure a disabled API produces, but not as final", () => {
+    expect(
+      classifyDataApiProbe(503, `{"code":"PGRST002","message":"Could not query the database for the schema cache. Retrying."}`)
+    ).toBe("no-schema-cache");
+  });
+
   it("fails closed on anything else", () => {
     expect(classifyDataApiProbe(500, "upstream error")).toBe("unknown");
     expect(classifyDataApiProbe(404, `{"code":"PGRST002"}`)).toBe("unknown");
+    expect(classifyDataApiProbe(503, "Service Unavailable")).toBe("unknown");
   });
 });
 
