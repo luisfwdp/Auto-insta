@@ -1,0 +1,64 @@
+.criapingSection {
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius-lg);
+  background: var(--cp-surface);
+  color: var(--cp-text);
+  font-family: var(--cp-font-body);
+}
+
+.criapingSection h2 {
+  font-family: var(--cp-font-heading);
+}
+
+.criapingSection :global(.text-foreground) { color: var(--cp-text); }
+.criapingSection :global(.text-muted),
+.criapingSection :global(.text-zinc-500) { color: var(--cp-text-muted); }
+.criapingSection :global(.border-border) { border-color: var(--cp-border); }
+.criapingSection :global(.bg-surface),
+.criapingSection :global(.bg-surface\/70) { background: var(--cp-background); }
+.criapingSection :global(.bg-accent) {
+  background: var(--cp-action);
+  color: var(--cp-on-action);
+}
+.criapingSection :global(.bg-accent):hover { background: var(--cp-action-hover); }
+
+.criapingSection input,
+.criapingSection select {
+  min-height: var(--cp-control-height);
+  border-color: var(--cp-control-border);
+  background: var(--cp-background);
+  color: var(--cp-text);
+}
+
+.criapingSection input:focus-visible,
+.criapingSection select:focus-visible {
+  outline: var(--cp-focus-width) solid var(--cp-focus);
+  outline-offset: var(--cp-focus-offset);
+}
+
+.advancedIntegrations {
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius-lg);
+  background: var(--cp-surface);
+  color: var(--cp-text);
+}
+
+.advancedIntegrations > summary {
+  min-height: var(--cp-control-height);
+  padding: var(--cp-space-5) var(--cp-space-6);
+  cursor: pointer;
+  font: 600 var(--cp-text-base) / var(--cp-leading-tight) var(--cp-font-heading);
+}
+
+.advancedIntegrations > summary:focus-visible {
+  outline: var(--cp-focus-width) solid var(--cp-focus);
+  outline-offset: var(--cp-focus-offset);
+}
+
+.advancedIntegrations[open] > summary {
+  border-bottom: 1px solid var(--cp-border);
+}
+
+.advancedIntegrations > section {
+  margin: var(--cp-space-5);
+}

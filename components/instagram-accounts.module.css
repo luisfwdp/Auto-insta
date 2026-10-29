@@ -1,0 +1,143 @@
+.muted {
+  max-width: 68ch;
+  margin-top: var(--cp-space-3);
+  color: var(--cp-text-muted);
+  text-wrap: pretty;
+}
+
+.statusRow {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--cp-space-5);
+}
+
+.statusRow h2 {
+  font: 600 var(--cp-text-xl) / var(--cp-leading-tight) var(--cp-font-heading);
+  text-wrap: balance;
+}
+
+.success,
+.warning {
+  flex: 0 0 auto;
+  padding: var(--cp-space-1) var(--cp-space-3);
+  border: 1px solid currentColor;
+  border-radius: var(--cp-radius-pill);
+  font-size: var(--cp-text-sm);
+}
+
+.success { color: var(--cp-success); }
+.warning { color: var(--cp-warning); }
+
+.accountList {
+  display: grid;
+  gap: var(--cp-space-3);
+  margin-top: var(--cp-space-6);
+  padding: 0;
+  list-style: none;
+}
+
+.accountList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cp-space-4);
+  padding-block: var(--cp-space-4);
+  border-top: 1px solid var(--cp-border);
+}
+
+.accountIdentity {
+  display: grid;
+  min-width: 0;
+  gap: var(--cp-space-1);
+}
+
+.accountIdentity strong,
+.accountIdentity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountIdentity span { color: var(--cp-text-muted); }
+.accountIdentity small {
+  color: var(--cp-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.accountActions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--cp-space-2);
+}
+
+.inlineError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cp-space-4);
+  margin-top: var(--cp-space-5);
+  padding: var(--cp-space-4);
+  border: 1px solid var(--cp-error);
+  border-radius: var(--cp-radius-md);
+  color: var(--cp-error);
+}
+
+.emptyAccount { margin-top: var(--cp-space-6); }
+.accountLoading {
+  min-height: 7rem;
+  margin-top: var(--cp-space-5);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cp-space-3);
+  margin-top: var(--cp-space-6);
+}
+
+.primaryLink,
+.secondaryLink {
+  display: inline-flex;
+  min-height: var(--cp-control-height);
+  align-items: center;
+  justify-content: center;
+  padding: var(--cp-space-2) var(--cp-space-5);
+  border: 1px solid var(--cp-control-border);
+  border-radius: var(--cp-radius-md);
+  font-weight: 600;
+  text-align: center;
+  transition: background var(--cp-duration) var(--cp-easing),
+    border-color var(--cp-duration) var(--cp-easing);
+}
+
+.primaryLink {
+  border-color: var(--cp-action);
+  background: var(--cp-action);
+  color: var(--cp-on-action);
+}
+
+.primaryLink:hover { background: var(--cp-action-hover); }
+.primaryLink:active { background: var(--cp-action-pressed); }
+.secondaryLink:hover { background: var(--cp-surface-hover); }
+
+.primaryLink:focus-visible,
+.secondaryLink:focus-visible {
+  outline: var(--cp-focus-width) solid var(--cp-focus);
+  outline-offset: var(--cp-focus-offset);
+}
+
+@media (max-width: 47.99rem) {
+  .statusRow,
+  .accountList li,
+  .inlineError {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .primaryLink,
+  .secondaryLink { width: 100%; }
+  .accountActions { width: 100%; }
+  .accountActions > * { flex: 1 1 12rem; }
+}

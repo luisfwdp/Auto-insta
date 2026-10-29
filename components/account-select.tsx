@@ -34,9 +34,11 @@ export default function AccountSelect({
         {label ?? t("Instagram account")}
       </span>
       <select
+        name="instagramAccountId"
+        autoComplete="off"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className={`min-w-52 rounded-xl border px-3 py-2 text-sm outline-none transition-colors ${newDesign ? "border-[#828282] bg-[#1A1A1A] text-[#F5F5F5] focus:border-[#C7FF2F]" : "border-border bg-surface text-foreground focus:border-accent/40"}`}
+        className={`min-w-52 rounded-xl border px-3 py-2 text-sm transition-colors ${newDesign ? "min-h-11 border-[#828282] bg-[#1A1A1A] text-[#F5F5F5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C7FF2F]" : "border-border bg-surface text-foreground outline-none focus:border-accent/40"}`}
       >
         {includeAll && <option value="all">{t("All accounts")}</option>}
         {accounts.map((account) => (

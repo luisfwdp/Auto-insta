@@ -549,5 +549,17 @@
   "Continue": "Continuar",
   "Open link": "Abrir link",
   "No text configured": "Nenhum texto configurado",
-  "This campaign's account is fixed. Create a new campaign to use another account.": "A conta desta campanha é fixa. Para usar outra conta, crie uma nova campanha."
+  "This campaign's account is fixed. Create a new campaign to use another account.": "A conta desta campanha é fixa. Para usar outra conta, crie uma nova campanha.",
+  "Checking your Instagram connection…": "Verificando sua conexão com o Instagram…",
+  "Instagram is temporarily unavailable. Try again later.": "O Instagram está temporariamente indisponível. Tente novamente mais tarde.",
+  "The operation was refused. Review the account status and try again.": "A operação foi recusada. Revise o estado da conta e tente novamente.",
+  "We could not load your Instagram accounts. Try again.": "Não foi possível carregar suas contas do Instagram. Tente novamente.",
+  "Your account does not have permission to complete this action.": "Sua conta não tem permissão para concluir esta ação.",
+  "Your session expired. Sign in again to continue.": "Sua sessão expirou. Entre novamente para continuar.",
+  "Sign in again": "Entrar novamente",
+  "Instagram accounts": "Contas do Instagram",
+  "No Instagram account connected": "Nenhuma conta do Instagram conectada",
+  "Disconnecting…": "Desconectando…",
+  "Role": "Função",
+  "Advanced integrations": "Integrações avançadas"
 }

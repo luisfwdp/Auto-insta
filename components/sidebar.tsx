@@ -103,21 +103,23 @@ export default function Sidebar({
           <div className="mb-4"><LanguageSwitcher /></div>
           <p className={`text-sm truncate ${newDesign ? "text-[#F5F5F5]" : "text-foreground"}`}>{workspaceName}</p>
           <p className={`text-xs ${newDesign ? "text-[#B5B5B5]" : "text-muted"}`}>{t("Self-hosted")}</p>
-          <a
-            href={zernioLink({ placement: "sidebar" })}
-            target="_blank"
-            rel="sponsored noopener noreferrer"
-            className="mt-4 flex items-center gap-3 text-xs text-muted hover:text-foreground"
-          >
-            <span>{t("Supported by")}</span>
-            <Image
-              src="/brand/zernio-primary.svg"
-              alt="Zernio"
-              width={64}
-              height={20}
-              className="m-2"
-            />
-          </a>
+          {!newDesign ? (
+            <a
+              href={zernioLink({ placement: "sidebar" })}
+              target="_blank"
+              rel="sponsored noopener noreferrer"
+              className="mt-4 flex items-center gap-3 text-xs text-muted hover:text-foreground"
+            >
+              <span>{t("Supported by")}</span>
+              <Image
+                src="/brand/zernio-primary.svg"
+                alt="Zernio"
+                width={64}
+                height={20}
+                className="m-2"
+              />
+            </a>
+          ) : null}
         </div>
       </aside>
     </>

@@ -549,5 +549,17 @@
   "Continue": "繼續",
   "Open link": "開啟連結",
   "No text configured": "尚未設定文字",
-  "This campaign's account is fixed. Create a new campaign to use another account.": "此行銷活動的帳號無法變更。如需使用其他帳號，請建立新的行銷活動。"
+  "This campaign's account is fixed. Create a new campaign to use another account.": "此行銷活動的帳號無法變更。如需使用其他帳號，請建立新的行銷活動。",
+  "Checking your Instagram connection…": "正在檢查你的 Instagram 連線…",
+  "Instagram is temporarily unavailable. Try again later.": "Instagram 暫時無法使用，請稍後再試。",
+  "The operation was refused. Review the account status and try again.": "操作遭到拒絕。請檢查帳號狀態後再試。",
+  "We could not load your Instagram accounts. Try again.": "無法載入你的 Instagram 帳號，請再試一次。",
+  "Your account does not have permission to complete this action.": "你的帳號沒有權限完成此操作。",
+  "Your session expired. Sign in again to continue.": "工作階段已過期。請重新登入後繼續。",
+  "Sign in again": "重新登入",
+  "Instagram accounts": "Instagram 帳號",
+  "No Instagram account connected": "尚未連接 Instagram 帳號",
+  "Disconnecting…": "正在中斷連線…",
+  "Role": "角色",
+  "Advanced integrations": "進階整合"
 }
