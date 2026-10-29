@@ -8,6 +8,8 @@
  * live in the top bar.
  */
 
+import { useNewDesign } from "@/components/dashboard-shell";
+import CriapingCampaignDetail from "@/components/criaping-campaign-detail";
 import { useI18n } from "@/lib/i18n/provider";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -58,6 +60,10 @@ interface Campaign {
 type Tab = "insights" | "preview";
 
 export default function CampaignDetailPage() {
+  return useNewDesign() ? <CriapingCampaignDetail /> : <LegacyCampaignDetailPage />;
+}
+
+function LegacyCampaignDetailPage() {
   const { t } = useI18n();
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
