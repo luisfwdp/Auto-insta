@@ -1,6 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const PROTECTED_PREFIXES = ["/dashboard", "/automations", "/logs", "/settings"];
+// Every page under app/(dashboard). The layout there already refuses requests
+// without a session; this redirect only keeps the page the user asked for in
+// callbackUrl so the magic link brings them back to it.
+export const PROTECTED_PREFIXES = [
+  "/dashboard",
+  "/overview",
+  "/campaigns",
+  "/automations",
+  "/inbox",
+  "/logs",
+  "/diagnostics",
+  "/settings",
+];
 
 function hasSessionCookie(request: NextRequest): boolean {
   return (
@@ -35,8 +47,12 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     "/dashboard/:path*",
+    "/overview/:path*",
+    "/campaigns/:path*",
     "/automations/:path*",
+    "/inbox/:path*",
     "/logs/:path*",
+    "/diagnostics/:path*",
     "/settings/:path*",
     "/login",
   ],
