@@ -60,7 +60,8 @@ interface Campaign {
 type Tab = "insights" | "preview";
 
 export default function CampaignDetailPage() {
-  return useNewDesign() ? <CriapingCampaignDetail /> : <LegacyCampaignDetailPage />;
+  const { id } = useParams<{ id: string }>();
+  return useNewDesign() ? <CriapingCampaignDetail key={id} /> : <LegacyCampaignDetailPage />;
 }
 
 function LegacyCampaignDetailPage() {
