@@ -39,5 +39,5 @@ de escrita. Evidência: onboarding-screenshots/checks.json e 15 screenshots.
 
 Vitest on/off: 396 aprovados, 40 ignorados pelas condições existentes da suíte
 (incluem dependências de Postgres descartável). Nenhum teste removido/desabilitado.
-Build com newDesign ligado aprovado após instalar dependências e gerar cliente
+Builds com newDesign ligado/desligado aprovados após instalar dependências e gerar cliente
 localmente; links simbólicos entre worktrees não são usados no build final.
