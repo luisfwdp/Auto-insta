@@ -1,0 +1,77 @@
+[
+  {
+    "device": "desktop",
+    "state": "empty",
+    "axeViolations": 0
+  },
+  {
+    "device": "desktop",
+    "state": "accounts",
+    "axeViolations": 0
+  },
+  {
+    "device": "desktop",
+    "state": "error",
+    "axeViolations": 0
+  },
+  {
+    "device": "desktop",
+    "state": "expired",
+    "axeViolations": 0
+  },
+  {
+    "device": "desktop",
+    "state": "forbidden",
+    "axeViolations": 0
+  },
+  {
+    "device": "tablet",
+    "state": "empty",
+    "axeViolations": 0
+  },
+  {
+    "device": "tablet",
+    "state": "accounts",
+    "axeViolations": 0
+  },
+  {
+    "device": "tablet",
+    "state": "error",
+    "axeViolations": 0
+  },
+  {
+    "device": "tablet",
+    "state": "expired",
+    "axeViolations": 0
+  },
+  {
+    "device": "tablet",
+    "state": "forbidden",
+    "axeViolations": 0
+  },
+  {
+    "device": "mobile",
+    "state": "empty",
+    "axeViolations": 0
+  },
+  {
+    "device": "mobile",
+    "state": "accounts",
+    "axeViolations": 0
+  },
+  {
+    "device": "mobile",
+    "state": "error",
+    "axeViolations": 0
+  },
+  {
+    "device": "mobile",
+    "state": "expired",
+    "axeViolations": 0
+  },
+  {
+    "device": "mobile",
+    "state": "forbidden",
+    "axeViolations": 0
+  }
+]
