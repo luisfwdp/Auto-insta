@@ -8,10 +8,12 @@ import {
   canManageWorkspace,
   getCurrentWorkspaceContext,
 } from "@/lib/workspace-access";
+import { httpUrl } from "@/lib/api/http-url";
 
 const campaignSchema = z.object({
   postId: z.string().min(1),
-  postUrl: z.string().optional().nullable(),
+  // Older exports can carry an empty postUrl; it is stored as null.
+  postUrl: z.union([httpUrl, z.literal("")]).optional().nullable(),
   keywords: z.array(z.string().min(1).max(50)).min(1).max(10),
   dmMessage: z.string().min(1).max(1000),
   name: z.string().max(100).optional().nullable(),
@@ -93,7 +95,7 @@ export async function POST(request: NextRequest) {
         name,
         goal: (campaign.goal ?? "").trim().slice(0, 120) || null,
         postId: campaign.postId,
-        postUrl: campaign.postUrl ?? null,
+        postUrl: campaign.postUrl || null,
         keywords: campaign.keywords,
         dmMessage: campaign.dmMessage.slice(0, 1000),
         publicReplyEnabled: Boolean(publicReply),
