@@ -1,4 +1,4 @@
-// Requires the temporary fixture from prepare-onboarding-review.mjs.
+// Requires the temporary fixture from prepare-instagram-accounts-review.mjs.
 // All API data is intercepted locally; no production API or mutation is used.
 import { createRequire } from "node:module";
 import assert from "node:assert/strict";
@@ -14,7 +14,7 @@ const require = createRequire(
 const { chromium } = require("playwright");
 const { default: AxeBuilder } = require("@axe-core/playwright");
 const base = process.env.CRIAPING_REVIEW_URL || "http://127.0.0.1:3000";
-const output = "docs/criaping/onboarding-screenshots";
+const output = "docs/criaping/instagram-accounts-screenshots";
 await mkdir(output, { recursive: true });
 
 const accounts = [
@@ -82,7 +82,7 @@ try {
     const page = await context.newPage();
     const errors = [];
     const mutations = [];
-    let accountScenario = "connected";
+    let statsScenario = "connected";
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("dialog", (dialog) => dialog.accept());
 
@@ -100,8 +100,8 @@ try {
         throw new Error(`Unexpected mutation: ${request.method()} ${url.pathname}`);
       }
 
-      if (url.pathname === "/api/instagram/accounts") {
-        if (accountScenario === "session") {
+      if (url.pathname === "/api/dashboard/stats") {
+        if (statsScenario === "session") {
           return route.fulfill({
             status: 401,
             json: { success: false, error: "Fixture unauthorized" },
@@ -111,22 +111,11 @@ try {
           json: {
             success: true,
             data: {
-              instagramAccounts:
-                accountScenario === "empty" ? [] : accounts,
-              selectedInstagramAccountId: accountScenario === "empty" ? null : "ig-1",
-            },
-          },
-        });
-      }
-
-      if (url.pathname === "/api/dashboard/stats") {
-        return route.fulfill({
-          json: {
-            success: true,
-            data: {
               workspace: { name: "Creator Lab", dmsSentThisPeriod: 12 },
-              instagramAccount: accounts[0],
-              instagramAccounts: accounts,
+              instagramAccount:
+                statsScenario === "empty" ? null : accounts[0],
+              instagramAccounts:
+                statsScenario === "empty" ? [] : accounts,
             },
           },
         });
@@ -154,14 +143,14 @@ try {
       throw new Error(`Unexpected read: ${url.pathname}`);
     });
 
-    const visit = (query) =>
-      page.goto(`${base}/design-system/onboarding-review?${query}`);
+    const visit = (count = 2) =>
+      page.goto(`${base}/design-system/instagram-accounts-review?count=${count}`);
 
-    accountScenario = "connected";
-    await visit("screen=onboarding&meta=on&count=2");
-    await page.getByRole("heading", { name: "Instagram conectado" }).waitFor();
+    statsScenario = "connected";
+    await visit(2);
+    await page.getByRole("heading", { name: "Contas do Instagram" }).waitFor();
     await audit(page);
-    await screenshot(page, "onboarding-connected", device);
+    await screenshot(page, "connected", device);
     assert.match(
       await page
         .getByRole("link", { name: "Criar campanha" })
@@ -170,44 +159,28 @@ try {
       /instagramAccountId=ig-1/,
     );
 
-    accountScenario = "empty";
-    await visit("screen=onboarding&meta=on&count=0");
-    await page.getByRole("link", { name: "Conectar Instagram" }).waitFor();
+    statsScenario = "empty";
+    await visit(0);
+    await page.getByText("Nenhuma conta do Instagram conectada").waitFor();
     await audit(page);
-    await screenshot(page, "onboarding-connect", device);
+    await screenshot(page, "empty", device);
 
-    await visit("screen=onboarding&meta=off&count=0");
-    await page.getByRole("heading", { name: "A Meta não está configurada" }).waitFor();
-    assert.equal(
-      await page
-        .getByRole("main")
-        .getByRole("link", { name: "Conectar Instagram" })
-        .count(),
-      0,
-    );
+    statsScenario = "session";
+    await visit(0);
+    await page.getByRole("link", { name: "Entrar novamente" }).waitFor();
     await audit(page);
-    await screenshot(page, "onboarding-meta-missing", device);
-
-    accountScenario = "connected";
-    await visit("screen=settings&count=2");
-    await page.getByRole("heading", { name: "Contas do Instagram" }).waitFor();
-    await audit(page);
-    await screenshot(page, "instagram-accounts", device);
+    await screenshot(page, "session-expired", device);
 
     if (device === "desktop") {
+      statsScenario = "connected";
+      await visit(2);
       await page
         .getByRole("button", { name: "Desconectar", exact: true })
         .first()
         .click();
       await page.getByText("A operação foi recusada.", { exact: false }).waitFor();
       await audit(page);
-      await screenshot(page, "instagram-operation-refused", device);
-
-      accountScenario = "session";
-      await visit("screen=onboarding&meta=on&count=0");
-      await page.getByRole("link", { name: "Entrar novamente" }).waitFor();
-      await audit(page);
-      await screenshot(page, "onboarding-session-expired", device);
+      await screenshot(page, "operation-refused", device);
     }
 
     assert.deepEqual(errors, []);
@@ -218,7 +191,7 @@ try {
     report.push({
       device,
       axe: "passed",
-      horizontalOverflow: false,
+      overflow: false,
       pageErrors: errors,
       mockedMutations: mutations,
     });
@@ -228,8 +201,5 @@ try {
   await browser.close();
 }
 
-await writeFile(
-  `${output}/checks.json`,
-  `${JSON.stringify(report, null, 2)}\n`,
-);
-console.log(JSON.stringify(report));
+await writeFile(`${output}/checks.json`, `${JSON.stringify(report, null, 2)}\n`);
+console.log(JSON.stringify(report, null, 2));

@@ -5,7 +5,7 @@ import type { AccountOption } from "@/components/account-select";
 import type { RequestFailure } from "@/components/request-failure";
 import { Button, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { useI18n } from "@/lib/i18n/provider";
-import styles from "./onboarding.module.css";
+import styles from "./instagram-accounts.module.css";
 
 export type InstagramAccountSummary = AccountOption & {
   provider?: "META" | "ZERNIO";

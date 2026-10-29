@@ -2,7 +2,7 @@
   {
     "device": "desktop",
     "axe": "passed",
-    "horizontalOverflow": false,
+    "overflow": false,
     "pageErrors": [],
     "mockedMutations": [
       {
@@ -14,14 +14,14 @@
   {
     "device": "tablet",
     "axe": "passed",
-    "horizontalOverflow": false,
+    "overflow": false,
     "pageErrors": [],
     "mockedMutations": []
   },
   {
     "device": "mobile",
     "axe": "passed",
-    "horizontalOverflow": false,
+    "overflow": false,
     "pageErrors": [],
     "mockedMutations": []
   }
