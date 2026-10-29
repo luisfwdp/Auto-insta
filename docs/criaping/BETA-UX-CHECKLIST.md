@@ -93,3 +93,8 @@ desabilitado para esta entrega. Banco/Meta não exercitados.
 Próximo marco: revisão dos PRs e auditoria das telas ainda pendentes, seguida de
 uma jornada real em homologação (login → conta → campanha pausada → edição → relatório),
 sem enviar DMs a pessoas reais e antes de liberar o beta.
+
+Rascunhos independentes: [detalhes #24](https://github.com/luisfwdp/Auto-insta/pull/24),
+[onboarding/contas #26](https://github.com/luisfwdp/Auto-insta/pull/26).
+Onboarding: 15 combinações de estado/tamanho passaram com Playwright/axe,
+zero escritas; typecheck, lint, Vitest e builds on/off aprovados.
