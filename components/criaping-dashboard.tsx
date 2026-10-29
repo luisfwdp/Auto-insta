@@ -62,7 +62,7 @@ export default function CriapingDashboard({ stats, loading, error, selectedAccou
       {stats.instagramAccounts.length > 1 && <AccountSelect newDesign accounts={stats.instagramAccounts} value={selectedAccountId} onChange={onAccountChange} />}
     </header>
 
-    {noAccount ? <EmptyState title={t("Connect Instagram")} description={t("Connect an Instagram professional account to launch campaigns.")} action={<a href="/api/instagram/connect" className={actionClasses}>{t("Connect Instagram")}</a>} /> : noCampaign ? <EmptyState title={t("No campaigns yet")} description={t("Create your first comment-to-DM campaign to turn a post or reel into a measurable conversation flow.")} action={<Link href="/campaigns/new" className={actionClasses}>{t("Create Campaign")}</Link>} /> : null}
+    {noAccount ? <EmptyState title={t("Connect Instagram")} description={t("Connect an Instagram professional account to launch campaigns.")} action={<Link href="/onboarding" className={actionClasses}>{t("Start setup")}</Link>} /> : noCampaign ? <EmptyState title={t("No campaigns yet")} description={t("Create your first comment-to-DM campaign to turn a post or reel into a measurable conversation flow.")} action={<Link href="/campaigns/new" className={actionClasses}>{t("Create Campaign")}</Link>} /> : null}
 
     <section aria-label={t("Dashboard")} className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {metrics.map(([name, value]) => <article key={name} className={metricClasses}>

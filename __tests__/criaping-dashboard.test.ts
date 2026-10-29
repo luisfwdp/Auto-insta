@@ -40,7 +40,7 @@ describe("CRIA PING operational dashboard", () => {
   it("guides a new account without inventing results", () => {
     const html = render({ stats: { ...stats, totalAutomations: 0, activeAutomations: 0, totalDMs: 0, totalClicks: 0, instagramAccounts: [] } });
     expect(html).toContain("Connect Instagram");
-    expect(html).toContain("/api/instagram/connect");
+    expect(html).toContain("/onboarding");
   });
 
   it("shows the campaign empty state only after an account exists", () => {

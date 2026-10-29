@@ -1,0 +1,28 @@
+[
+  {
+    "device": "desktop",
+    "axe": "passed",
+    "horizontalOverflow": false,
+    "pageErrors": [],
+    "mockedMutations": [
+      {
+        "method": "POST",
+        "path": "/api/instagram/disconnect"
+      }
+    ]
+  },
+  {
+    "device": "tablet",
+    "axe": "passed",
+    "horizontalOverflow": false,
+    "pageErrors": [],
+    "mockedMutations": []
+  },
+  {
+    "device": "mobile",
+    "axe": "passed",
+    "horizontalOverflow": false,
+    "pageErrors": [],
+    "mockedMutations": []
+  }
+]

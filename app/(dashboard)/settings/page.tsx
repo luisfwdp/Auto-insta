@@ -3,9 +3,18 @@
 import LanguageSwitcher from "@/components/language-switcher";
 import { useI18n } from "@/lib/i18n/provider";
 import { Suspense, useEffect, useState } from "react";
-import type { AccountOption } from "@/components/account-select";
 import { ZernioConnection } from "@/components/zernio-connection";
 import { InstagramConnectNotice } from "@/components/instagram-connect-notice";
+import { useNewDesign } from "@/components/dashboard-shell";
+import {
+  CriapingInstagramAccounts,
+  type InstagramAccountSummary,
+} from "@/components/criaping-instagram-accounts";
+import {
+  classifyRequestFailure,
+  type RequestFailure,
+} from "@/components/request-failure";
+import styles from "./settings.module.css";
 
 interface SettingsData {
   workspace: {
@@ -19,13 +28,7 @@ interface SettingsData {
     tokenExpiresAt: string | null;
     webhookSubscribed: boolean;
   } | null;
-  instagramAccounts: Array<
-    AccountOption & {
-      provider?: "META" | "ZERNIO";
-      tokenExpiresAt: string | null;
-      webhookSubscribed: boolean;
-    }
-  >;
+  instagramAccounts: InstagramAccountSummary[];
 }
 
 interface WorkspaceMembersData {
@@ -51,6 +54,7 @@ interface WorkspaceMembersData {
 
 export default function SettingsPage() {
   const { t, label, locale } = useI18n();
+  const newDesign = useNewDesign();
   const [data, setData] = useState<SettingsData | null>(null);
   const [membersData, setMembersData] = useState<WorkspaceMembersData | null>(
     null
@@ -60,18 +64,39 @@ export default function SettingsPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"ADMIN" | "MEMBER">("MEMBER");
   const [memberError, setMemberError] = useState<string | null>(null);
+  const [accountFailure, setAccountFailure] =
+    useState<RequestFailure | null>(null);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [settingsReload, setSettingsReload] = useState(0);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/dashboard/stats").then((res) => res.json()),
+    Promise.allSettled([
+      fetch("/api/dashboard/stats").then(async (response) => ({
+        status: response.status,
+        payload: await response.json(),
+      })),
       fetch("/api/workspace/members").then((res) => res.json()),
     ])
-      .then(([statsPayload, membersPayload]) => {
-        if (statsPayload.success) setData(statsPayload.data);
-        if (membersPayload.success) setMembersData(membersPayload.data);
+      .then(([statsRequest, membersRequest]) => {
+        if (statsRequest.status === "fulfilled") {
+          const statsResult = statsRequest.value;
+          if (statsResult.payload.success) setData(statsResult.payload.data);
+          else setAccountFailure(classifyRequestFailure(statsResult.status));
+        } else {
+          setAccountFailure("api");
+        }
+        if (
+          membersRequest.status === "fulfilled" &&
+          membersRequest.value.success
+        ) {
+          setMembersData(membersRequest.value.data);
+        }
       })
-      .finally(() => setLoading(false));
-  }, []);
+      .finally(() => {
+        setLoading(false);
+        setAccountsLoading(false);
+      });
+  }, [settingsReload]);
 
   async function refreshMembers() {
     const res = await fetch("/api/workspace/members");
@@ -85,12 +110,24 @@ export default function SettingsPage() {
     }
 
     setBusy(`disconnect:${instagramAccountId}`);
-    await fetch("/api/instagram/disconnect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instagramAccountId }),
-    });
-    window.location.reload();
+    setAccountFailure(null);
+    try {
+      const response = await fetch("/api/instagram/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instagramAccountId }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) {
+        setAccountFailure(classifyRequestFailure(response.status));
+        setBusy(null);
+        return;
+      }
+      window.location.reload();
+    } catch {
+      setAccountFailure("api");
+      setBusy(null);
+    }
   }
 
   async function inviteMember(event: React.FormEvent) {
@@ -133,7 +170,7 @@ export default function SettingsPage() {
     membersData?.currentUserRole === "ADMIN";
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
+    <div className={`${newDesign ? "max-w-3xl font-[family-name:var(--cp-font-body)]" : "max-w-2xl"} mx-auto space-y-8`}>
       {/* Surfaces the ?instagram= code the OAuth routes redirect back with.
           Needs a Suspense boundary: useSearchParams in a prerendered client
           page fails the production build without one. */}
@@ -141,14 +178,28 @@ export default function SettingsPage() {
         <InstagramConnectNotice />
       </Suspense>
 
-      <section className="panel rounded p-4 sm:p-6 space-y-3">
+      <section className={`${newDesign ? styles.criapingSection : "panel rounded"} p-4 sm:p-6 space-y-3`}>
         <h2 className="text-base font-semibold">{t("Interface language")}</h2>
         <LanguageSwitcher />
         <p className="text-sm text-muted">{t("Saved in this browser. Campaign messages stay unchanged.")}</p>
       </section>
 
-      <ZernioConnection canManage={canManageMembers} />
+      {!newDesign ? <ZernioConnection canManage={canManageMembers} /> : null}
 
+      {newDesign ? (
+        <CriapingInstagramAccounts
+          accounts={accounts}
+          loading={accountsLoading}
+          busyAccountId={busy?.startsWith("disconnect:") ? busy.slice(11) : null}
+          failure={accountFailure}
+          onDisconnect={(accountId) => void disconnectInstagram(accountId)}
+          onRetry={() => {
+            setAccountFailure(null);
+            setAccountsLoading(true);
+            setSettingsReload((current) => current + 1);
+          }}
+        />
+      ) : (
       <section className="panel rounded p-4 sm:p-6">
         <h2 className="text-base font-semibold mb-6">{t("Instagram Connection")}</h2>
 
@@ -229,8 +280,16 @@ export default function SettingsPage() {
           </a>
         </div>
       </section>
+      )}
 
-      <section className="panel rounded p-4 sm:p-6">
+      {newDesign ? (
+        <details className={styles.advancedIntegrations}>
+          <summary>{t("Advanced integrations")}</summary>
+          <ZernioConnection canManage={canManageMembers} advanced />
+        </details>
+      ) : null}
+
+      <section className={`${newDesign ? styles.criapingSection : "panel rounded"} p-4 sm:p-6`}>
         <h2 className="text-base font-semibold mb-6">{t("Team")}</h2>
         <div className="space-y-3">
           {membersData?.members.map((member) => (
@@ -301,6 +360,7 @@ export default function SettingsPage() {
             className="mt-6 grid gap-3 border-t border-border pt-4 sm:grid-cols-[1fr_140px_auto]"
           >
             <input
+              aria-label={t("Work email")}
               type="email"
               value={inviteEmail}
               onChange={(event) => setInviteEmail(event.target.value)}
@@ -309,6 +369,7 @@ export default function SettingsPage() {
               required
             />
             <select
+              aria-label={t("Role")}
               value={inviteRole}
               onChange={(event) =>
                 setInviteRole(event.target.value as "ADMIN" | "MEMBER")
@@ -332,7 +393,7 @@ export default function SettingsPage() {
         )}
       </section>
 
-      <section className="panel rounded p-4 sm:p-6">
+      <section className={`${newDesign ? styles.criapingSection : "panel rounded"} p-4 sm:p-6`}>
         <h2 className="text-base font-semibold mb-6">{t("Usage")}</h2>
         <div className="flex items-center justify-between gap-3 py-3">
           <div>
