@@ -14,12 +14,15 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:check": "tsx scripts/check-db-pooler.ts",
+    "mcp:dev": "tsx scripts/mcp-server.ts",
     "worker": "tsx worker/dm-worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@vercel/analytics": "^2.0.1",
@@ -32,9 +35,10 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
-    "zod": "^4.3.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.1",
@@ -49,5 +53,11 @@
     "tsx": "^4.22.1",
     "typescript": "^5",
     "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "@modelcontextprotocol/node": {
+      "@hono/node-server": "2.1.5",
+      "hono": "4.13.14"
+    }
   }
 }
