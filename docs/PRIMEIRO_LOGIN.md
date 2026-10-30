@@ -82,7 +82,7 @@ O login usa só estas variáveis (todas em **Production**, nenhuma em Preview):
 | `DATABASE_URL` | falta | Transaction pooler (6543) |
 | `NEXTAUTH_URL` | ok | `https://auto-insta-luisfwdp-2259s-projects.vercel.app`. Muda junto com o domínio próprio |
 | `NEXTAUTH_SECRET` | falta | No seu terminal: `openssl rand -base64 32` |
-| `RESEND_API_KEY` **ou** `EMAIL_SERVER` | falta | 1.5 |
+| `RESEND_API_KEY` | falta | 1.5 |
 | `EMAIL_FROM` | falta | `CRIA PING <login@seu-dominio>` |
 | `ALLOWED_EMAILS` | falta | 1.6 |
 | `ALLOWED_EMAILS_REQUIRED` | ok (`true`) | — |
@@ -102,8 +102,6 @@ O Redis abre a conexão só quando é usado, então `REDIS_URL` não bloqueia o 
 5. `EMAIL_FROM` = `CRIA PING <login@mail.seu-dominio>`. O endereço precisa ser do domínio verificado.
 
 Atalho só para o seu primeiro teste: sem domínio, o Resend aceita `EMAIL_FROM=CRIA PING <onboarding@resend.dev>`, mas entrega apenas para o e-mail dono da conta Resend.
-
-SMTP próprio em vez de Resend: `EMAIL_SERVER=smtp://usuario:senha@host:587` (Sensitive). Com ele definido, o Resend é ignorado.
 
 ### 1.6 Quem entra
 

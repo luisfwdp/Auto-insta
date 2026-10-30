@@ -59,7 +59,7 @@ Fonte da verdade: rotas, schemas de validação e serviços já presentes neste 
 
 - GitHub `production-database`: os dois segredos de pooler existem; há revisor obrigatório (`luisfwdp`) e a única branch autorizada é `main`.
 - Faltam no mesmo ambiente as variáveis não secretas `EXPECTED_PROJECT_REF` e `SUPABASE_PUBLISHABLE_KEY`. O único preflight executado falhou exatamente por `EXPECTED_PROJECT_REF` vazio; ele não chegou a validar Data API, conexão ou estado do banco.
-- Vercel `auto-insta`: existem somente `NEXTAUTH_URL`, `ALLOWED_EMAILS_REQUIRED=true` e `META_GRAPH_API_VERSION`. Portanto o login ainda está bloqueado pela ausência de `DATABASE_URL`, `NEXTAUTH_SECRET`, transporte de email (`RESEND_API_KEY` ou `EMAIL_SERVER`), `EMAIL_FROM` e `ALLOWED_EMAILS`.
+- Vercel `auto-insta`: existem somente `NEXTAUTH_URL`, `ALLOWED_EMAILS_REQUIRED=true` e `META_GRAPH_API_VERSION`. Portanto o login ainda está bloqueado pela ausência de `DATABASE_URL`, `NEXTAUTH_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM` e `ALLOWED_EMAILS`.
 - Depois do login, conectar o Instagram ainda requer `ENCRYPTION_KEY`, `INSTAGRAM_APP_ID` e `INSTAGRAM_APP_SECRET`. Operação real requer também segredos de webhook/cron, Redis e worker.
 - A desativação atual da Data API não pôde ser comprovada pelo workflow enquanto as duas variáveis do preflight estiverem ausentes.
 
