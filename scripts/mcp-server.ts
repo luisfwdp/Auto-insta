@@ -15,40 +15,53 @@ function configuredPort(value: string | undefined) {
   return port;
 }
 
-const localServer = createLocalMcpServer();
-const address = await localServer.listen(
-  configuredPort(process.env.PINGCHAT_MCP_PORT)
-);
-
-console.info(
-  JSON.stringify({
-    level: "info",
-    event: "mcp_server_started",
-    mcpUrl: address.mcpUrl,
-    healthUrl: address.healthUrl,
-  })
-);
-
-let shuttingDown = false;
-async function shutdown(signal: NodeJS.Signals) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.info(
-    JSON.stringify({ level: "info", event: "mcp_server_stopping", signal })
+async function main() {
+  const localServer = createLocalMcpServer();
+  const address = await localServer.listen(
+    configuredPort(process.env.PINGCHAT_MCP_PORT)
   );
-  try {
-    await localServer.close();
-  } catch (error) {
-    process.exitCode = 1;
-    console.error(
-      JSON.stringify({
-        level: "error",
-        event: "mcp_server_shutdown_failed",
-        errorName: error instanceof Error ? error.name : "UnknownError",
-      })
+
+  console.info(
+    JSON.stringify({
+      level: "info",
+      event: "mcp_server_started",
+      mcpUrl: address.mcpUrl,
+      healthUrl: address.healthUrl,
+    })
+  );
+
+  let shuttingDown = false;
+  async function shutdown(signal: NodeJS.Signals) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.info(
+      JSON.stringify({ level: "info", event: "mcp_server_stopping", signal })
     );
+    try {
+      await localServer.close();
+    } catch (error) {
+      process.exitCode = 1;
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "mcp_server_shutdown_failed",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        })
+      );
+    }
   }
+
+  process.once("SIGINT", () => void shutdown("SIGINT"));
+  process.once("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
-process.once("SIGINT", () => void shutdown("SIGINT"));
-process.once("SIGTERM", () => void shutdown("SIGTERM"));
+void main().catch((error: unknown) => {
+  process.exitCode = 1;
+  console.error(
+    JSON.stringify({
+      level: "error",
+      event: "mcp_server_start_failed",
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    })
+  );
+});
