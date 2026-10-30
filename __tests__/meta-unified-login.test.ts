@@ -37,6 +37,9 @@ describe("Meta Unified Login", () => {
     );
     expect(url.searchParams.get("client_id")).toBe("app_123");
     expect(url.searchParams.get("config_id")).toBe("config_123");
+    expect(url.searchParams.get("override_default_response_type")).toBe(
+      "true"
+    );
     expect(url.searchParams.get("state")).toBe("state");
   });
 

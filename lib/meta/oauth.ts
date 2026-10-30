@@ -100,6 +100,7 @@ export function getAuthorizationUrl(redirectUri: string, state: string): string 
       redirect_uri: redirectUri,
       response_type: "code",
       display: "popup",
+      override_default_response_type: "true",
       prompt: "login",
       state,
     });
