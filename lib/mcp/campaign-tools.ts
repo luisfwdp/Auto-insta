@@ -191,6 +191,25 @@ function result(value: unknown) {
   };
 }
 
+async function safeResult(operation: () => Promise<unknown>) {
+  try {
+    return result(await operation());
+  } catch (error) {
+    const message =
+      error instanceof Error &&
+      [
+        "Draft not found in the authorized workspace",
+        "Instagram account not found in the authorized workspace",
+      ].includes(error.message)
+        ? error.message
+        : "PING CHAT could not complete this operation";
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }],
+      isError: true,
+    };
+  }
+}
+
 export function registerCampaignTools(server: McpServer, service: McpCampaignService) {
   server.registerTool(
     "get_campaign_capabilities",
@@ -207,12 +226,12 @@ export function registerCampaignTools(server: McpServer, service: McpCampaignSer
   server.registerTool(
     "list_instagram_accounts",
     { description: "List Instagram accounts in the pre-authorized workspace" },
-    async () => result(await service.listAccounts())
+    async () => safeResult(() => service.listAccounts())
   );
   server.registerTool(
     "list_campaigns",
     { description: "List campaigns and drafts in the pre-authorized workspace" },
-    async () => result(await service.listCampaigns())
+    async () => safeResult(() => service.listCampaigns())
   );
   server.registerTool(
     "create_campaign_draft",
@@ -220,7 +239,7 @@ export function registerCampaignTools(server: McpServer, service: McpCampaignSer
       description: "Persist an inactive campaign draft. This never sends messages or activates the campaign.",
       inputSchema: draftInputSchema,
     },
-    async (input) => result(await service.createDraft(input))
+    async (input) => safeResult(() => service.createDraft(input))
   );
   server.registerTool(
     "preview_campaign_draft",
@@ -228,7 +247,7 @@ export function registerCampaignTools(server: McpServer, service: McpCampaignSer
       description: "Return the canonical preview and impact of an inactive draft",
       inputSchema: z.object({ draft_id: z.string().min(1) }),
     },
-    async ({ draft_id }) => result(await service.previewDraft(draft_id))
+    async ({ draft_id }) => safeResult(() => service.previewDraft(draft_id))
   );
   server.registerTool(
     "prepare_campaign_activation",
@@ -236,6 +255,6 @@ export function registerCampaignTools(server: McpServer, service: McpCampaignSer
       description: "Return a PING CHAT approval URL. This tool never activates a campaign.",
       inputSchema: z.object({ draft_id: z.string().min(1) }),
     },
-    async ({ draft_id }) => result(await service.prepareActivation(draft_id))
+    async ({ draft_id }) => safeResult(() => service.prepareActivation(draft_id))
   );
 }

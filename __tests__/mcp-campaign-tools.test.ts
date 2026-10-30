@@ -91,4 +91,22 @@ describe("PING CHAT MCP campaign tools", () => {
       result: { status: "AWAITING_HUMAN_APPROVAL" },
     });
   });
+
+  it("redacts unexpected database errors", async () => {
+    vi.mocked(service.listCampaigns).mockRejectedValueOnce(
+      new Error("postgresql://user:secret@database.internal/private")
+    );
+    const response = await client.callTool({ name: "list_campaigns" });
+    expect(response.isError).toBe(true);
+    expect(response.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify({
+          error: "PING CHAT could not complete this operation",
+        }),
+      },
+    ]);
+    expect(JSON.stringify(response)).not.toContain("database.internal");
+    expect(JSON.stringify(response)).not.toContain("secret");
+  });
 });
