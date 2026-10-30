@@ -2,7 +2,7 @@
 
 ## Estado desta entrega
 
-Este primeiro corte implementa somente o transporte MCP local. Ele:
+Esta entrega implementa o transporte MCP local e ferramentas seguras de elaboração. Ele:
 
 - usa Streamable HTTP e aceita clientes das eras 2026 e 2025;
 - escuta exclusivamente em `127.0.0.1`;
@@ -10,12 +10,16 @@ Este primeiro corte implementa somente o transporte MCP local. Ele:
 - valida `Host` e `Origin`, limita headers, corpo, conexões e tempo de request;
 - registra metadados operacionais sem headers, tokens, query strings ou corpo;
 - encerra o handler e o servidor HTTP de forma graciosa;
-- anuncia uma lista vazia de tools.
+- vincula o processo a um único workspace escolhido pelo operador;
+- lista contas e campanhas desse workspace;
+- persiste campanhas novas sempre como rascunhos inativos;
+- produz prévia e URL de aprovação humana.
 
-Não há OAuth, acesso ao banco, tools de negócio, conexão real com Claude ou
-ativação de campanhas nesta entrega. O status `authentication: not-configured`
-do health check é intencional. O servidor não deve ser publicado nem exposto
-por proxy até o fluxo OAuth e o isolamento por workspace serem implementados.
+Não há OAuth remoto nem ferramenta de envio ou ativação. O status
+`authentication: not-configured` do health check significa que a segurança
+depende do bind literal em loopback e do acesso local ao computador. O servidor
+não deve ser publicado nem exposto por proxy até OAuth e autorização remota por
+workspace serem implementados.
 
 ## Execução local
 
@@ -23,7 +27,7 @@ Requer Node.js 24, conforme o `package.json` do projeto.
 
 ```bash
 npm install
-npm run mcp:dev
+PINGCHAT_MCP_WORKSPACE_ID="seu-workspace" npm run mcp:dev
 ```
 
 O padrão é `http://127.0.0.1:3333/mcp`. Para escolher outra porta local:
@@ -38,12 +42,32 @@ Verificação:
 curl --fail http://127.0.0.1:3333/health
 npm run typecheck
 npm run lint
-npm test -- __tests__/mcp-server.test.ts
+npm test -- __tests__/mcp-server.test.ts __tests__/mcp-campaign-tools.test.ts
 npm run build
 ```
 
-Ainda não há instrução de configuração do Claude: oferecer uma configuração
-antes da autenticação remota criaria uma expectativa falsa de integração.
+Conecte o Codex ao servidor já iniciado:
+
+```bash
+codex mcp add pingChat --url http://127.0.0.1:3333/mcp
+codex mcp list
+```
+
+A configuração é compartilhada pelo Codex CLI e pela extensão. O formato e os
+comandos seguem a [documentação oficial do Codex para MCP](https://developers.openai.com/learn/docs-mcp).
+
+## Ferramentas
+
+- `get_campaign_capabilities`;
+- `list_instagram_accounts`;
+- `list_campaigns`;
+- `create_campaign_draft`;
+- `preview_campaign_draft`;
+- `prepare_campaign_activation`.
+
+Não existem `send_dm`, `reply_to_comment`, `run_campaign_now` ou
+`activate_campaign`. A última ferramenta retorna a tela do PING CHAT; a pessoa
+revisa e ativa a campanha na interface autenticada.
 
 ## Dependências e compatibilidade
 
@@ -68,26 +92,20 @@ fallback stateless oficial para clientes de 2025. Fontes primárias:
 
 ### Snapshot da auditoria
 
-Em 29 de outubro de 2026, `npm audit --omit=dev --ignore-scripts` reporta 18
-achados agregados na árvore existente: 4 moderados, 10 altos e 4 críticos. O
-caminho de runtime do adaptador MCP usa as versões corrigidas de Hono citadas
-acima; o achado remanescente de `@hono/node-server` pertence à ferramenta de
-desenvolvimento do Prisma.
-
-Os demais achados envolvem principalmente Auth.js, Next.js, Prisma, Nodemailer
-e suas dependências. Atualizações potencialmente incompatíveis não foram
-misturadas neste PR de transporte. Elas exigem uma entrega de hardening
-dedicada e são bloqueadoras para expor OAuth remoto ou iniciar o beta.
+Em 30 de outubro de 2026, `npm audit --omit=dev --ignore-scripts` retorna zero
+achados após o hardening do lockfile e a remoção do transporte SMTP opcional.
+O login por email usa somente Resend.
 
 ## Limites de segurança verificados
 
 - o bind é literal e não configurável em `127.0.0.1`; somente a porta pode ser
   alterada;
-- `tools/list` retorna uma lista vazia para clientes MCP modernos e legados;
-- os módulos MCP não importam Prisma, serviços de Instagram ou envio de DM;
+- tools nunca recebem `workspaceId` do modelo; o workspace vem da configuração
+  local do processo;
+- toda busca por conta, campanha ou rascunho combina o ID com o workspace;
+- rascunhos usam `Automation.isActive=false` e não produzem evento de envio;
 - não existe rota MCP no Next.js nem endpoint OAuth parcial;
-- nenhuma chamada do servidor lê `DATABASE_URL`, cookies de navegador ou
-  tokens Meta;
+- nenhuma resposta retorna `accessToken`, credenciais ou dados de destinatários;
 - logs contêm somente evento, request id, método, path sem query, status,
   duração e nome da classe de erro.
 
@@ -96,8 +114,7 @@ proxy, túnel ou bind externo invalidaria o modelo de ameaça e não é suportad
 
 ## Próxima dependência
 
-O PR de autenticação deverá substituir a exposição apenas local por uma
+Uma entrega futura poderá substituir a exposição apenas local por uma
 superfície remota protegida, com OAuth 2.1, PKCE, resource/audience binding,
 escopos mínimos, expiração, revogação, rate limiting e autorização explícita
-por workspace. Nenhuma tool de leitura ou escrita deve ser adicionada antes
-desse limite de confiança.
+por workspace. Até lá, somente o servidor local é suportado.
