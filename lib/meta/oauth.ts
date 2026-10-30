@@ -131,6 +131,10 @@ export async function exchangeCodeForToken(
     url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
     url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
     url.searchParams.set("code", code);
+    // Meta requires this to exactly match the redirect URI used when the
+    // authorization code was issued. Supplying it also prevents a code from
+    // being exchanged against a different registered callback.
+    url.searchParams.set("redirect_uri", redirectUri);
 
     const response = await fetch(url.toString(), { cache: "no-store" });
     if (!response.ok) {
