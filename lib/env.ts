@@ -37,13 +37,25 @@ const INSTAGRAM_OAUTH_ENV = [
 ] as const;
 
 export function getMissingInstagramOAuthEnv(): string[] {
-  return INSTAGRAM_OAUTH_ENV.filter((name) => {
+  const required = [
+    ...INSTAGRAM_OAUTH_ENV,
+    ...(getInstagramLoginMode() === "unified"
+      ? (["INSTAGRAM_CONFIG_ID"] as const)
+      : []),
+  ];
+  return required.filter((name) => {
     const value = process.env[name];
     if (!value) return true;
     // A malformed key fails later inside encryptToken, after the user has
     // already round-tripped through Meta — catch the bad format here instead.
     return name === "ENCRYPTION_KEY" && !HEX_32_BYTE.test(value);
   });
+}
+
+export function getInstagramLoginMode(): "legacy" | "unified" {
+  return process.env.INSTAGRAM_LOGIN_MODE?.trim().toLowerCase() === "unified"
+    ? "unified"
+    : "legacy";
 }
 
 export function getMetaGraphApiVersion(): string {

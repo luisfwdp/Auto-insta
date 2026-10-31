@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
-import { getBaseUrl } from "@/lib/env";
+import { getBaseUrl, getInstagramLoginMode } from "@/lib/env";
 import { canConnectInstagramAccount } from "@/lib/instagram-accounts";
-import { getLongLivedToken, getUserInfo, subscribeInstagramAccountToWebhooks } from "@/lib/meta/client";
+import {
+  getAssignedInstagramAccounts,
+  getLongLivedToken,
+  getUserInfo,
+  subscribeInstagramAccountToWebhooks,
+} from "@/lib/meta/client";
+import type { InstagramUser } from "@/lib/meta/client";
 import {
   encryptToken,
   exchangeCodeForToken,
@@ -43,18 +49,36 @@ export async function GET(request: NextRequest) {
 
   try {
     const redirectUri = `${baseUrl}/api/instagram/callback`;
-    const { accessToken: shortLivedToken } = await exchangeCodeForToken(
+    const { accessToken: exchangedToken } = await exchangeCodeForToken(
       code,
       redirectUri
     );
-    const { accessToken: longLivedToken, expiresIn } =
-      await getLongLivedToken(shortLivedToken);
-    const userInfo = await getUserInfo(longLivedToken);
-    // Webhooks and the messaging API key off the professional account ID
-    // (user_id), not the app-scoped `id`. Store user_id so comment webhooks
-    // can be matched back to this account. Fall back to id if user_id is
-    // ever absent.
-    const instagramId = userInfo.user_id ?? userInfo.id;
+    const unifiedLogin = getInstagramLoginMode() === "unified";
+    let accessToken = exchangedToken;
+    let tokenExpiresAt: Date | null = null;
+    let instagramId: string;
+    let userInfo: InstagramUser;
+
+    if (unifiedLogin) {
+      const assignedAccounts = await getAssignedInstagramAccounts(accessToken);
+      if (assignedAccounts.length !== 1) {
+        throw new Error(
+          assignedAccounts.length === 0
+            ? "No Instagram account was shared during login"
+            : "Share exactly one Instagram account during login"
+        );
+      }
+      instagramId = assignedAccounts[0].id;
+      userInfo = await getUserInfo(accessToken, instagramId);
+    } else {
+      const longLived = await getLongLivedToken(exchangedToken);
+      accessToken = longLived.accessToken;
+      tokenExpiresAt = new Date(Date.now() + longLived.expiresIn * 1000);
+      userInfo = await getUserInfo(accessToken);
+      // Legacy Instagram Login returns an app-scoped id and the professional
+      // account id as user_id. Webhooks and messages use the latter.
+      instagramId = userInfo.user_id ?? userInfo.id;
+    }
     const connection = await canConnectInstagramAccount({
       workspaceId: state.workspaceId,
       instagramId,
@@ -66,14 +90,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const encryptedToken = encryptToken(longLivedToken);
-    const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
+    const encryptedToken = encryptToken(accessToken);
 
     let webhookSubscribed = false;
     try {
       const subscription = await subscribeInstagramAccountToWebhooks(
         instagramId,
-        longLivedToken
+        accessToken
       );
       webhookSubscribed = Boolean(subscription.success);
     } catch (subscriptionError) {
