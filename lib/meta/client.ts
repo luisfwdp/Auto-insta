@@ -652,6 +652,52 @@ export async function getAssignedInstagramAccounts(
   return data.data;
 }
 
+export interface AssignedInstagramAccountResolution {
+  accounts: Array<{ id: string; username: string }>;
+  attempts: number;
+  clientBusinessId?: string;
+}
+
+/**
+ * Unified Login can redirect before the selected assets are visible on the
+ * system-user token. Retry only the empty-success response; Graph API errors
+ * still fail immediately. If the assignment remains empty, include the
+ * non-secret client business id so operators can distinguish propagation from
+ * a token issued for the wrong portfolio.
+ *
+ * Meta docs:
+ * https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started#step-6-get-your-clients-ids
+ */
+export async function resolveAssignedInstagramAccounts(
+  accessToken: string,
+  options: { maxAttempts?: number; delayMs?: number } = {}
+): Promise<AssignedInstagramAccountResolution> {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+  const delayMs = Math.max(0, options.delayMs ?? 750);
+
+  for (let attempts = 1; attempts <= maxAttempts; attempts += 1) {
+    const accounts = await getAssignedInstagramAccounts(accessToken);
+    if (accounts.length > 0) return { accounts, attempts };
+    if (attempts < maxAttempts && delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  const url = new URL(`${facebookGraphBase()}/me`);
+  url.searchParams.set("fields", "client_business_id");
+  url.searchParams.set("access_token", accessToken);
+  const response = await fetch(url.toString(), { cache: "no-store" });
+  const business = await handleResponse<{ client_business_id?: string }>(
+    response
+  );
+
+  return {
+    accounts: [],
+    attempts: maxAttempts,
+    clientBusinessId: business.client_business_id,
+  };
+}
+
 export async function getUserInfo(
   accessToken: string,
   instagramAccountId?: string

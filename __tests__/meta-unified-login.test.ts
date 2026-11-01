@@ -7,6 +7,7 @@ import {
   getAssignedInstagramAccounts,
   getUserInfo,
   getUserMedia,
+  resolveAssignedInstagramAccounts,
 } from "@/lib/meta/client";
 
 const fetchMock = vi.fn();
@@ -70,6 +71,47 @@ describe("Meta Unified Login", () => {
     ).resolves.toEqual([{ id: "ig_123", username: "authorized_account" }]);
     expect(fetchMock.mock.calls[0][0]).toContain(
       "graph.facebook.com/v26.0/me/assigned_instagram_accounts"
+    );
+  });
+
+  it("retries an empty assigned-account response before succeeding", async () => {
+    respond({ data: [] });
+    respond({ data: [{ id: "ig_123", username: "authorized_account" }] });
+
+    await expect(
+      resolveAssignedInstagramAccounts("system-user-token", {
+        maxAttempts: 3,
+        delayMs: 0,
+      })
+    ).resolves.toEqual({
+      accounts: [{ id: "ig_123", username: "authorized_account" }],
+      attempts: 2,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns safe portfolio diagnostics when assignments stay empty", async () => {
+    respond({ data: [] });
+    respond({ data: [] });
+    respond({ client_business_id: "business_123" });
+
+    await expect(
+      resolveAssignedInstagramAccounts("system-user-token", {
+        maxAttempts: 2,
+        delayMs: 0,
+      })
+    ).resolves.toEqual({
+      accounts: [],
+      attempts: 2,
+      clientBusinessId: "business_123",
+    });
+
+    const diagnosticRequest = new URL(fetchMock.mock.calls[2][0]);
+    expect(`${diagnosticRequest.origin}${diagnosticRequest.pathname}`).toBe(
+      "https://graph.facebook.com/v26.0/me"
+    );
+    expect(diagnosticRequest.searchParams.get("fields")).toBe(
+      "client_business_id"
     );
   });
 
