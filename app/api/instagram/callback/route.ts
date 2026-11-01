@@ -4,9 +4,9 @@ import { prisma } from "@/lib/db/client";
 import { getBaseUrl, getInstagramLoginMode } from "@/lib/env";
 import { canConnectInstagramAccount } from "@/lib/instagram-accounts";
 import {
-  getAssignedInstagramAccounts,
   getLongLivedToken,
   getUserInfo,
+  resolveAssignedInstagramAccounts,
   subscribeInstagramAccountToWebhooks,
 } from "@/lib/meta/client";
 import type { InstagramUser } from "@/lib/meta/client";
@@ -47,6 +47,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${baseUrl}/settings?instagram=forbidden`);
   }
 
+  let unifiedDiagnostic:
+    | {
+        attempts: number;
+        assignedAccountCount: number;
+        clientBusinessId?: string;
+      }
+    | undefined;
+
   try {
     const redirectUri = `${baseUrl}/api/instagram/callback`;
     const { accessToken: exchangedToken } = await exchangeCodeForToken(
@@ -60,7 +68,13 @@ export async function GET(request: NextRequest) {
     let userInfo: InstagramUser;
 
     if (unifiedLogin) {
-      const assignedAccounts = await getAssignedInstagramAccounts(accessToken);
+      const resolution = await resolveAssignedInstagramAccounts(accessToken);
+      const assignedAccounts = resolution.accounts;
+      unifiedDiagnostic = {
+        attempts: resolution.attempts,
+        assignedAccountCount: assignedAccounts.length,
+        clientBusinessId: resolution.clientBusinessId,
+      };
       if (assignedAccounts.length !== 1) {
         throw new Error(
           assignedAccounts.length === 0
@@ -137,7 +151,10 @@ export async function GET(request: NextRequest) {
           level: "ERROR",
           workspaceId: state.workspaceId,
           message: "Instagram connection failed",
-          payload: { reason: message },
+          payload: {
+            reason: message,
+            ...(unifiedDiagnostic ? { unifiedLogin: unifiedDiagnostic } : {}),
+          },
         },
       })
       .catch(() => {});
