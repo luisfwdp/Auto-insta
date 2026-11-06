@@ -45,3 +45,35 @@ describe("GET /api/health", () => {
     expect(getWorkerHealth).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /api/health with Redis configured", () => {
+  beforeEach(() => {
+    process.env.REDIS_URL = "redis://localhost:6379";
+    getRedisConnection.mockReturnValue({ ping: vi.fn(async () => "PONG") });
+    getDMQueue.mockReturnValue({ getJobCounts: vi.fn(async () => ({ waiting: 1, active: 0 })) });
+  });
+  afterEach(() => {
+    delete process.env.REDIS_URL;
+  });
+
+  it("reports 503 when the consumer is stalled, even with only one job waiting", async () => {
+    getWorkerHealth.mockResolvedValue({ healthy: false, heartbeat: { pid: 1 }, ageMs: 1000, consumer: { state: "stalled" } });
+    const { GET } = await import("@/app/api/health/route");
+    const response = await GET();
+    const body = await response.json();
+    expect(response.status).toBe(503);
+    expect(body.checks.worker.consumer.state).toBe("stalled");
+  });
+
+  it("reports 503 when the worker health read fails (Redis down)", async () => {
+    getWorkerHealth.mockRejectedValue(new Error("ECONNREFUSED"));
+    const { GET } = await import("@/app/api/health/route");
+    expect((await GET()).status).toBe(503);
+  });
+
+  it("reports 200 when the consumer is processing", async () => {
+    getWorkerHealth.mockResolvedValue({ healthy: true, heartbeat: { pid: 1 }, ageMs: 1000, consumer: { state: "processing" } });
+    const { GET } = await import("@/app/api/health/route");
+    expect((await GET()).status).toBe(200);
+  });
+});
