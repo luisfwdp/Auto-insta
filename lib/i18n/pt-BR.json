@@ -1,4 +1,9 @@
 {
+  "Diagnostics unavailable": "Diagnóstico indisponível",
+  "Loading diagnostics": "Carregando diagnóstico",
+  "We could not load production diagnostics. No health status was inferred.": "Não foi possível carregar o diagnóstico de produção. Nenhum status de saúde foi presumido.",
+  "Sign out": "Sair",
+  "Signing out…": "Saindo…",
   " (capped at {count})": " (máximo de {count})",
   "% CTR": "% CTR",
   "(no text)": "(sem texto)",
