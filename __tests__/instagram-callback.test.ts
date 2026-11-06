@@ -22,12 +22,13 @@ const authMock = vi.hoisted(() => vi.fn());
 // In-memory stand-in for Redis GETDEL: the first consumer gets the owner back,
 // every later one gets null.
 const nonces = vi.hoisted(() => new Map<string, string>());
+const nonceStore = vi.hoisted(() => ({ down: false }));
 vi.mock("@/lib/meta/oauth-nonce", () => ({
-  rememberOAuthNonce: vi.fn(async (nonce: string, userId: string) => void nonces.set(nonce, userId)),
-  consumeOAuthNonce: vi.fn(async (nonce: string, userId: string) => {
+  consumeOAuthNonce: vi.fn(async (nonce: string, userId: string, workspaceId: string) => {
+    if (nonceStore.down) throw new Error("ECONNREFUSED redis");
     const owner = nonces.get(nonce);
     nonces.delete(nonce);
-    return owner === userId;
+    return owner === `${userId}|${workspaceId}`;
   }),
 }));
 vi.mock("@/lib/db/client", () => ({ prisma: db }));
@@ -72,7 +73,8 @@ beforeEach(() => {
   vi.stubEnv("META_GRAPH_API_VERSION", "v26.0");
   db.operationalEvent.create.mockResolvedValue({});
   nonces.clear();
-  nonces.set(NONCE, "user_1");
+  nonces.set(NONCE, "user_1|ws_1");
+  nonceStore.down = false;
   authMock.mockResolvedValue({ user: { id: "user_1" } });
   db.workspaceMember.findFirst.mockResolvedValue({ role: "OWNER" });
 });
@@ -166,6 +168,21 @@ describe("state binding", () => {
     const second = await callback({ code: "code_abc", state });
     expect(location(second).searchParams.get("reason")).toBe("state_already_used");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed, without reaching Meta, when the nonce store is down", async () => {
+    nonceStore.down = true;
+    const res = await callback({ code: "code_abc", state: validState() });
+    expect(location(res).searchParams.get("reason")).toBe("state_store_unavailable");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(db.instagramAccount.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a nonce that was issued for another workspace", async () => {
+    nonces.set(NONCE, "user_1|ws_other");
+    const res = await callback({ code: "code_abc", state: validState("ws_1") });
+    expect(location(res).searchParams.get("reason")).toBe("state_already_used");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("clears the nonce cookie on the response", async () => {

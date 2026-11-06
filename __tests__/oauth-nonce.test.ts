@@ -18,19 +18,32 @@ describe("OAuth nonce store", () => {
   beforeEach(() => store.clear());
 
   it("consumes a nonce once, for the user it was issued to", async () => {
-    await rememberOAuthNonce("n1", "user_1", 1800);
-    expect(await consumeOAuthNonce("n1", "user_1")).toBe(true);
-    expect(await consumeOAuthNonce("n1", "user_1")).toBe(false);
+    await rememberOAuthNonce("n1", "user_1", "ws_1", 1800);
+    expect(await consumeOAuthNonce("n1", "user_1", "ws_1")).toBe(true);
+    expect(await consumeOAuthNonce("n1", "user_1", "ws_1")).toBe(false);
   });
 
   it("refuses another user and still burns the nonce", async () => {
-    await rememberOAuthNonce("n2", "user_1", 1800);
-    expect(await consumeOAuthNonce("n2", "user_2")).toBe(false);
-    expect(await consumeOAuthNonce("n2", "user_1")).toBe(false);
+    await rememberOAuthNonce("n2", "user_1", "ws_1", 1800);
+    expect(await consumeOAuthNonce("n2", "user_2", "ws_1")).toBe(false);
+    expect(await consumeOAuthNonce("n2", "user_1", "ws_1")).toBe(false);
   });
 
   it("stores only a hash of the nonce", async () => {
-    await rememberOAuthNonce("secret-nonce", "user_1", 1800);
+    await rememberOAuthNonce("secret-nonce", "user_1", "ws_1", 1800);
     expect([...store.keys()].join()).not.toContain("secret-nonce");
+  });
+
+  it("refuses a nonce issued for another workspace", async () => {
+    await rememberOAuthNonce("n3", "user_1", "ws_1", 1800);
+    expect(await consumeOAuthNonce("n3", "user_1", "ws_2")).toBe(false);
+  });
+
+  it("lets exactly one of many concurrent consumers win", async () => {
+    await rememberOAuthNonce("n4", "user_1", "ws_1", 1800);
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => consumeOAuthNonce("n4", "user_1", "ws_1"))
+    );
+    expect(results.filter(Boolean)).toHaveLength(1);
   });
 });

@@ -69,8 +69,14 @@ export async function GET(request: NextRequest) {
         : null;
   // Consume the server-side nonce atomically before touching Meta, so only
   // one callback per state can ever reach the code exchange.
-  const consumed =
-    !bindingFailure && (await consumeOAuthNonce(state.nonce, userId).catch(() => false));
+  // A store outage fails closed with its own reason rather than "already used".
+  const consumed = bindingFailure
+    ? false
+    : await consumeOAuthNonce(state.nonce, userId, state.workspaceId).catch(() => null);
+  if (!bindingFailure && consumed === null) {
+    await recordCallbackRejection("state_store_unavailable", userId, {});
+    return finish(`${baseUrl}/settings?instagram=failed&reason=state_store_unavailable`);
+  }
   if (!bindingFailure && !consumed) {
     await recordCallbackRejection("state_already_used", userId, {});
     return finish(`${baseUrl}/settings?instagram=invalid&reason=state_already_used`);
