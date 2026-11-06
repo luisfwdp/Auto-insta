@@ -11,25 +11,41 @@ import {
 } from "@/lib/meta/client";
 import type { InstagramUser } from "@/lib/meta/client";
 import {
+  checkOAuthState,
   encryptToken,
   exchangeCodeForToken,
-  verifyOAuthState,
 } from "@/lib/meta/oauth";
 import { canManageWorkspace } from "@/lib/workspace-access";
 
 export async function GET(request: NextRequest) {
-  const code = request.nextUrl.searchParams.get("code");
-  const error = request.nextUrl.searchParams.get("error");
-  const state = verifyOAuthState(request.nextUrl.searchParams.get("state"));
+  const params = request.nextUrl.searchParams;
+  const code = params.get("code");
+  const error = params.get("error");
+  const stateCheck = checkOAuthState(params.get("state"));
   const baseUrl = getBaseUrl();
 
   if (error) {
+    await recordCallbackRejection("denied", {
+      error: error.slice(0, 64),
+      errorReason: params.get("error_reason")?.slice(0, 64) ?? null,
+    });
     return NextResponse.redirect(`${baseUrl}/settings?instagram=denied`);
   }
 
-  if (!code || !state) {
-    return NextResponse.redirect(`${baseUrl}/settings?instagram=invalid`);
+  if (!code || !stateCheck.ok) {
+    // Say which part was missing or wrong, never its value: the code and the
+    // state are credentials for the next few minutes.
+    const reason = !code ? "missing_code" : `state_${stateCheck.ok ? "ok" : stateCheck.reason}`;
+    await recordCallbackRejection(reason, {
+      hasCode: Boolean(code),
+      hasState: params.has("state"),
+      paramNames: [...new Set(params.keys())].slice(0, 12),
+    });
+    return NextResponse.redirect(
+      `${baseUrl}/settings?instagram=invalid&reason=${reason}`
+    );
   }
+  const state = stateCheck.payload;
 
   const session = await auth();
   if (!session?.user?.id) {
@@ -165,4 +181,26 @@ export async function GET(request: NextRequest) {
       )}`
     );
   }
+}
+
+/**
+ * Persists why a callback was turned away before any Meta call. The state
+ * could not be trusted here, so the event is instance-wide (no workspace) and
+ * only operators see it in Diagnostics.
+ */
+async function recordCallbackRejection(
+  reason: string,
+  details: Record<string, unknown>
+): Promise<void> {
+  console.warn("[Instagram Callback] Rejected:", reason, details);
+  await prisma.operationalEvent
+    .create({
+      data: {
+        source: "SYSTEM",
+        level: "WARNING",
+        message: "Instagram callback rejected",
+        payload: { reason, ...details },
+      },
+    })
+    .catch(() => {});
 }

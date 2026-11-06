@@ -66,12 +66,12 @@ describe("OAuth state and token encryption", () => {
     ).toBeNull();
   });
 
-  it("rejects an expired timestamp", () => {
+  it("rejects a timestamp older than the 30-minute window", () => {
     expect(
       verifyOAuthState(
         signedState({
           workspaceId: "workspace_123",
-          ts: Date.now() - 11 * 60 * 1000,
+          ts: Date.now() - 31 * 60 * 1000,
         })
       )
     ).toBeNull();
