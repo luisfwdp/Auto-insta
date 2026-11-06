@@ -549,5 +549,14 @@
   "Continue": "繼續",
   "Open link": "開啟連結",
   "No text configured": "尚未設定文字",
-  "This campaign's account is fixed. Create a new campaign to use another account.": "此行銷活動的帳號無法變更。如需使用其他帳號，請建立新的行銷活動。"
+  "This campaign's account is fixed. Create a new campaign to use another account.": "此行銷活動的帳號無法變更。如需使用其他帳號，請建立新的行銷活動。",
+  "Welcome to CRIA PING": "歡迎使用 CRIA PING",
+  "Your first campaign starts here.": "從這裡開始您的第一個行銷活動。",
+  "Back to dashboard": "返回儀表板",
+  "Instagram ID": "Instagram 識別碼",
+  "Webhook": "Webhook",
+  "Account saved in this workspace": "已儲存於此工作區的帳號",
+  "A saved account does not confirm that delivery is available.": "已儲存帳號並不代表目前可以傳送訊息。",
+  "Ask the workspace administrator to finish Meta setup.": "請工作區管理員完成 Meta 設定。",
+  "First steps": "開始使用"
 }

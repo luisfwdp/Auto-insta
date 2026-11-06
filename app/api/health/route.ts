@@ -28,6 +28,9 @@ async function checkDatabase(): Promise<HealthCheck> {
 }
 
 async function checkRedis(): Promise<HealthCheck> {
+  if (!process.env.REDIS_URL) {
+    return { status: "error", detail: "REDIS_URL is not configured" };
+  }
   try {
     const pong = await getRedisConnection().ping();
     return { status: pong === "PONG" ? "ok" : "error", detail: pong };
@@ -55,6 +58,9 @@ const STUCK_QUEUE_MIN_WAITING = Number(
 );
 
 async function checkQueue(): Promise<HealthCheck & { counts?: unknown }> {
+  if (!process.env.REDIS_URL) {
+    return { status: "error", detail: "REDIS_URL is not configured" };
+  }
   try {
     const counts = await getDMQueue().getJobCounts(
       "waiting",
@@ -80,17 +86,30 @@ async function checkQueue(): Promise<HealthCheck & { counts?: unknown }> {
   }
 }
 
+async function checkWorker() {
+  if (!process.env.REDIS_URL) {
+    return {
+      healthy: false,
+      heartbeat: null,
+      ageMs: null,
+      error: "REDIS_URL is not configured",
+    };
+  }
+
+  return getWorkerHealth().catch((error) => ({
+    healthy: false,
+    heartbeat: null,
+    ageMs: null,
+    error: error instanceof Error ? error.message : "Worker check failed",
+  }));
+}
+
 export async function GET() {
   const [database, redis, queue, worker] = await Promise.all([
     checkDatabase(),
     checkRedis(),
     checkQueue(),
-    getWorkerHealth().catch((error) => ({
-      healthy: false,
-      heartbeat: null,
-      ageMs: null,
-      error: error instanceof Error ? error.message : "Worker check failed",
-    })),
+    checkWorker(),
   ]);
 
   const healthy =

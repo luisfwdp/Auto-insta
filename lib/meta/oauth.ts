@@ -5,7 +5,12 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "crypto";
-import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
+import {
+  getEncryptionKeyHex,
+  getInstagramLoginMode,
+  getMetaGraphApiVersion,
+  requireEnv,
+} from "@/lib/env";
 
 // Instagram API with Instagram Login authorizes on www.instagram.com. The old
 // api.instagram.com/oauth/authorize host belonged to the retired Basic Display
@@ -88,6 +93,21 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
 }
 
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
+  if (getInstagramLoginMode() === "unified") {
+    const params = new URLSearchParams({
+      client_id: requireEnv("INSTAGRAM_APP_ID"),
+      config_id: requireEnv("INSTAGRAM_CONFIG_ID"),
+      redirect_uri: redirectUri,
+      response_type: "code",
+      display: "popup",
+      override_default_response_type: "true",
+      prompt: "login",
+      state,
+    });
+
+    return `https://www.facebook.com/dialog/oauth?${params.toString()}`;
+  }
+
   const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
@@ -103,7 +123,30 @@ export function getAuthorizationUrl(redirectUri: string, state: string): string 
 export async function exchangeCodeForToken(
   code: string,
   redirectUri: string
-): Promise<{ accessToken: string; userId: string }> {
+): Promise<{ accessToken: string; userId?: string }> {
+  if (getInstagramLoginMode() === "unified") {
+    const url = new URL(
+      `https://graph.facebook.com/${getMetaGraphApiVersion()}/oauth/access_token`
+    );
+    url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
+    url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
+    url.searchParams.set("code", code);
+    // Meta requires this to exactly match the redirect URI used when the
+    // authorization code was issued. Supplying it also prevents a code from
+    // being exchanged against a different registered callback.
+    url.searchParams.set("redirect_uri", redirectUri);
+
+    const response = await fetch(url.toString(), { cache: "no-store" });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(
+        `Token exchange failed: ${error.error?.message || JSON.stringify(error)}`
+      );
+    }
+    const data = await response.json();
+    return { accessToken: data.access_token };
+  }
+
   const body = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     client_secret: requireEnv("INSTAGRAM_APP_SECRET"),

@@ -1,11 +1,23 @@
-import { getMetaGraphApiVersion, requireEnv } from "@/lib/env";
+import {
+  getInstagramLoginMode,
+  getMetaGraphApiVersion,
+  requireEnv,
+} from "@/lib/env";
 
 function instagramGraphBase() {
-  return `https://graph.instagram.com/${getMetaGraphApiVersion()}`;
+  const host =
+    getInstagramLoginMode() === "unified"
+      ? "graph.facebook.com"
+      : "graph.instagram.com";
+  return `https://${host}/${getMetaGraphApiVersion()}`;
 }
 
 function facebookGraphBase() {
   return `https://graph.facebook.com/${getMetaGraphApiVersion()}`;
+}
+
+function legacyInstagramGraphBase() {
+  return `https://graph.instagram.com/${getMetaGraphApiVersion()}`;
 }
 
 export class MetaApiError extends Error {
@@ -616,11 +628,88 @@ export async function getConversationMessages(
   return data.messages?.data ?? [];
 }
 
-export async function getUserInfo(accessToken: string): Promise<InstagramUser> {
-  const url = new URL(`${instagramGraphBase()}/me`);
+function instagramAccountPath(instagramAccountId?: string) {
+  if (getInstagramLoginMode() === "unified") {
+    if (!instagramAccountId) {
+      throw new Error("Instagram account ID is required for Unified Login");
+    }
+    return instagramAccountId;
+  }
+  return "me";
+}
+
+export async function getAssignedInstagramAccounts(
+  accessToken: string
+): Promise<Array<{ id: string; username: string }>> {
+  const url = new URL(`${facebookGraphBase()}/me/assigned_instagram_accounts`);
+  url.searchParams.set("fields", "id,username");
+  url.searchParams.set("access_token", accessToken);
+
+  const response = await fetch(url.toString(), { cache: "no-store" });
+  const data = await handleResponse<{
+    data: Array<{ id: string; username: string }>;
+  }>(response);
+  return data.data;
+}
+
+export interface AssignedInstagramAccountResolution {
+  accounts: Array<{ id: string; username: string }>;
+  attempts: number;
+  clientBusinessId?: string;
+}
+
+/**
+ * Unified Login can redirect before the selected assets are visible on the
+ * system-user token. Retry only the empty-success response; Graph API errors
+ * still fail immediately. If the assignment remains empty, include the
+ * non-secret client business id so operators can distinguish propagation from
+ * a token issued for the wrong portfolio.
+ *
+ * Meta docs:
+ * https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started#step-6-get-your-clients-ids
+ */
+export async function resolveAssignedInstagramAccounts(
+  accessToken: string,
+  options: { maxAttempts?: number; delayMs?: number } = {}
+): Promise<AssignedInstagramAccountResolution> {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+  const delayMs = Math.max(0, options.delayMs ?? 750);
+
+  for (let attempts = 1; attempts <= maxAttempts; attempts += 1) {
+    const accounts = await getAssignedInstagramAccounts(accessToken);
+    if (accounts.length > 0) return { accounts, attempts };
+    if (attempts < maxAttempts && delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  const url = new URL(`${facebookGraphBase()}/me`);
+  url.searchParams.set("fields", "client_business_id");
+  url.searchParams.set("access_token", accessToken);
+  const response = await fetch(url.toString(), { cache: "no-store" });
+  const business = await handleResponse<{ client_business_id?: string }>(
+    response
+  );
+
+  return {
+    accounts: [],
+    attempts: maxAttempts,
+    clientBusinessId: business.client_business_id,
+  };
+}
+
+export async function getUserInfo(
+  accessToken: string,
+  instagramAccountId?: string
+): Promise<InstagramUser> {
+  const url = new URL(
+    `${instagramGraphBase()}/${instagramAccountPath(instagramAccountId)}`
+  );
   url.searchParams.set(
     "fields",
-    "id,user_id,username,name,profile_picture_url,followers_count"
+    getInstagramLoginMode() === "unified"
+      ? "id,username,name,profile_picture_url,followers_count"
+      : "id,user_id,username,name,profile_picture_url,followers_count"
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -636,9 +725,12 @@ const MEDIA_PAGE_SIZE = 100;
 
 export async function getUserMedia(
   accessToken: string,
+  instagramAccountId?: string,
   limit = 25
 ): Promise<InstagramMedia[]> {
-  const url = new URL(`${instagramGraphBase()}/me/media`);
+  const url = new URL(
+    `${instagramGraphBase()}/${instagramAccountPath(instagramAccountId)}/media`
+  );
   url.searchParams.set("fields", MEDIA_FIELDS);
   url.searchParams.set("limit", limit.toString());
   url.searchParams.set("access_token", accessToken);
@@ -656,11 +748,14 @@ export async function getUserMedia(
  */
 export async function getAllUserMedia(
   accessToken: string,
+  instagramAccountId?: string,
   max = 500
 ): Promise<InstagramMedia[]> {
   const results: InstagramMedia[] = [];
 
-  const first = new URL(`${instagramGraphBase()}/me/media`);
+  const first = new URL(
+    `${instagramGraphBase()}/${instagramAccountPath(instagramAccountId)}/media`
+  );
   first.searchParams.set("fields", MEDIA_FIELDS);
   first.searchParams.set("limit", String(Math.min(MEDIA_PAGE_SIZE, max)));
   first.searchParams.set("access_token", accessToken);
@@ -782,7 +877,7 @@ export async function getFollowerCountSeries(
 export async function getLongLivedToken(
   shortLivedToken: string
 ): Promise<{ accessToken: string; expiresIn: number }> {
-  const url = new URL(`${instagramGraphBase()}/access_token`);
+  const url = new URL(`${legacyInstagramGraphBase()}/access_token`);
   url.searchParams.set("grant_type", "ig_exchange_token");
   url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
   url.searchParams.set("access_token", shortLivedToken);
@@ -799,7 +894,7 @@ export async function getLongLivedToken(
 export async function refreshLongLivedToken(
   longLivedToken: string
 ): Promise<{ accessToken: string; expiresIn: number }> {
-  const url = new URL(`${instagramGraphBase()}/refresh_access_token`);
+  const url = new URL(`${legacyInstagramGraphBase()}/refresh_access_token`);
   url.searchParams.set("grant_type", "ig_refresh_token");
   url.searchParams.set("access_token", longLivedToken);
 

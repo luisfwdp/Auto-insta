@@ -549,5 +549,14 @@
   "Continue": "Continuar",
   "Open link": "Abrir link",
   "No text configured": "Nenhum texto configurado",
-  "This campaign's account is fixed. Create a new campaign to use another account.": "A conta desta campanha é fixa. Para usar outra conta, crie uma nova campanha."
+  "This campaign's account is fixed. Create a new campaign to use another account.": "A conta desta campanha é fixa. Para usar outra conta, crie uma nova campanha.",
+  "Welcome to CRIA PING": "Boas-vindas ao CRIA PING",
+  "Your first campaign starts here.": "Sua primeira campanha começa aqui.",
+  "Back to dashboard": "Voltar ao dashboard",
+  "Instagram ID": "Identificação do Instagram",
+  "Webhook": "Webhook",
+  "Account saved in this workspace": "Conta salva neste workspace",
+  "A saved account does not confirm that delivery is available.": "Uma conta salva não confirma que o envio está disponível.",
+  "Ask the workspace administrator to finish Meta setup.": "Peça à administração do workspace para concluir a configuração da Meta.",
+  "First steps": "Primeiros passos"
 }

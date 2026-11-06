@@ -1,0 +1,62 @@
+[
+  {
+    "device": "desktop",
+    "state": "success",
+    "axeViolations": 0
+  },
+  {
+    "device": "desktop",
+    "state": "missing",
+    "axeViolations": 0
+  },
+  {
+    "device": "desktop",
+    "state": "error",
+    "axeViolations": 0
+  },
+  {
+    "device": "desktop",
+    "state": "expired",
+    "axeViolations": 0
+  },
+  {
+    "device": "tablet",
+    "state": "success",
+    "axeViolations": 0
+  },
+  {
+    "device": "tablet",
+    "state": "missing",
+    "axeViolations": 0
+  },
+  {
+    "device": "tablet",
+    "state": "error",
+    "axeViolations": 0
+  },
+  {
+    "device": "tablet",
+    "state": "expired",
+    "axeViolations": 0
+  },
+  {
+    "device": "mobile",
+    "state": "success",
+    "axeViolations": 0
+  },
+  {
+    "device": "mobile",
+    "state": "missing",
+    "axeViolations": 0
+  },
+  {
+    "device": "mobile",
+    "state": "error",
+    "axeViolations": 0
+  },
+  {
+    "device": "mobile",
+    "state": "expired",
+    "axeViolations": 0
+  }
+]
