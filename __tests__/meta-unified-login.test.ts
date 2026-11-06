@@ -38,9 +38,7 @@ describe("Meta Unified Login", () => {
     );
     expect(url.searchParams.get("client_id")).toBe("app_123");
     expect(url.searchParams.get("config_id")).toBe("config_123");
-    expect(url.searchParams.get("override_default_response_type")).toBe(
-      "true"
-    );
+    expect(url.searchParams.has("override_default_response_type")).toBe(false);
     expect(url.searchParams.get("state")).toBe("state");
   });
 
@@ -58,9 +56,7 @@ describe("Meta Unified Login", () => {
       "https://graph.facebook.com/v26.0/oauth/access_token"
     );
     expect(request.searchParams.get("code")).toBe("code_123");
-    expect(request.searchParams.get("redirect_uri")).toBe(
-      "https://example.com/api/instagram/callback"
-    );
+    expect(request.searchParams.has("redirect_uri")).toBe(false);
     expect(fetchMock.mock.calls[0][1]).toEqual({ cache: "no-store" });
   });
 

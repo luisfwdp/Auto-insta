@@ -4,6 +4,7 @@ import {
   createOAuthState,
   decryptToken,
   encryptToken,
+  inspectOAuthState,
   verifyOAuthState,
 } from "../lib/meta/oauth";
 
@@ -25,6 +26,11 @@ describe("OAuth state and token encryption", () => {
   it("signs and verifies Instagram OAuth state", () => {
     const state = createOAuthState("workspace_123");
     expect(verifyOAuthState(state)?.workspaceId).toBe("workspace_123");
+    expect(inspectOAuthState(state).status).toBe("valid");
+  });
+
+  it("classifies a missing OAuth state without exposing its value", () => {
+    expect(inspectOAuthState(null)).toEqual({ status: "missing" });
   });
 
   it("rejects tampered OAuth state", () => {
@@ -67,14 +73,12 @@ describe("OAuth state and token encryption", () => {
   });
 
   it("rejects an expired timestamp", () => {
-    expect(
-      verifyOAuthState(
-        signedState({
-          workspaceId: "workspace_123",
-          ts: Date.now() - 11 * 60 * 1000,
-        })
-      )
-    ).toBeNull();
+    const state = signedState({
+      workspaceId: "workspace_123",
+      ts: Date.now() - 11 * 60 * 1000,
+    });
+    expect(verifyOAuthState(state)).toBeNull();
+    expect(inspectOAuthState(state)).toEqual({ status: "expired" });
   });
 
   it("rejects a state whose workspaceId is not a string", () => {

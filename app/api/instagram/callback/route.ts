@@ -13,21 +13,63 @@ import type { InstagramUser } from "@/lib/meta/client";
 import {
   encryptToken,
   exchangeCodeForToken,
-  verifyOAuthState,
+  inspectOAuthState,
 } from "@/lib/meta/oauth";
 import { canManageWorkspace } from "@/lib/workspace-access";
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const error = request.nextUrl.searchParams.get("error");
-  const state = verifyOAuthState(request.nextUrl.searchParams.get("state"));
+  const rawState = request.nextUrl.searchParams.get("state");
+  const stateInspection = inspectOAuthState(rawState);
+  const state =
+    stateInspection.status === "valid" ? stateInspection.payload : null;
   const baseUrl = getBaseUrl();
 
   if (error) {
+    const diagnostic = {
+      hasCode: Boolean(code),
+      hasState: Boolean(rawState),
+      stateStatus: stateInspection.status,
+      errorCodePresent: true,
+    };
+    console.warn("[Instagram Callback] Authorization denied:", diagnostic);
+    if (state) {
+      await prisma.operationalEvent
+        .create({
+          data: {
+            source: "SYSTEM",
+            level: "WARNING",
+            workspaceId: state.workspaceId,
+            message: "Instagram OAuth authorization denied",
+            payload: diagnostic,
+          },
+        })
+        .catch(() => {});
+    }
     return NextResponse.redirect(`${baseUrl}/settings?instagram=denied`);
   }
 
   if (!code || !state) {
+    const diagnostic = {
+      hasCode: Boolean(code),
+      hasState: Boolean(rawState),
+      stateStatus: stateInspection.status,
+    };
+    console.warn("[Instagram Callback] Invalid callback:", diagnostic);
+    if (state) {
+      await prisma.operationalEvent
+        .create({
+          data: {
+            source: "SYSTEM",
+            level: "WARNING",
+            workspaceId: state.workspaceId,
+            message: "Instagram OAuth callback invalid",
+            payload: diagnostic,
+          },
+        })
+        .catch(() => {});
+    }
     return NextResponse.redirect(`${baseUrl}/settings?instagram=invalid`);
   }
 

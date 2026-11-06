@@ -29,6 +29,17 @@ interface OAuthStatePayload {
   ts: number;
 }
 
+export type OAuthStateInspection =
+  | { status: "valid"; payload: OAuthStatePayload }
+  | {
+      status:
+        | "missing"
+        | "malformed"
+        | "invalid_signature"
+        | "invalid_payload"
+        | "expired";
+    };
+
 function base64UrlEncode(value: string): string {
   return Buffer.from(value).toString("base64url");
 }
@@ -50,11 +61,11 @@ export function createOAuthState(workspaceId: string): string {
   return `${payload}.${signState(payload)}`;
 }
 
-export function verifyOAuthState(state: string | null): OAuthStatePayload | null {
-  if (!state) return null;
+export function inspectOAuthState(state: string | null): OAuthStateInspection {
+  if (!state) return { status: "missing" };
 
   const [payload, signature] = state.split(".");
-  if (!payload || !signature) return null;
+  if (!payload || !signature) return { status: "malformed" };
 
   const expected = signState(payload);
   const signatureBuffer = Buffer.from(signature);
@@ -64,13 +75,13 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
     signatureBuffer.length !== expectedBuffer.length ||
     !timingSafeEqual(signatureBuffer, expectedBuffer)
   ) {
-    return null;
+    return { status: "invalid_signature" };
   }
 
   try {
     const parsed = JSON.parse(base64UrlDecode(payload)) as OAuthStatePayload;
     if (typeof parsed.workspaceId !== "string" || !parsed.workspaceId) {
-      return null;
+      return { status: "invalid_payload" };
     }
 
     // Reject a missing or non-numeric timestamp. `Date.now() - "abc"` is NaN,
@@ -78,29 +89,34 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
     // otherwise pass the age check and never expire. A ts in the future is
     // rejected for the same reason: it has not aged at all.
     if (typeof parsed.ts !== "number" || !Number.isFinite(parsed.ts)) {
-      return null;
+      return { status: "invalid_payload" };
     }
 
     const age = Date.now() - parsed.ts;
     if (age < 0 || age > STATE_MAX_AGE_MS) {
-      return null;
+      return { status: "expired" };
     }
 
-    return parsed;
+    return { status: "valid", payload: parsed };
   } catch {
-    return null;
+    return { status: "invalid_payload" };
   }
+}
+
+export function verifyOAuthState(state: string | null): OAuthStatePayload | null {
+  const inspection = inspectOAuthState(state);
+  return inspection.status === "valid" ? inspection.payload : null;
 }
 
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
   if (getInstagramLoginMode() === "unified") {
+    // https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started
     const params = new URLSearchParams({
       client_id: requireEnv("INSTAGRAM_APP_ID"),
       config_id: requireEnv("INSTAGRAM_CONFIG_ID"),
       redirect_uri: redirectUri,
       response_type: "code",
       display: "popup",
-      override_default_response_type: "true",
       prompt: "login",
       state,
     });
@@ -131,10 +147,9 @@ export async function exchangeCodeForToken(
     url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
     url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
     url.searchParams.set("code", code);
-    // Meta requires this to exactly match the redirect URI used when the
-    // authorization code was issued. Supplying it also prevents a code from
-    // being exchanged against a different registered callback.
-    url.searchParams.set("redirect_uri", redirectUri);
+    // Unified Login's documented exchange requires client_id,
+    // client_secret, and code only.
+    // https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/authentication
 
     const response = await fetch(url.toString(), { cache: "no-store" });
     if (!response.ok) {
