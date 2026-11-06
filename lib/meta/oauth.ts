@@ -117,11 +117,11 @@ export function getAuthorizationUrl(redirectUri: string, state: string): string 
       client_id: requireEnv("INSTAGRAM_APP_ID"),
       config_id: requireEnv("INSTAGRAM_CONFIG_ID"),
       redirect_uri: redirectUri,
+      // https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started
+      // Only client_id, config_id, redirect_uri, response_type=code (and the
+      // optional display/prompt) are documented. This is a full-page
+      // redirect, so display=popup does not apply.
       response_type: "code",
-      // Full-page redirect flow: the connect route navigates the whole tab,
-      // so the popup display mode (meant for window.open + the JS SDK) does
-      // not apply here.
-      override_default_response_type: "true",
       prompt: "login",
       state,
     });
@@ -152,10 +152,8 @@ export async function exchangeCodeForToken(
     url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
     url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
     url.searchParams.set("code", code);
-    // Meta requires this to exactly match the redirect URI used when the
-    // authorization code was issued. Supplying it also prevents a code from
-    // being exchanged against a different registered callback.
-    url.searchParams.set("redirect_uri", redirectUri);
+    // Unified Login's documented exchange takes client_id, client_secret and
+    // code only (same page as above).
 
     const response = await fetch(url.toString(), { cache: "no-store" });
     if (!response.ok) {

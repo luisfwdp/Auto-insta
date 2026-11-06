@@ -136,7 +136,7 @@ describe("authorized callback (Unified Login)", () => {
     expect(created).toMatchObject({ workspaceId: "ws_1", instagramId: "ig_178", username: "luispagodinsta", provider: "META", webhookSubscribed: true });
     expect(created.accessToken).not.toBe("user-token");
     const tokenRequest = new URL(fetchMock.mock.calls[0][0]);
-    expect(tokenRequest.searchParams.get("redirect_uri")).toBe(`${BASE}/api/instagram/callback`);
+    expect(tokenRequest.pathname).toBe("/v26.0/oauth/access_token");
   });
 
   it("reports a failed token exchange without leaking the app secret", async () => {
