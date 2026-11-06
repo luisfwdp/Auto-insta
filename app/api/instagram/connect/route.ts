@@ -8,6 +8,7 @@ import {
   createOAuthState,
   getAuthorizationUrl,
 } from "@/lib/meta/oauth";
+import { rememberOAuthNonce } from "@/lib/meta/oauth-nonce";
 
 export async function GET() {
   const context = await getCurrentWorkspaceContext();
@@ -33,6 +34,7 @@ export async function GET() {
   const redirectUri = `${getBaseUrl()}/api/instagram/callback`;
   const nonce = createOAuthNonce();
   const state = createOAuthState(context.workspaceId, context.userId, nonce);
+  await rememberOAuthNonce(nonce, context.userId, Math.floor(STATE_MAX_AGE_MS / 1000));
 
   const response = NextResponse.redirect(getAuthorizationUrl(redirectUri, state));
   // Lax, not Strict: Meta sends the browser back with a top-level GET from

@@ -19,6 +19,17 @@ const meta = vi.hoisted(() => ({
 }));
 const authMock = vi.hoisted(() => vi.fn());
 
+// In-memory stand-in for Redis GETDEL: the first consumer gets the owner back,
+// every later one gets null.
+const nonces = vi.hoisted(() => new Map<string, string>());
+vi.mock("@/lib/meta/oauth-nonce", () => ({
+  rememberOAuthNonce: vi.fn(async (nonce: string, userId: string) => void nonces.set(nonce, userId)),
+  consumeOAuthNonce: vi.fn(async (nonce: string, userId: string) => {
+    const owner = nonces.get(nonce);
+    nonces.delete(nonce);
+    return owner === userId;
+  }),
+}));
 vi.mock("@/lib/db/client", () => ({ prisma: db }));
 vi.mock("@/lib/auth", () => ({ auth: authMock }));
 vi.mock("@/lib/meta/client", () => meta);
@@ -60,6 +71,8 @@ beforeEach(() => {
   vi.stubEnv("INSTAGRAM_CONFIG_ID", "config_123");
   vi.stubEnv("META_GRAPH_API_VERSION", "v26.0");
   db.operationalEvent.create.mockResolvedValue({});
+  nonces.clear();
+  nonces.set(NONCE, "user_1");
   authMock.mockResolvedValue({ user: { id: "user_1" } });
   db.workspaceMember.findFirst.mockResolvedValue({ role: "OWNER" });
 });
@@ -132,7 +145,30 @@ describe("state binding", () => {
     expect(location(res2).searchParams.get("reason")).toBe("state_nonce_mismatch");
   });
 
-  it("clears the nonce cookie so the state cannot be used twice", async () => {
+  it("lets exactly one of two concurrent callbacks with the same state reach Meta", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: { message: "x" } }), { status: 400 }));
+    const state = validState();
+    const [a, b] = await Promise.all([
+      callback({ code: "code_abc", state }),
+      callback({ code: "code_abc", state }),
+    ]);
+    const reasons = [a, b].map((r) => location(r).searchParams.get("reason")).sort();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(reasons).toContain("state_already_used");
+  });
+
+  it("rejects a second sequential use of the same state even with the cookie preserved", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: { message: "x" } }), { status: 400 }));
+    const state = validState();
+    await callback({ code: "code_abc", state });
+    const second = await callback({ code: "code_abc", state });
+    expect(location(second).searchParams.get("reason")).toBe("state_already_used");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the nonce cookie on the response", async () => {
     const res = await callback({ code: "code_abc", state: validState("ws_1", "user_other") });
     expect(res.headers.get("set-cookie")).toMatch(new RegExp(`${OAUTH_NONCE_COOKIE}=;`));
   });

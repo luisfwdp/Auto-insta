@@ -17,6 +17,7 @@ import {
   exchangeCodeForToken,
 } from "@/lib/meta/oauth";
 import { timingSafeEqual } from "node:crypto";
+import { consumeOAuthNonce } from "@/lib/meta/oauth-nonce";
 import { canManageWorkspace } from "@/lib/workspace-access";
 
 export async function GET(request: NextRequest) {
@@ -66,6 +67,14 @@ export async function GET(request: NextRequest) {
       : !sameSecret(cookieNonce, state.nonce)
         ? "state_nonce_mismatch"
         : null;
+  // Consume the server-side nonce atomically before touching Meta, so only
+  // one callback per state can ever reach the code exchange.
+  const consumed =
+    !bindingFailure && (await consumeOAuthNonce(state.nonce, userId).catch(() => false));
+  if (!bindingFailure && !consumed) {
+    await recordCallbackRejection("state_already_used", userId, {});
+    return finish(`${baseUrl}/settings?instagram=invalid&reason=state_already_used`);
+  }
   if (bindingFailure) {
     await recordCallbackRejection(bindingFailure, userId, {
       hasNonceCookie: Boolean(cookieNonce),
