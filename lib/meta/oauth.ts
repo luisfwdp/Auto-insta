@@ -30,7 +30,20 @@ export const STATE_MAX_AGE_MS = 30 * 60 * 1000;
 
 interface OAuthStatePayload {
   workspaceId: string;
+  // The member who started the connect; the callback must be the same user.
+  userId: string;
+  // One-time value also kept in an HttpOnly cookie set by the connect route.
+  // The callback requires the two to match and clears the cookie, so a state
+  // cannot be replayed from another browser or reused after it was consumed.
+  nonce: string;
   ts: number;
+}
+
+/** HttpOnly cookie that carries the state's one-time nonce. */
+export const OAUTH_NONCE_COOKIE = "pc_ig_oauth_nonce";
+
+export function createOAuthNonce(): string {
+  return randomBytes(16).toString("base64url");
 }
 
 function base64UrlEncode(value: string): string {
@@ -47,9 +60,13 @@ function signState(payload: string): string {
     .digest("base64url");
 }
 
-export function createOAuthState(workspaceId: string): string {
+export function createOAuthState(
+  workspaceId: string,
+  userId: string,
+  nonce: string
+): string {
   const payload = base64UrlEncode(
-    JSON.stringify({ workspaceId, ts: Date.now() } satisfies OAuthStatePayload)
+    JSON.stringify({ workspaceId, userId, nonce, ts: Date.now() } satisfies OAuthStatePayload)
   );
   return `${payload}.${signState(payload)}`;
 }
@@ -67,8 +84,11 @@ export type OAuthStateCheck =
 export function checkOAuthState(state: string | null): OAuthStateCheck {
   if (!state) return { ok: false, reason: "missing" };
 
-  const [payload, signature] = state.split(".");
-  if (!payload || !signature) return { ok: false, reason: "malformed" };
+  const parts = state.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return { ok: false, reason: "malformed" };
+  }
+  const [payload, signature] = parts;
 
   const expected = signState(payload);
   const signatureBuffer = Buffer.from(signature);
@@ -83,7 +103,11 @@ export function checkOAuthState(state: string | null): OAuthStateCheck {
 
   try {
     const parsed = JSON.parse(base64UrlDecode(payload)) as OAuthStatePayload;
-    if (typeof parsed.workspaceId !== "string" || !parsed.workspaceId) {
+    if (
+      typeof parsed.workspaceId !== "string" || !parsed.workspaceId ||
+      typeof parsed.userId !== "string" || !parsed.userId ||
+      typeof parsed.nonce !== "string" || !parsed.nonce
+    ) {
       return { ok: false, reason: "malformed" };
     }
 

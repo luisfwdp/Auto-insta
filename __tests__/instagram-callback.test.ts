@@ -27,15 +27,20 @@ vi.mock("@/lib/instagram-accounts", () => ({
 }));
 
 import { GET } from "@/app/api/instagram/callback/route";
-import { createOAuthState, STATE_MAX_AGE_MS } from "@/lib/meta/oauth";
+import { createOAuthState, OAUTH_NONCE_COOKIE, STATE_MAX_AGE_MS } from "@/lib/meta/oauth";
 
 const BASE = "https://auto-insta-pi.vercel.app";
 const fetchMock = vi.fn();
 
-function callback(params: Record<string, string>) {
+const NONCE = "nonce_abc";
+const validState = (workspaceId = "ws_1", userId = "user_1") =>
+  createOAuthState(workspaceId, userId, NONCE);
+
+function callback(params: Record<string, string>, nonce: string | null = NONCE) {
   const url = new URL(`${BASE}/api/instagram/callback`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  return GET(new NextRequest(url));
+  const headers: Record<string, string> = nonce ? { cookie: `${OAUTH_NONCE_COOKIE}=${nonce}` } : {};
+  return GET(new NextRequest(url, { headers }));
 }
 
 function location(response: Response) {
@@ -61,7 +66,7 @@ beforeEach(() => {
 
 describe("callback rejections (before any Meta call)", () => {
   it("rejects a callback without code", async () => {
-    const res = await callback({ state: createOAuthState("ws_1") });
+    const res = await callback({ state: validState() });
     expect(location(res).searchParams.get("reason")).toBe("missing_code");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -73,7 +78,7 @@ describe("callback rejections (before any Meta call)", () => {
   });
 
   it("rejects a tampered state", async () => {
-    const [payload, sig] = createOAuthState("ws_1").split(".");
+    const [payload, sig] = validState().split(".");
     const forged = Buffer.from(JSON.stringify({ workspaceId: "ws_other", ts: Date.now() })).toString("base64url");
     const res = await callback({ code: "code_abc", state: `${forged}.${sig}` });
     expect(location(res).searchParams.get("reason")).toBe("state_bad_signature");
@@ -82,7 +87,7 @@ describe("callback rejections (before any Meta call)", () => {
 
   it("rejects an expired state", async () => {
     vi.useFakeTimers();
-    const state = createOAuthState("ws_1");
+    const state = validState();
     vi.setSystemTime(Date.now() + STATE_MAX_AGE_MS + 1000);
     const res = await callback({ code: "code_abc", state });
     expect(location(res).searchParams.get("reason")).toBe("state_expired");
@@ -90,7 +95,7 @@ describe("callback rejections (before any Meta call)", () => {
 
   it("accepts a state that took most of the consent window (longer than the old 10 minutes)", async () => {
     vi.useFakeTimers();
-    const state = createOAuthState("ws_1");
+    const state = validState();
     vi.setSystemTime(Date.now() + 20 * 60 * 1000);
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "boom" } }), { status: 400 }));
     const res = await callback({ code: "code_abc", state });
@@ -113,10 +118,37 @@ describe("callback rejections (before any Meta call)", () => {
   });
 });
 
+describe("state binding", () => {
+  it("rejects a state started by another member", async () => {
+    const res = await callback({ code: "code_abc", state: validState("ws_1", "user_other") });
+    expect(location(res).searchParams.get("reason")).toBe("state_user_mismatch");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a state replayed without the nonce cookie of the initiating browser", async () => {
+    const res = await callback({ code: "code_abc", state: validState() }, null);
+    expect(location(res).searchParams.get("reason")).toBe("state_nonce_mismatch");
+    const res2 = await callback({ code: "code_abc", state: validState() }, "other_nonce");
+    expect(location(res2).searchParams.get("reason")).toBe("state_nonce_mismatch");
+  });
+
+  it("clears the nonce cookie so the state cannot be used twice", async () => {
+    const res = await callback({ code: "code_abc", state: validState("ws_1", "user_other") });
+    expect(res.headers.get("set-cookie")).toMatch(new RegExp(`${OAUTH_NONCE_COOKIE}=;`));
+  });
+
+  it("does not persist rejections from anonymous requests", async () => {
+    authMock.mockResolvedValue(null);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await callback({ code: "x", state: "x" });
+    expect(db.operationalEvent.create).not.toHaveBeenCalled();
+  });
+});
+
 describe("authorized callback (Unified Login)", () => {
   it("rejects a member without manage rights", async () => {
     db.workspaceMember.findFirst.mockResolvedValue({ role: "MEMBER" });
-    const res = await callback({ code: "code_abc", state: createOAuthState("ws_1") });
+    const res = await callback({ code: "code_abc", state: validState() });
     expect(location(res).searchParams.get("instagram")).toBe("forbidden");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -129,7 +161,7 @@ describe("authorized callback (Unified Login)", () => {
     db.instagramAccount.findUnique.mockResolvedValue(null);
     db.instagramAccount.create.mockResolvedValue({});
 
-    const res = await callback({ code: "code_abc", state: createOAuthState("ws_1") });
+    const res = await callback({ code: "code_abc", state: validState() });
 
     expect(location(res).pathname).toBe("/dashboard");
     const created = db.instagramAccount.create.mock.calls[0][0].data;
@@ -142,8 +174,10 @@ describe("authorized callback (Unified Login)", () => {
   it("reports a failed token exchange without leaking the app secret", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Invalid verification code format." } }), { status: 400 }));
-    const res = await callback({ code: "code_abc", state: createOAuthState("ws_1") });
+    const res = await callback({ code: "code_abc", state: validState() });
     expect(location(res).searchParams.get("instagram")).toBe("failed");
+    expect(location(res).searchParams.get("reason")).toBe("token_exchange_failed");
+    expect(res.headers.get("location")).not.toContain("Invalid verification code");
     expect(res.headers.get("location")).not.toContain("app_secret_value");
     expect(JSON.stringify(db.operationalEvent.create.mock.calls)).not.toContain("app_secret_value");
   });
