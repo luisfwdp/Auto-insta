@@ -1,10 +1,12 @@
 import { createDMWorker } from "@/lib/queue/dm-worker";
 import { recordWorkerHeartbeat } from "@/lib/ops/worker-health";
+import { trackConsumerReadiness } from "@/lib/ops/worker-readiness";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
 import os from "node:os";
 
 const worker = createDMWorker();
+const readiness = trackConsumerReadiness(worker);
 const startedAt = new Date().toISOString();
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // Polling safety net for comments that webhooks miss. Runs in the worker because
@@ -16,6 +18,12 @@ const POLL_INTERVAL_MS = Number(
 console.log("[DM Worker] Started");
 
 async function heartbeat() {
+  // Only report healthy while the BullMQ consumer is connected; otherwise let
+  // the heartbeat expire so /api/health shows the queue is not being served.
+  if (!readiness.isReady()) {
+    console.warn("[DM Worker] Consumer not ready; skipping heartbeat");
+    return;
+  }
   try {
     await recordWorkerHeartbeat({
       pid: process.pid,
