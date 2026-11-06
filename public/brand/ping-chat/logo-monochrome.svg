@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 96" role="img" aria-labelledby="title">
+  <title id="title">PING CHAT — versão monocromática</title>
+  <g fill="currentColor"><path d="M14 16h38c11 0 18 7 18 18v14c0 11-7 18-18 18H33L14 79V16Zm19 19v6h20v-6H33Zm0 12v6h13v-6H33Z"/><path d="M61 8c11 3 16 9 18 19l5-1C82 14 74 6 62 3l-1 5Z"/></g>
+  <text x="98" y="58" fill="currentColor" font-family="Sora,Inter,Arial,sans-serif" font-size="42" font-weight="750" letter-spacing="-1.5">PING CHAT</text>
+</svg>
