@@ -43,3 +43,16 @@ next-env.d.ts
 
 /app/generated/prisma
 .gstack/
+
+# Ruflo local secrets and runtime data
+.env
+.env.local
+.env.*.local
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+
+# Local agent runtime
+.swarm/
+graphify-out/
+.claude/settings.json.*bak*
