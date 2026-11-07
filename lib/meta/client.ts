@@ -656,17 +656,60 @@ export interface AssignedInstagramAccountResolution {
   accounts: Array<{ id: string; username: string }>;
   attempts: number;
   clientBusinessId?: string;
+  /** Which lookup found the account when the documented one came back empty. */
+  source?: "assigned" | "pages" | "business";
+  /** Non-secret diagnostics: granted scopes and per-lookup outcomes. */
+  diagnostics?: {
+    grantedPermissions: string[];
+    lookups: Record<string, number | string>;
+  };
+}
+
+type GraphAccount = { id: string; username: string };
+
+/** GET a Graph path with the token; returns the JSON or an error code string. */
+async function graphGet<T>(
+  path: string,
+  params: Record<string, string>,
+  accessToken: string
+): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  const url = new URL(`${facebookGraphBase()}/${path}`);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  url.searchParams.set("access_token", accessToken);
+  try {
+    const response = await fetch(url.toString(), { cache: "no-store" });
+    const body = await response.json();
+    if (!response.ok) {
+      // Only Meta's error code, never the message or the request URL.
+      return { ok: false, error: `error_${body?.error?.code ?? response.status}` };
+    }
+    return { ok: true, data: body as T };
+  } catch {
+    return { ok: false, error: "network_error" };
+  }
+}
+
+function uniqueAccounts(accounts: Array<GraphAccount | undefined>): GraphAccount[] {
+  const byId = new Map<string, GraphAccount>();
+  for (const account of accounts) if (account?.id) byId.set(account.id, account);
+  return [...byId.values()];
 }
 
 /**
  * Unified Login can redirect before the selected assets are visible on the
  * system-user token. Retry only the empty-success response; Graph API errors
- * still fail immediately. If the assignment remains empty, include the
- * non-secret client business id so operators can distinguish propagation from
- * a token issued for the wrong portfolio.
+ * still fail immediately.
+ *
+ * In production the documented lookup stayed empty even though Business
+ * Settings listed the Instagram account under the app's access, so when it is
+ * empty we also try the account linked to the token's Pages and the accounts
+ * owned by the client business, and record non-secret diagnostics. Every
+ * candidate comes from assets this same token can read.
  *
  * Meta docs:
  * https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started#step-6-get-your-clients-ids
+ * https://developers.facebook.com/docs/graph-api/reference/user/accounts/
+ * https://developers.facebook.com/docs/marketing-api/reference/business/owned_instagram_accounts/
  */
 export async function resolveAssignedInstagramAccounts(
   accessToken: string,
@@ -677,25 +720,64 @@ export async function resolveAssignedInstagramAccounts(
 
   for (let attempts = 1; attempts <= maxAttempts; attempts += 1) {
     const accounts = await getAssignedInstagramAccounts(accessToken);
-    if (accounts.length > 0) return { accounts, attempts };
+    if (accounts.length > 0) return { accounts, attempts, source: "assigned" };
     if (attempts < maxAttempts && delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
-  const url = new URL(`${facebookGraphBase()}/me`);
-  url.searchParams.set("fields", "client_business_id");
-  url.searchParams.set("access_token", accessToken);
-  const response = await fetch(url.toString(), { cache: "no-store" });
-  const business = await handleResponse<{ client_business_id?: string }>(
-    response
-  );
+  const lookups: Record<string, number | string> = { assigned: 0 };
 
-  return {
-    accounts: [],
-    attempts: maxAttempts,
-    clientBusinessId: business.client_business_id,
-  };
+  const me = await graphGet<{ client_business_id?: string }>(
+    "me",
+    { fields: "client_business_id" },
+    accessToken
+  );
+  const clientBusinessId = me.ok ? me.data.client_business_id : undefined;
+
+  const permissions = await graphGet<{ data: Array<{ permission: string; status: string }> }>(
+    "me/permissions",
+    {},
+    accessToken
+  );
+  const grantedPermissions = permissions.ok
+    ? permissions.data.data.filter((p) => p.status === "granted").map((p) => p.permission)
+    : [];
+  if (!permissions.ok) lookups.permissions = permissions.error;
+
+  const diagnostics = () => ({ grantedPermissions, lookups });
+
+  const pages = await graphGet<{
+    data: Array<{ instagram_business_account?: GraphAccount }>;
+  }>("me/accounts", { fields: "instagram_business_account{id,username}" }, accessToken);
+  if (pages.ok) {
+    const accounts = uniqueAccounts(pages.data.data.map((page) => page.instagram_business_account));
+    lookups.pages = accounts.length;
+    if (accounts.length > 0) {
+      return { accounts, attempts: maxAttempts, clientBusinessId, source: "pages", diagnostics: diagnostics() };
+    }
+  } else {
+    lookups.pages = pages.error;
+  }
+
+  if (clientBusinessId) {
+    const owned = await graphGet<{ data: GraphAccount[] }>(
+      `${clientBusinessId}/owned_instagram_accounts`,
+      { fields: "id,username" },
+      accessToken
+    );
+    if (owned.ok) {
+      const accounts = uniqueAccounts(owned.data.data);
+      lookups.business = accounts.length;
+      if (accounts.length > 0) {
+        return { accounts, attempts: maxAttempts, clientBusinessId, source: "business", diagnostics: diagnostics() };
+      }
+    } else {
+      lookups.business = owned.error;
+    }
+  }
+
+  return { accounts: [], attempts: maxAttempts, clientBusinessId, diagnostics: diagnostics() };
 }
 
 export async function getUserInfo(
