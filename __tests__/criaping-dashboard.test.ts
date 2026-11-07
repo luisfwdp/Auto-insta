@@ -67,6 +67,7 @@ describe("CRIA PING operational dashboard", () => {
     const html = renderToStaticMarkup(createElement(Sidebar, { isOpen: true, onClose: () => undefined, workspaceName: "CRIA PING", newDesign: true }));
     expect(html).toContain('aria-label="Close menu"');
     expect(html).toContain('aria-current="page"');
-    expect(html).toContain("CRIA");
+    expect(html).toContain("PING CHAT by Creator Lab School");
+    expect(html).toContain("/brand/ping-chat/logo-horizontal.svg");
   });
 });
