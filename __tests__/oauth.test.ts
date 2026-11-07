@@ -23,12 +23,12 @@ describe("OAuth state and token encryption", () => {
   });
 
   it("signs and verifies Instagram OAuth state", () => {
-    const state = createOAuthState("workspace_123");
+    const state = createOAuthState("workspace_123", "user_1", "nonce_1");
     expect(verifyOAuthState(state)?.workspaceId).toBe("workspace_123");
   });
 
   it("rejects tampered OAuth state", () => {
-    const state = createOAuthState("workspace_123");
+    const state = createOAuthState("workspace_123", "user_1", "nonce_1");
     expect(verifyOAuthState(`${state}tampered`)).toBeNull();
   });
 
@@ -60,18 +60,22 @@ describe("OAuth state and token encryption", () => {
       verifyOAuthState(
         signedState({
           workspaceId: "workspace_123",
+          userId: "user_1",
+          nonce: "nonce_1",
           ts: Date.now() + 60 * 60 * 1000,
         })
       )
     ).toBeNull();
   });
 
-  it("rejects an expired timestamp", () => {
+  it("rejects a timestamp older than the 30-minute window", () => {
     expect(
       verifyOAuthState(
         signedState({
           workspaceId: "workspace_123",
-          ts: Date.now() - 11 * 60 * 1000,
+          userId: "user_1",
+          nonce: "nonce_1",
+          ts: Date.now() - 31 * 60 * 1000,
         })
       )
     ).toBeNull();
@@ -83,5 +87,14 @@ describe("OAuth state and token encryption", () => {
         signedState({ workspaceId: 123, ts: Date.now() })
       )
     ).toBeNull();
+  });
+
+  it("rejects a valid state followed by trailing data", () => {
+    const state = createOAuthState("workspace_123", "user_1", "nonce_1");
+    expect(verifyOAuthState(`${state}.extra`)).toBeNull();
+  });
+
+  it("rejects a signed state without the user or nonce binding", () => {
+    expect(verifyOAuthState(signedState({ workspaceId: "workspace_123", ts: Date.now() }))).toBeNull();
   });
 });

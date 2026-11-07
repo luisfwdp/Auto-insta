@@ -11,40 +11,92 @@ import {
 } from "@/lib/meta/client";
 import type { InstagramUser } from "@/lib/meta/client";
 import {
+  OAUTH_NONCE_COOKIE,
+  checkOAuthState,
   encryptToken,
   exchangeCodeForToken,
-  verifyOAuthState,
 } from "@/lib/meta/oauth";
+import { timingSafeEqual } from "node:crypto";
+import { consumeOAuthNonce } from "@/lib/meta/oauth-nonce";
 import { canManageWorkspace } from "@/lib/workspace-access";
 
 export async function GET(request: NextRequest) {
-  const code = request.nextUrl.searchParams.get("code");
-  const error = request.nextUrl.searchParams.get("error");
-  const state = verifyOAuthState(request.nextUrl.searchParams.get("state"));
+  const params = request.nextUrl.searchParams;
+  const code = params.get("code");
+  const error = params.get("error");
+  const stateCheck = checkOAuthState(params.get("state"));
   const baseUrl = getBaseUrl();
+  // Rejections are only persisted for a signed-in user, so an anonymous loop
+  // against this public URL cannot grow OperationalEvent.
+  const session = await auth();
+  const userId = session?.user?.id ?? null;
 
   if (error) {
-    return NextResponse.redirect(`${baseUrl}/settings?instagram=denied`);
+    await recordCallbackRejection("denied", userId, {
+      error: error.slice(0, 64),
+      errorReason: params.get("error_reason")?.slice(0, 64) ?? null,
+    });
+    return finish(`${baseUrl}/settings?instagram=denied`);
   }
 
-  if (!code || !state) {
-    return NextResponse.redirect(`${baseUrl}/settings?instagram=invalid`);
+  if (!code || !stateCheck.ok) {
+    // Say which part was missing or wrong, never its value: the code and the
+    // state are credentials for the next few minutes.
+    const reason = !code ? "missing_code" : `state_${stateCheck.ok ? "ok" : stateCheck.reason}`;
+    await recordCallbackRejection(reason, userId, {
+      hasCode: Boolean(code),
+      hasState: params.has("state"),
+      paramNames: [...new Set(params.keys())].slice(0, 12),
+    });
+    return finish(`${baseUrl}/settings?instagram=invalid&reason=${reason}`);
+  }
+  const state = stateCheck.payload;
+
+  if (!userId) {
+    return finish(`${baseUrl}/login`);
   }
 
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.redirect(`${baseUrl}/login`);
+  // The state is bound to the member who started the connect and to the
+  // one-time nonce cookie set in their browser; both must match, and the
+  // cookie is cleared on every response below, so the state cannot be
+  // replayed from another session or used twice.
+  const cookieNonce = request.cookies.get(OAUTH_NONCE_COOKIE)?.value ?? "";
+  const bindingFailure =
+    state.userId !== userId
+      ? "state_user_mismatch"
+      : !sameSecret(cookieNonce, state.nonce)
+        ? "state_nonce_mismatch"
+        : null;
+  // Consume the server-side nonce atomically before touching Meta, so only
+  // one callback per state can ever reach the code exchange.
+  // A store outage fails closed with its own reason rather than "already used".
+  const consumed = bindingFailure
+    ? false
+    : await consumeOAuthNonce(state.nonce, userId, state.workspaceId).catch(() => null);
+  if (!bindingFailure && consumed === null) {
+    await recordCallbackRejection("state_store_unavailable", userId, {});
+    return finish(`${baseUrl}/settings?instagram=failed&reason=state_store_unavailable`);
+  }
+  if (!bindingFailure && !consumed) {
+    await recordCallbackRejection("state_already_used", userId, {});
+    return finish(`${baseUrl}/settings?instagram=invalid&reason=state_already_used`);
+  }
+  if (bindingFailure) {
+    await recordCallbackRejection(bindingFailure, userId, {
+      hasNonceCookie: Boolean(cookieNonce),
+    });
+    return finish(`${baseUrl}/settings?instagram=invalid&reason=${bindingFailure}`);
   }
 
   const membership = await prisma.workspaceMember.findFirst({
     where: {
       workspaceId: state.workspaceId,
-      userId: session.user.id,
+      userId,
     },
   });
 
   if (!membership || !canManageWorkspace(membership.role)) {
-    return NextResponse.redirect(`${baseUrl}/settings?instagram=forbidden`);
+    return finish(`${baseUrl}/settings?instagram=forbidden`);
   }
 
   let unifiedDiagnostic:
@@ -99,7 +151,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!connection.allowed) {
-      return NextResponse.redirect(
+      return finish(
         `${baseUrl}/settings?instagram=already_connected`
       );
     }
@@ -132,12 +184,12 @@ export async function GET(request: NextRequest) {
       const updated = await prisma.instagramAccount.updateMany({
         where: { id: existing.id, workspaceId: state.workspaceId, provider: 'META' }, data,
       });
-      if (!updated.count) return NextResponse.redirect(`${baseUrl}/settings?instagram=already_connected`);
+      if (!updated.count) return finish(`${baseUrl}/settings?instagram=already_connected`);
     } else {
       await prisma.instagramAccount.create({ data: { ...data, workspaceId: state.workspaceId, instagramId, provider: 'META' } });
     }
 
-    return NextResponse.redirect(`${baseUrl}/dashboard?connected=true`);
+    return finish(`${baseUrl}/dashboard?connected=true`);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[Instagram Callback] Error:", err);
@@ -159,10 +211,59 @@ export async function GET(request: NextRequest) {
       })
       .catch(() => {});
 
-    return NextResponse.redirect(
-      `${baseUrl}/settings?instagram=failed&reason=${encodeURIComponent(
-        message.slice(0, 200)
-      )}`
+    // Only an allow-listed code goes in the URL (browser history, referrers,
+    // screenshots); the sanitized detail stays in the operational event.
+    return finish(
+      `${baseUrl}/settings?instagram=failed&reason=${failureCode(message)}`
     );
   }
+}
+
+/**
+ * Persists why a callback was turned away before any Meta call. The state
+ * could not be trusted here, so the event is instance-wide (no workspace) and
+ * only operators see it in Diagnostics.
+ */
+async function recordCallbackRejection(
+  reason: string,
+  userId: string | null,
+  details: Record<string, unknown>
+): Promise<void> {
+  console.warn("[Instagram Callback] Rejected:", reason, details);
+  if (!userId) return;
+  await prisma.operationalEvent
+    .create({
+      data: {
+        source: "SYSTEM",
+        level: "WARNING",
+        message: "Instagram callback rejected",
+        payload: { reason, ...details },
+      },
+    })
+    .catch(() => {});
+}
+
+/** Redirect that also clears the one-time nonce cookie. */
+function finish(url: string): NextResponse {
+  const response = NextResponse.redirect(url);
+  response.cookies.set(OAUTH_NONCE_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/api/instagram/callback",
+    maxAge: 0,
+  });
+  return response;
+}
+
+function sameSecret(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && left.length > 0 && timingSafeEqual(left, right);
+}
+
+function failureCode(message: string): string {
+  if (message === "No Instagram account was shared during login") return "no_account_shared";
+  if (message === "Share exactly one Instagram account during login") return "multiple_accounts_shared";
+  if (/access[_ ]token|oauth|verification code/i.test(message)) return "token_exchange_failed";
+  return "connection_failed";
 }
