@@ -12,9 +12,9 @@ vi.mock("next/navigation", () => ({ notFound: () => { throw new Error("404"); } 
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("CRIA PING opt-in boundary", () => {
-  it.each(["", "-newDesign", "unknownFlag"])("preserves legacy root and hides preview for %s", async (flags) => {
-    vi.stubEnv("FEATURE_FLAGS", flags);
+describe("PING CHAT design rollout boundary", () => {
+  it("keeps an explicit emergency opt-out for the active design", async () => {
+    vi.stubEnv("FEATURE_FLAGS", "-newDesign");
     const { default: Layout } = await import("../app/layout");
     const { default: Preview } = await import("../app/design-system/page");
     const html = renderToStaticMarkup(Layout({ children: "legacy" }));
@@ -24,8 +24,8 @@ describe("CRIA PING opt-in boundary", () => {
     expect(Preview).toThrow("404");
   });
 
-  it("enables tokens and the review page only with newDesign", async () => {
-    vi.stubEnv("FEATURE_FLAGS", "newDesign");
+  it.each(["", "newDesign", "unknownFlag"])("enables tokens and the review page by default for %s", async (flags) => {
+    vi.stubEnv("FEATURE_FLAGS", flags);
     const { default: Layout } = await import("../app/layout");
     const { default: Preview } = await import("../app/design-system/page");
     const html = renderToStaticMarkup(Layout({ children: createElement(Preview) }));

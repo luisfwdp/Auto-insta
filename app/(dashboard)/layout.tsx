@@ -9,8 +9,7 @@ import { isFeatureEnabled } from "@/lib/feature-flags";
 import { criapingInter, criapingSora } from "@/app/fonts/criaping";
 
 export async function generateMetadata() {
-  const { t } = await getI18n();
-  return { title: t("OpenReply - Open source Instagram comment-to-DM automation") };
+  return { title: "PING CHAT by Creator Lab School" };
 }
 
 export default async function DashboardLayout({

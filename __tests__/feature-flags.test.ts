@@ -17,9 +17,9 @@ describe("feature flags", () => {
     }
   });
 
-  it("keeps unfinished features off by default", () => {
+  it("ships the approved PING CHAT design while keeping unfinished features off", () => {
     vi.stubEnv("FEATURE_FLAGS", "");
-    expect(isFeatureEnabled("newDesign")).toBe(false);
+    expect(isFeatureEnabled("newDesign")).toBe(true);
     expect(isFeatureEnabled("commentsCenter")).toBe(false);
     expect(isFeatureEnabled("zernioIntegration")).toBe(true);
   });
@@ -41,7 +41,7 @@ describe("feature flags", () => {
   it("lists every flag with its resolved value", () => {
     vi.stubEnv("FEATURE_FLAGS", "workspaceSwitcher");
     expect(getEnabledFeatureFlags()).toEqual({
-      newDesign: false,
+      newDesign: true,
       workspaceSwitcher: true,
       commentsCenter: false,
       contacts: false,
