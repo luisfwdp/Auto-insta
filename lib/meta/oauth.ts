@@ -176,8 +176,9 @@ export async function exchangeCodeForToken(
     url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
     url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
     url.searchParams.set("code", code);
-    // Unified Login's documented exchange takes client_id, client_secret and
-    // code only (same page as above).
+    // Required: Meta rejects the code unless redirect_uri is identical to the
+    // one sent to the OAuth dialog ("Error validating verification code").
+    url.searchParams.set("redirect_uri", redirectUri);
 
     const response = await fetch(url.toString(), { cache: "no-store" });
     if (!response.ok) {
