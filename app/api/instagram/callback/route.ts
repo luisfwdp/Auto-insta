@@ -104,6 +104,9 @@ export async function GET(request: NextRequest) {
         attempts: number;
         assignedAccountCount: number;
         clientBusinessId?: string;
+        source?: string;
+        grantedPermissions?: string[];
+        lookups?: Record<string, number | string>;
       }
     | undefined;
 
@@ -126,6 +129,9 @@ export async function GET(request: NextRequest) {
         attempts: resolution.attempts,
         assignedAccountCount: assignedAccounts.length,
         clientBusinessId: resolution.clientBusinessId,
+        source: resolution.source,
+        grantedPermissions: resolution.diagnostics?.grantedPermissions,
+        lookups: resolution.diagnostics?.lookups,
       };
       if (assignedAccounts.length !== 1) {
         throw new Error(

@@ -76,40 +76,61 @@ describe("Meta Unified Login", () => {
     respond({ data: [{ id: "ig_123", username: "authorized_account" }] });
 
     await expect(
-      resolveAssignedInstagramAccounts("system-user-token", {
-        maxAttempts: 3,
-        delayMs: 0,
-      })
+      resolveAssignedInstagramAccounts("system-user-token", { maxAttempts: 3, delayMs: 0 })
     ).resolves.toEqual({
       accounts: [{ id: "ig_123", username: "authorized_account" }],
       attempts: 2,
+      source: "assigned",
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("returns safe portfolio diagnostics when assignments stay empty", async () => {
+  it("falls back to the Instagram account linked to the token's Page", async () => {
+    respond({ data: [] });
+    respond({ client_business_id: "business_123" });
+    respond({ data: [{ permission: "instagram_basic", status: "granted" }, { permission: "x", status: "declined" }] });
+    respond({ data: [{ instagram_business_account: { id: "ig_9", username: "luis" } }, {}] });
+
+    const result = await resolveAssignedInstagramAccounts("system-user-token", { maxAttempts: 1, delayMs: 0 });
+    expect(result).toMatchObject({
+      accounts: [{ id: "ig_9", username: "luis" }],
+      source: "pages",
+      clientBusinessId: "business_123",
+      diagnostics: { grantedPermissions: ["instagram_basic"], lookups: { assigned: 0, pages: 1 } },
+    });
+    expect(new URL(fetchMock.mock.calls[3][0]).pathname).toBe("/v26.0/me/accounts");
+  });
+
+  it("falls back to the client business's owned accounts when Pages are not shared", async () => {
+    respond({ data: [] });
+    respond({ client_business_id: "business_123" });
+    respond({ data: [] });
+    respond({ error: { code: 200, message: "secret-ish detail" } }, 400);
+    respond({ data: [{ id: "ig_9", username: "luis" }] });
+
+    const result = await resolveAssignedInstagramAccounts("system-user-token", { maxAttempts: 1, delayMs: 0 });
+    expect(result).toMatchObject({ accounts: [{ id: "ig_9" }], source: "business" });
+    expect(result.diagnostics?.lookups).toEqual({ assigned: 0, pages: "error_200", business: 1 });
+    expect(JSON.stringify(result)).not.toContain("secret-ish detail");
+    expect(new URL(fetchMock.mock.calls[4][0]).pathname).toBe("/v26.0/business_123/owned_instagram_accounts");
+  });
+
+  it("returns safe diagnostics, without the token, when every lookup is empty", async () => {
     respond({ data: [] });
     respond({ data: [] });
     respond({ client_business_id: "business_123" });
+    respond({ data: [] });
+    respond({ data: [] });
+    respond({ data: [] });
 
-    await expect(
-      resolveAssignedInstagramAccounts("system-user-token", {
-        maxAttempts: 2,
-        delayMs: 0,
-      })
-    ).resolves.toEqual({
+    const result = await resolveAssignedInstagramAccounts("system-user-token", { maxAttempts: 2, delayMs: 0 });
+    expect(result).toEqual({
       accounts: [],
       attempts: 2,
       clientBusinessId: "business_123",
+      diagnostics: { grantedPermissions: [], lookups: { assigned: 0, pages: 0, business: 0 } },
     });
-
-    const diagnosticRequest = new URL(fetchMock.mock.calls[2][0]);
-    expect(`${diagnosticRequest.origin}${diagnosticRequest.pathname}`).toBe(
-      "https://graph.facebook.com/v26.0/me"
-    );
-    expect(diagnosticRequest.searchParams.get("fields")).toBe(
-      "client_business_id"
-    );
+    expect(JSON.stringify(result)).not.toContain("system-user-token");
   });
 
   it("uses the selected account id for profile and media calls", async () => {
