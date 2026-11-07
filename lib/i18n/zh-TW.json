@@ -1,4 +1,9 @@
 {
+  "Diagnostics unavailable": "診斷暫時無法使用",
+  "Loading diagnostics": "正在載入診斷",
+  "We could not load production diagnostics. No health status was inferred.": "無法載入正式環境診斷，因此未推斷任何健康狀態。",
+  "Sign out": "登出",
+  "Signing out…": "正在登出…",
   " (capped at {count})": "（最多顯示 {count} 則）",
   "% CTR": "% 點擊率",
   "(no text)": "（無文字內容）",

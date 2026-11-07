@@ -80,28 +80,36 @@ export default function DiagnosticsPage() {
   const { t, label, locale } = useI18n();
   const [data, setData] = useState<DiagnosticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   async function refreshDiagnostics() {
     setLoading(true);
-    const response = await fetch("/api/admin/diagnostics");
-    const payload = await response.json();
-    if (payload.success) {
+    setError(false);
+    try {
+      const response = await fetch("/api/admin/diagnostics");
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error("Diagnostics unavailable");
       setData(payload.data);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   useEffect(() => {
     let active = true;
 
     async function loadInitialDiagnostics() {
-      const response = await fetch("/api/admin/diagnostics");
-      const payload = await response.json();
-      if (active && payload.success) {
-        setData(payload.data);
-      }
-      if (active) {
-        setLoading(false);
+      try {
+        const response = await fetch("/api/admin/diagnostics");
+        const payload = await response.json();
+        if (!response.ok || !payload.success) throw new Error("Diagnostics unavailable");
+        if (active) setData(payload.data);
+      } catch {
+        if (active) setError(true);
+      } finally {
+        if (active) setLoading(false);
       }
     }
 
@@ -113,7 +121,19 @@ export default function DiagnosticsPage() {
   }, []);
 
   if (loading && !data) {
-    return <div className="panel rounded p-8 h-64" />;
+    return <div className="panel rounded p-8 h-64" role="status" aria-busy="true" aria-label={t("Loading diagnostics")} />;
+  }
+
+  if (error && !data) {
+    return (
+      <div className="panel rounded p-8" role="alert">
+        <h1 className="text-xl font-bold text-foreground">{t("Diagnostics unavailable")}</h1>
+        <p className="mt-2 text-sm text-muted">{t("We could not load production diagnostics. No health status was inferred.")}</p>
+        <button onClick={() => void refreshDiagnostics()} className="mt-4 rounded bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover">
+          {t("Try again")}
+        </button>
+      </div>
+    );
   }
 
   const workerAgeSeconds =
@@ -135,6 +155,8 @@ export default function DiagnosticsPage() {
         <button
           onClick={() => void refreshDiagnostics()}
           className="rounded border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground transition hover:border-border-hover"
+          disabled={loading}
+          aria-busy={loading || undefined}
         >
           {t("Refresh")}
         </button>
