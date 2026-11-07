@@ -25,11 +25,18 @@ export async function POST(request: NextRequest) {
   const instagramAccountId =
     typeof body.instagramAccountId === "string" ? body.instagramAccountId : null;
 
+  // Disconnecting cascades to the account's campaigns, logs and links. An
+  // empty body used to disconnect every account in the workspace; require
+  // the one account the user chose.
+  if (!instagramAccountId) {
+    return NextResponse.json(
+      { success: false, error: "instagramAccountId is required" },
+      { status: 400 }
+    );
+  }
+
   await prisma.instagramAccount.deleteMany({
-    where: {
-      workspaceId: context.workspaceId,
-      ...(instagramAccountId ? { id: instagramAccountId } : {}),
-    },
+    where: { workspaceId: context.workspaceId, id: instagramAccountId },
   });
 
   return NextResponse.json({ success: true });

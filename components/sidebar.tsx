@@ -12,6 +12,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { zernioLink } from "@/lib/zernio-links";
 import { usePathname } from "next/navigation";
+import LogoutButton from "@/components/logout-button";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard" },
@@ -118,6 +119,7 @@ export default function Sidebar({
               className="m-2"
             />
           </a>
+          <LogoutButton newDesign={newDesign} />
         </div>
       </aside>
     </>
