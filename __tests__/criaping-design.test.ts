@@ -81,6 +81,6 @@ it("keeps font loading opt-in and all token declarations scoped", async () => {
   }
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
   for (const [, selector, body] of withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (body.includes("--cp-")) expect(selector.trim()).toBe('[data-design="criaping"]');
+    if (body.includes("--cp-")) expect(selector.trim()).toMatch(/^\[data-design="criaping"\](?:\s|$)/);
   }
 });

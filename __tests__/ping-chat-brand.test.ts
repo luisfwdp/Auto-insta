@@ -50,4 +50,18 @@ describe("PING CHAT brand review", () => {
     expect(contrast("F5F5F5", "0B0B0B")).toBeGreaterThanOrEqual(4.5);
     expect(contrast("0B0B0B", "C7FF2F")).toBeGreaterThanOrEqual(4.5);
   });
+
+  it("applies the approved identity to the public landing and legacy product surfaces", () => {
+    const landing = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+    const landingCss = readFileSync(new URL("../app/landing.css", import.meta.url), "utf8");
+    const tokens = readFileSync(new URL("../app/criaping-tokens.css", import.meta.url), "utf8");
+
+    expect(landing).toContain("/brand/ping-chat/logo-horizontal.svg");
+    expect(landing).toContain("Conversa que ativa.");
+    expect(landing).not.toContain("OpenReply");
+    expect(landingCss).toContain("--or-orange: #c7ff2f");
+    expect(landingCss).toContain("--or-paper: #0b0b0b");
+    expect(tokens).toContain("--color-surface: var(--cp-surface)");
+    expect(tokens).toContain('[data-design="criaping"] .zernio-sponsor');
+  });
 });

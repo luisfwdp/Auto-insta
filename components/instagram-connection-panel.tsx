@@ -77,7 +77,7 @@ export function InstagramConnectionPanel({
           )}
         </div>
       )}
-      {!error && <div className="mt-6 flex gap-3 border-t border-border pt-4"><a href="/api/instagram/connect" className="rounded bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover">{accounts.length > 0 ? t("Connect another Instagram account") : t("Connect using your own Meta app")}</a></div>}
+      {!error && <div className="mt-6 flex gap-3 border-t border-border pt-4"><a href="/api/instagram/connect" className="rounded bg-accent px-4 py-2 text-sm font-semibold text-[#0B0B0B] transition-colors hover:bg-accent-hover">{accounts.length > 0 ? t("Connect another Instagram account") : t("Connect using your own Meta app")}</a></div>}
     </section>
   );
 }
