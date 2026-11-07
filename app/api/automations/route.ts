@@ -19,6 +19,7 @@ import {
   canManageWorkspace,
   getCurrentWorkspaceContext,
 } from "@/lib/workspace-access";
+import { httpUrl } from "@/lib/api/http-url";
 
 // This list is read-your-writes (created/imported campaigns must show up
 // immediately), so never cache it at the route or CDN layer.
@@ -30,7 +31,7 @@ const createAutomationSchema = z
     goal: z.string().min(1).max(120).optional().nullable(),
     instagramAccountId: z.string().min(1).optional().nullable(),
     postId: z.string().min(1).optional().nullable(),
-    postUrl: z.string().url().optional().nullable(),
+    postUrl: httpUrl.optional().nullable(),
     pendingNextReel: z.boolean().optional().default(false),
     matchAnyPost: z.boolean().optional().default(false),
     keywords: z.array(z.string().min(1).max(50)).max(10).optional().default([]),
@@ -58,12 +59,12 @@ const createAutomationSchema = z
       .default([]),
     // Empty string means "no tracked link"; a URL sets one.
     trackedDestinationUrl: z
-      .union([z.string().url(), z.literal("")])
+      .union([httpUrl, z.literal("")])
       .optional()
       .nullable(),
     // Optional second tracked link, rendered as a second DM button.
     secondaryDestinationUrl: z
-      .union([z.string().url(), z.literal("")])
+      .union([httpUrl, z.literal("")])
       .optional()
       .nullable(),
     secondaryButtonLabel: z.string().max(20).optional().nullable(),
@@ -93,7 +94,7 @@ const updateAutomationSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   goal: z.string().min(1).max(120).optional().nullable(),
   postId: z.string().min(1).optional().nullable(),
-  postUrl: z.string().url().optional().nullable(),
+  postUrl: httpUrl.optional().nullable(),
   pendingNextReel: z.boolean().optional(),
   matchAnyPost: z.boolean().optional(),
   keywords: z.array(z.string().min(1).max(50)).max(10).optional(),
@@ -119,12 +120,12 @@ const updateAutomationSchema = z.object({
   // Empty string clears the tracked link; a URL updates/creates it; undefined
   // leaves it unchanged.
   trackedDestinationUrl: z
-    .union([z.string().url(), z.literal("")])
+    .union([httpUrl, z.literal("")])
     .optional()
     .nullable(),
   // Same semantics for the optional second tracked link / DM button.
   secondaryDestinationUrl: z
-    .union([z.string().url(), z.literal("")])
+    .union([httpUrl, z.literal("")])
     .optional()
     .nullable(),
   secondaryButtonLabel: z.string().max(20).optional().nullable(),
