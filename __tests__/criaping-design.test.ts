@@ -9,6 +9,7 @@ vi.mock("next/font/local", () => ({
 }));
 vi.mock("@vercel/analytics/next", () => ({ Analytics: () => null }));
 vi.mock("next/navigation", () => ({ notFound: () => { throw new Error("404"); } }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -17,8 +18,8 @@ describe("PING CHAT design rollout boundary", () => {
     vi.stubEnv("FEATURE_FLAGS", "-newDesign");
     const { default: Layout } = await import("../app/layout");
     const { default: Preview } = await import("../app/design-system/page");
-    const html = renderToStaticMarkup(Layout({ children: "legacy" }));
-    expect(html).toContain('<html lang="en" class="h-full dark">');
+    const html = renderToStaticMarkup(await Layout({ children: "legacy" }));
+    expect(html).toContain('<html lang="pt-BR" class="h-full dark">');
     expect(html).not.toContain("data-design");
     expect(html).not.toContain("--font-criaping");
     expect(Preview).toThrow("404");
@@ -28,7 +29,7 @@ describe("PING CHAT design rollout boundary", () => {
     vi.stubEnv("FEATURE_FLAGS", flags);
     const { default: Layout } = await import("../app/layout");
     const { default: Preview } = await import("../app/design-system/page");
-    const html = renderToStaticMarkup(Layout({ children: createElement(Preview) }));
+    const html = renderToStaticMarkup(await Layout({ children: createElement(Preview) }));
     expect(isFeatureEnabled("newDesign")).toBe(true);
     expect(html).toContain('data-design="criaping"');
     expect(html).toContain("--font-criaping-sora");
