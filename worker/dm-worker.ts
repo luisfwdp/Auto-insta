@@ -1,10 +1,14 @@
 import { createDMWorker } from "@/lib/queue/dm-worker";
 import { recordWorkerHeartbeat } from "@/lib/ops/worker-health";
+import { trackConsumerReadiness } from "@/lib/ops/worker-readiness";
+import { enqueueCanary } from "@/lib/ops/worker-canary";
+import { getDMQueue } from "@/lib/queue/client";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
 import os from "node:os";
 
 const worker = createDMWorker();
+const readiness = trackConsumerReadiness(worker);
 const startedAt = new Date().toISOString();
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // Polling safety net for comments that webhooks miss. Runs in the worker because
@@ -16,12 +20,22 @@ const POLL_INTERVAL_MS = Number(
 console.log("[DM Worker] Started");
 
 async function heartbeat() {
+  // Only report healthy while the BullMQ consumer is connected; otherwise let
+  // the heartbeat expire so /api/health shows the queue is not being served.
+  if (!readiness.isReady()) {
+    console.warn("[DM Worker] Consumer not ready; skipping heartbeat");
+    return;
+  }
   try {
     await recordWorkerHeartbeat({
       pid: process.pid,
       hostname: os.hostname(),
       startedAt,
+      consumerReadySince: readiness.readySince(),
     });
+    // Health requires this canary to be processed, so a consumer that is
+    // "ready" but no longer takes jobs still turns /api/health unhealthy.
+    await enqueueCanary(getDMQueue());
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[DM Worker] Heartbeat failed:", message);

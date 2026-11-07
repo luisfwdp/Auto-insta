@@ -1764,3 +1764,17 @@ it("retains the public reply claim if sending succeeded but its log write failed
   expect(sendCommentReply).toHaveBeenCalledTimes(1);
   expect(mockSendPrivateReply).toHaveBeenCalledTimes(1);
 });
+
+describe("DM Worker — diagnostic canary job", () => {
+  it("only stamps the canary key: no database, no Meta call", async () => {
+    const set = vi.fn(async () => "OK");
+    vi.mocked(getRedisConnection).mockReturnValue({ set } as never);
+    const processor = getProcessor();
+
+    await processor({ name: "worker-canary", data: { canary: true }, id: "worker-canary", attemptsMade: 0 });
+
+    expect(set).toHaveBeenCalledWith("health:worker:canary", expect.any(String), "EX", 600);
+    expect(mockPrisma.automation.findMany).not.toHaveBeenCalled();
+    expect(mockSendPrivateReply).not.toHaveBeenCalled();
+  });
+});
