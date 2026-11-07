@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title">
+  <title id="title">PING CHAT</title>
+  <path d="M18 18h42c12 0 20 8 20 20v16c0 12-8 20-20 20H39L18 88V18Z" fill="#C7FF2F"/>
+  <path d="M39 39h20M39 51h13" fill="none" stroke="#0B0B0B" stroke-width="6" stroke-linecap="round"/>
+  <path d="M67 9c12 3 18 10 20 21M69 1c16 3 25 13 27 28" fill="none" stroke="#C7FF2F" stroke-width="4" stroke-linecap="round"/>
+</svg>
