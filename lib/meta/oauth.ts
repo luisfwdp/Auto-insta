@@ -1,3 +1,4 @@
+import { getFacebookLoginScopes } from "@/lib/meta/facebook-login";
 import {
   createCipheriv,
   createDecipheriv,
@@ -5,7 +6,12 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "crypto";
-import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
+import {
+  getEncryptionKeyHex,
+  getInstagramLoginMode,
+  getMetaGraphApiVersion,
+  requireEnv,
+} from "@/lib/env";
 
 // Instagram API with Instagram Login authorizes on www.instagram.com. The old
 // api.instagram.com/oauth/authorize host belonged to the retired Basic Display
@@ -17,11 +23,28 @@ const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
-const STATE_MAX_AGE_MS = 10 * 60 * 1000;
+// Facebook Login for Business can take several screens (login, business
+// selection, asset sharing, two-factor). Ten minutes was short enough for a
+// real consent to expire mid-flow; the state stays HMAC-signed, single
+// workspace and is checked against the signed-in member's role.
+export const STATE_MAX_AGE_MS = 30 * 60 * 1000;
 
 interface OAuthStatePayload {
   workspaceId: string;
+  // The member who started the connect; the callback must be the same user.
+  userId: string;
+  // One-time value also kept in an HttpOnly cookie set by the connect route.
+  // The callback requires the two to match and clears the cookie, so a state
+  // cannot be replayed from another browser or reused after it was consumed.
+  nonce: string;
   ts: number;
+}
+
+/** HttpOnly cookie that carries the state's one-time nonce. */
+export const OAUTH_NONCE_COOKIE = "pc_ig_oauth_nonce";
+
+export function createOAuthNonce(): string {
+  return randomBytes(16).toString("base64url");
 }
 
 function base64UrlEncode(value: string): string {
@@ -38,18 +61,35 @@ function signState(payload: string): string {
     .digest("base64url");
 }
 
-export function createOAuthState(workspaceId: string): string {
+export function createOAuthState(
+  workspaceId: string,
+  userId: string,
+  nonce: string
+): string {
   const payload = base64UrlEncode(
-    JSON.stringify({ workspaceId, ts: Date.now() } satisfies OAuthStatePayload)
+    JSON.stringify({ workspaceId, userId, nonce, ts: Date.now() } satisfies OAuthStatePayload)
   );
   return `${payload}.${signState(payload)}`;
 }
 
-export function verifyOAuthState(state: string | null): OAuthStatePayload | null {
-  if (!state) return null;
+export type OAuthStateFailure = "missing" | "malformed" | "bad_signature" | "expired";
 
-  const [payload, signature] = state.split(".");
-  if (!payload || !signature) return null;
+export type OAuthStateCheck =
+  | { ok: true; payload: OAuthStatePayload }
+  | { ok: false; reason: OAuthStateFailure };
+
+/**
+ * Verifies the state and says why it failed, so a rejected callback can be
+ * diagnosed without logging the state or the code themselves.
+ */
+export function checkOAuthState(state: string | null): OAuthStateCheck {
+  if (!state) return { ok: false, reason: "missing" };
+
+  const parts = state.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return { ok: false, reason: "malformed" };
+  }
+  const [payload, signature] = parts;
 
   const expected = signState(payload);
   const signatureBuffer = Buffer.from(signature);
@@ -59,13 +99,17 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
     signatureBuffer.length !== expectedBuffer.length ||
     !timingSafeEqual(signatureBuffer, expectedBuffer)
   ) {
-    return null;
+    return { ok: false, reason: "bad_signature" };
   }
 
   try {
     const parsed = JSON.parse(base64UrlDecode(payload)) as OAuthStatePayload;
-    if (typeof parsed.workspaceId !== "string" || !parsed.workspaceId) {
-      return null;
+    if (
+      typeof parsed.workspaceId !== "string" || !parsed.workspaceId ||
+      typeof parsed.userId !== "string" || !parsed.userId ||
+      typeof parsed.nonce !== "string" || !parsed.nonce
+    ) {
+      return { ok: false, reason: "malformed" };
     }
 
     // Reject a missing or non-numeric timestamp. `Date.now() - "abc"` is NaN,
@@ -73,21 +117,55 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
     // otherwise pass the age check and never expire. A ts in the future is
     // rejected for the same reason: it has not aged at all.
     if (typeof parsed.ts !== "number" || !Number.isFinite(parsed.ts)) {
-      return null;
+      return { ok: false, reason: "malformed" };
     }
 
     const age = Date.now() - parsed.ts;
     if (age < 0 || age > STATE_MAX_AGE_MS) {
-      return null;
+      return { ok: false, reason: "expired" };
     }
 
-    return parsed;
+    return { ok: true, payload: parsed };
   } catch {
-    return null;
+    return { ok: false, reason: "malformed" };
   }
 }
 
+export function verifyOAuthState(state: string | null): OAuthStatePayload | null {
+  const check = checkOAuthState(state);
+  return check.ok ? check.payload : null;
+}
+
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
+  if (getInstagramLoginMode() === "facebook") {
+    // https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow
+    const params = new URLSearchParams({
+      client_id: requireEnv("INSTAGRAM_APP_ID"),
+      redirect_uri: redirectUri,
+      scope: getFacebookLoginScopes(),
+      response_type: "code",
+      auth_type: "rerequest",
+      state,
+    });
+    return `https://www.facebook.com/dialog/oauth?${params.toString()}`;
+  }
+  if (getInstagramLoginMode() === "unified") {
+    const params = new URLSearchParams({
+      client_id: requireEnv("INSTAGRAM_APP_ID"),
+      config_id: requireEnv("INSTAGRAM_CONFIG_ID"),
+      redirect_uri: redirectUri,
+      // https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started
+      // Only client_id, config_id, redirect_uri, response_type=code (and the
+      // optional display/prompt) are documented. This is a full-page
+      // redirect, so display=popup does not apply.
+      response_type: "code",
+      prompt: "login",
+      state,
+    });
+
+    return `https://www.facebook.com/dialog/oauth?${params.toString()}`;
+  }
+
   const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
@@ -103,7 +181,29 @@ export function getAuthorizationUrl(redirectUri: string, state: string): string 
 export async function exchangeCodeForToken(
   code: string,
   redirectUri: string
-): Promise<{ accessToken: string; userId: string }> {
+): Promise<{ accessToken: string; userId?: string }> {
+  if (getInstagramLoginMode() !== "legacy") {
+    const url = new URL(
+      `https://graph.facebook.com/${getMetaGraphApiVersion()}/oauth/access_token`
+    );
+    url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
+    url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
+    url.searchParams.set("code", code);
+    // Required: Meta rejects the code unless redirect_uri is identical to the
+    // one sent to the OAuth dialog ("Error validating verification code").
+    url.searchParams.set("redirect_uri", redirectUri);
+
+    const response = await fetch(url.toString(), { cache: "no-store" });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(
+        `Token exchange failed: ${error.error?.message || JSON.stringify(error)}`
+      );
+    }
+    const data = await response.json();
+    return { accessToken: data.access_token };
+  }
+
   const body = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     client_secret: requireEnv("INSTAGRAM_APP_SECRET"),

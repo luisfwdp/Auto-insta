@@ -9,26 +9,27 @@ vi.mock("next/font/local", () => ({
 }));
 vi.mock("@vercel/analytics/next", () => ({ Analytics: () => null }));
 vi.mock("next/navigation", () => ({ notFound: () => { throw new Error("404"); } }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("CRIA PING opt-in boundary", () => {
-  it.each(["", "-newDesign", "unknownFlag"])("preserves legacy root and hides preview for %s", async (flags) => {
-    vi.stubEnv("FEATURE_FLAGS", flags);
+describe("PING CHAT design rollout boundary", () => {
+  it("keeps an explicit emergency opt-out for the active design", async () => {
+    vi.stubEnv("FEATURE_FLAGS", "-newDesign");
     const { default: Layout } = await import("../app/layout");
     const { default: Preview } = await import("../app/design-system/page");
-    const html = renderToStaticMarkup(Layout({ children: "legacy" }));
-    expect(html).toContain('<html lang="en" class="h-full dark">');
+    const html = renderToStaticMarkup(await Layout({ children: "legacy" }));
+    expect(html).toContain('<html lang="pt-BR" class="h-full dark">');
     expect(html).not.toContain("data-design");
     expect(html).not.toContain("--font-criaping");
     expect(Preview).toThrow("404");
   });
 
-  it("enables tokens and the review page only with newDesign", async () => {
-    vi.stubEnv("FEATURE_FLAGS", "newDesign");
+  it.each(["", "newDesign", "unknownFlag"])("enables tokens and the review page by default for %s", async (flags) => {
+    vi.stubEnv("FEATURE_FLAGS", flags);
     const { default: Layout } = await import("../app/layout");
     const { default: Preview } = await import("../app/design-system/page");
-    const html = renderToStaticMarkup(Layout({ children: createElement(Preview) }));
+    const html = renderToStaticMarkup(await Layout({ children: createElement(Preview) }));
     expect(isFeatureEnabled("newDesign")).toBe(true);
     expect(html).toContain('data-design="criaping"');
     expect(html).toContain("--font-criaping-sora");
@@ -81,6 +82,6 @@ it("keeps font loading opt-in and all token declarations scoped", async () => {
   }
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
   for (const [, selector, body] of withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (body.includes("--cp-")) expect(selector.trim()).toBe('[data-design="criaping"]');
+    if (body.includes("--cp-")) expect(selector.trim()).toMatch(/^\[data-design="criaping"\](?:\s|$)/);
   }
 });

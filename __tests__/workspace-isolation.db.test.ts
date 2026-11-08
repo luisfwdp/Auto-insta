@@ -390,6 +390,14 @@ describe.skipIf(!DATABASE_URL)("workspace isolation on a real Postgres", () => {
       expect(await state.db.instagramAccount.findUnique({ where: { id: A.account } })).not.toBeNull();
     });
 
+    it("refuses a disconnect without an account id instead of disconnecting every account", async () => {
+      const res = await disconnectRoute.POST(
+        request("POST", "http://localhost/api/instagram/disconnect", {})
+      );
+      expect(res.status).toBe(400);
+      expect(await state.db.instagramAccount.count({ where: { workspaceId: B.workspace } })).toBeGreaterThan(0);
+    });
+
     it("cannot change roles, remove members or revoke invitations in another workspace", async () => {
       const patch = await membersRoute.PATCH(
         request("PATCH", "http://localhost/api/workspace/members", { memberId: A.extraMember, role: "ADMIN" })

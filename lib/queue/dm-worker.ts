@@ -1,3 +1,4 @@
+import { CANARY_JOB_NAME, recordCanaryProcessed } from "@/lib/ops/worker-canary";
 import {
   classifySendError,
   hasLegacyUnconfirmedDelivery,
@@ -1547,6 +1548,8 @@ async function dispatchJob(job: Job<DmQueueJob>): Promise<void> {
 }
 
 async function processJob(job: Job<DmQueueJob>): Promise<void> {
+  // Diagnostic job: proves the consumer takes jobs. No database, no Meta.
+  if (job.name === CANARY_JOB_NAME) return recordCanaryProcessed();
   try {
     await dispatchJob(job);
   } catch (error) {

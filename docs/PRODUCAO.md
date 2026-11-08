@@ -224,3 +224,18 @@ worker. Webhooks continuam sendo registrados e a fila fica parada no Redis.
 - Página Diagnóstico do painel: falhas de webhook, de DM e de refresh de token.
 - Logs de funções da Vercel e logs do worker no provedor.
 - Revisar diariamente na primeira semana: `DmLog` com `FAILED` e eventos `ERROR`.
+
+## Instagram via Facebook Login (`INSTAGRAM_LOGIN_MODE=facebook`)
+
+Modo recomendado quando a configuração do Facebook Login for Business não entrega
+permissões de Página. As permissões são pedidas por `scope` (padrão:
+`instagram_basic, instagram_manage_comments, instagram_manage_messages,
+pages_show_list, pages_read_engagement, business_management`; pode ser trocado por
+`INSTAGRAM_FACEBOOK_SCOPES`). O callback troca o código, gera token de usuário de
+longa duração, lê `/me/accounts` e grava, cifrado, o token da Página ligada à conta
+Instagram (não expira). `INSTAGRAM_CONFIG_ID` não é usado neste modo.
+
+- Pré-requisito: as permissões acima adicionadas ao app (Casos de uso). Para
+  inscrever a Página nos webhooks, adicione também `pages_manage_metadata` e inclua
+  em `INSTAGRAM_FACEBOOK_SCOPES`.
+- Rollback: `INSTAGRAM_LOGIN_MODE=unified` (ou remover a variável) e novo deploy.

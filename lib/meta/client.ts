@@ -1,11 +1,23 @@
-import { getMetaGraphApiVersion, requireEnv } from "@/lib/env";
+import {
+  getMetaGraphApiVersion,
+  requireEnv,
+  usesFacebookGraph,
+} from "@/lib/env";
 
 function instagramGraphBase() {
-  return `https://graph.instagram.com/${getMetaGraphApiVersion()}`;
+  const host =
+    usesFacebookGraph()
+      ? "graph.facebook.com"
+      : "graph.instagram.com";
+  return `https://${host}/${getMetaGraphApiVersion()}`;
 }
 
 function facebookGraphBase() {
   return `https://graph.facebook.com/${getMetaGraphApiVersion()}`;
+}
+
+function legacyInstagramGraphBase() {
+  return `https://graph.instagram.com/${getMetaGraphApiVersion()}`;
 }
 
 export class MetaApiError extends Error {
@@ -616,11 +628,170 @@ export async function getConversationMessages(
   return data.messages?.data ?? [];
 }
 
-export async function getUserInfo(accessToken: string): Promise<InstagramUser> {
-  const url = new URL(`${instagramGraphBase()}/me`);
+function instagramAccountPath(instagramAccountId?: string) {
+  if (usesFacebookGraph()) {
+    if (!instagramAccountId) {
+      throw new Error("Instagram account ID is required for Unified Login");
+    }
+    return instagramAccountId;
+  }
+  return "me";
+}
+
+export async function getAssignedInstagramAccounts(
+  accessToken: string
+): Promise<Array<{ id: string; username: string }>> {
+  const url = new URL(`${facebookGraphBase()}/me/assigned_instagram_accounts`);
+  url.searchParams.set("fields", "id,username");
+  url.searchParams.set("access_token", accessToken);
+
+  const response = await fetch(url.toString(), { cache: "no-store" });
+  const data = await handleResponse<{
+    data: Array<{ id: string; username: string }>;
+  }>(response);
+  return data.data;
+}
+
+export interface AssignedInstagramAccountResolution {
+  accounts: Array<{ id: string; username: string }>;
+  attempts: number;
+  clientBusinessId?: string;
+  /** Which lookup found the account when the documented one came back empty. */
+  source?: "assigned" | "pages" | "business";
+  /** Non-secret diagnostics: granted scopes and per-lookup outcomes. */
+  diagnostics?: {
+    grantedPermissions: string[];
+    lookups: Record<string, number | string>;
+  };
+}
+
+type GraphAccount = { id: string; username: string };
+
+/** GET a Graph path with the token; returns the JSON or an error code string. */
+async function graphGet<T>(
+  path: string,
+  params: Record<string, string>,
+  accessToken: string
+): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  const url = new URL(`${facebookGraphBase()}/${path}`);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  url.searchParams.set("access_token", accessToken);
+  try {
+    const response = await fetch(url.toString(), { cache: "no-store" });
+    const body = await response.json();
+    if (!response.ok) {
+      // Only Meta's error code, never the message or the request URL.
+      return { ok: false, error: `error_${body?.error?.code ?? response.status}` };
+    }
+    return { ok: true, data: body as T };
+  } catch {
+    return { ok: false, error: "network_error" };
+  }
+}
+
+function uniqueAccounts(accounts: Array<GraphAccount | undefined>): GraphAccount[] {
+  const byId = new Map<string, GraphAccount>();
+  for (const account of accounts) if (account?.id) byId.set(account.id, account);
+  return [...byId.values()];
+}
+
+/**
+ * Unified Login can redirect before the selected assets are visible on the
+ * system-user token. Retry only the empty-success response; Graph API errors
+ * still fail immediately.
+ *
+ * In production the documented lookup stayed empty even though Business
+ * Settings listed the Instagram account under the app's access, so when it is
+ * empty we also try the account linked to the token's Pages and the accounts
+ * owned by the client business, and record non-secret diagnostics. Every
+ * candidate comes from assets this same token can read.
+ *
+ * Meta docs:
+ * https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-unified-login/get-started#step-6-get-your-clients-ids
+ * https://developers.facebook.com/docs/graph-api/reference/user/accounts/
+ * https://developers.facebook.com/docs/marketing-api/reference/business/owned_instagram_accounts/
+ */
+export async function resolveAssignedInstagramAccounts(
+  accessToken: string,
+  options: { maxAttempts?: number; delayMs?: number } = {}
+): Promise<AssignedInstagramAccountResolution> {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+  const delayMs = Math.max(0, options.delayMs ?? 750);
+
+  for (let attempts = 1; attempts <= maxAttempts; attempts += 1) {
+    const accounts = await getAssignedInstagramAccounts(accessToken);
+    if (accounts.length > 0) return { accounts, attempts, source: "assigned" };
+    if (attempts < maxAttempts && delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  const lookups: Record<string, number | string> = { assigned: 0 };
+
+  const me = await graphGet<{ client_business_id?: string }>(
+    "me",
+    { fields: "client_business_id" },
+    accessToken
+  );
+  const clientBusinessId = me.ok ? me.data.client_business_id : undefined;
+
+  const permissions = await graphGet<{ data: Array<{ permission: string; status: string }> }>(
+    "me/permissions",
+    {},
+    accessToken
+  );
+  const grantedPermissions = permissions.ok
+    ? permissions.data.data.filter((p) => p.status === "granted").map((p) => p.permission)
+    : [];
+  if (!permissions.ok) lookups.permissions = permissions.error;
+
+  const diagnostics = () => ({ grantedPermissions, lookups });
+
+  const pages = await graphGet<{
+    data: Array<{ instagram_business_account?: GraphAccount }>;
+  }>("me/accounts", { fields: "instagram_business_account{id,username}" }, accessToken);
+  if (pages.ok) {
+    const accounts = uniqueAccounts(pages.data.data.map((page) => page.instagram_business_account));
+    lookups.pages = accounts.length;
+    if (accounts.length > 0) {
+      return { accounts, attempts: maxAttempts, clientBusinessId, source: "pages", diagnostics: diagnostics() };
+    }
+  } else {
+    lookups.pages = pages.error;
+  }
+
+  if (clientBusinessId) {
+    const owned = await graphGet<{ data: GraphAccount[] }>(
+      `${clientBusinessId}/owned_instagram_accounts`,
+      { fields: "id,username" },
+      accessToken
+    );
+    if (owned.ok) {
+      const accounts = uniqueAccounts(owned.data.data);
+      lookups.business = accounts.length;
+      if (accounts.length > 0) {
+        return { accounts, attempts: maxAttempts, clientBusinessId, source: "business", diagnostics: diagnostics() };
+      }
+    } else {
+      lookups.business = owned.error;
+    }
+  }
+
+  return { accounts: [], attempts: maxAttempts, clientBusinessId, diagnostics: diagnostics() };
+}
+
+export async function getUserInfo(
+  accessToken: string,
+  instagramAccountId?: string
+): Promise<InstagramUser> {
+  const url = new URL(
+    `${instagramGraphBase()}/${instagramAccountPath(instagramAccountId)}`
+  );
   url.searchParams.set(
     "fields",
-    "id,user_id,username,name,profile_picture_url,followers_count"
+    usesFacebookGraph()
+      ? "id,username,name,profile_picture_url,followers_count"
+      : "id,user_id,username,name,profile_picture_url,followers_count"
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -636,9 +807,12 @@ const MEDIA_PAGE_SIZE = 100;
 
 export async function getUserMedia(
   accessToken: string,
+  instagramAccountId?: string,
   limit = 25
 ): Promise<InstagramMedia[]> {
-  const url = new URL(`${instagramGraphBase()}/me/media`);
+  const url = new URL(
+    `${instagramGraphBase()}/${instagramAccountPath(instagramAccountId)}/media`
+  );
   url.searchParams.set("fields", MEDIA_FIELDS);
   url.searchParams.set("limit", limit.toString());
   url.searchParams.set("access_token", accessToken);
@@ -656,11 +830,14 @@ export async function getUserMedia(
  */
 export async function getAllUserMedia(
   accessToken: string,
+  instagramAccountId?: string,
   max = 500
 ): Promise<InstagramMedia[]> {
   const results: InstagramMedia[] = [];
 
-  const first = new URL(`${instagramGraphBase()}/me/media`);
+  const first = new URL(
+    `${instagramGraphBase()}/${instagramAccountPath(instagramAccountId)}/media`
+  );
   first.searchParams.set("fields", MEDIA_FIELDS);
   first.searchParams.set("limit", String(Math.min(MEDIA_PAGE_SIZE, max)));
   first.searchParams.set("access_token", accessToken);
@@ -782,7 +959,7 @@ export async function getFollowerCountSeries(
 export async function getLongLivedToken(
   shortLivedToken: string
 ): Promise<{ accessToken: string; expiresIn: number }> {
-  const url = new URL(`${instagramGraphBase()}/access_token`);
+  const url = new URL(`${legacyInstagramGraphBase()}/access_token`);
   url.searchParams.set("grant_type", "ig_exchange_token");
   url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
   url.searchParams.set("access_token", shortLivedToken);
@@ -799,7 +976,7 @@ export async function getLongLivedToken(
 export async function refreshLongLivedToken(
   longLivedToken: string
 ): Promise<{ accessToken: string; expiresIn: number }> {
-  const url = new URL(`${instagramGraphBase()}/refresh_access_token`);
+  const url = new URL(`${legacyInstagramGraphBase()}/refresh_access_token`);
   url.searchParams.set("grant_type", "ig_refresh_token");
   url.searchParams.set("access_token", longLivedToken);
 

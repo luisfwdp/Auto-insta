@@ -4,11 +4,12 @@ import "./globals.css";
 import "./criaping-tokens.css";
 import { isFeatureEnabled } from "@/lib/feature-flags";
 import { criapingSora, criapingInter } from "./fonts/criaping";
+import { getI18n } from "@/lib/i18n/server";
 
 export const metadata: Metadata = {
-  title: "OpenReply - Open source Instagram comment-to-DM automation",
+  title: "PING CHAT — Automação de comentários e DMs no Instagram",
   description:
-    "A free, self-hosted ManyChat alternative. Send an Instagram DM automatically when someone comments a keyword on your post or reel, using the official Meta API.",
+    "Transforme comentários com palavras-chave em conversas e mensagens privadas automáticas no Instagram.",
   keywords: [
     "instagram automation",
     "comment to DM",
@@ -19,7 +20,7 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "OpenReply",
+    title: "PING CHAT",
     statusBarStyle: "black-translucent",
   },
   icons: {
@@ -40,15 +41,16 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   const newDesign = isFeatureEnabled("newDesign");
+  const { locale } = await getI18n();
   return (
     <html
-      lang="en"
+      lang={locale}
       data-design={newDesign ? "criaping" : undefined}
       className={`h-full dark${newDesign ? ` ${criapingSora.variable} ${criapingInter.variable}` : ""}`}
     >

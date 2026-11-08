@@ -6,9 +6,9 @@ import type { MetadataRoute } from "next";
 // a phone practical.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "OpenReply",
-    short_name: "OpenReply",
-    description: "Instagram comment-to-DM automation",
+    name: "PING CHAT by Creator Lab School",
+    short_name: "PING CHAT",
+    description: "Automação de comentários e DMs no Instagram",
     start_url: "/overview",
     display: "standalone",
     orientation: "portrait",
