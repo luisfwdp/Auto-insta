@@ -52,10 +52,21 @@ export function getMissingInstagramOAuthEnv(): string[] {
   });
 }
 
-export function getInstagramLoginMode(): "legacy" | "unified" {
-  return process.env.INSTAGRAM_LOGIN_MODE?.trim().toLowerCase() === "unified"
-    ? "unified"
-    : "legacy";
+export type InstagramLoginMode = "legacy" | "unified" | "facebook";
+
+/**
+ * legacy   Instagram Login (graph.instagram.com)
+ * unified  Facebook Login for Business with a login configuration (config_id)
+ * facebook Instagram API with Facebook Login, permissions requested by scope
+ */
+export function getInstagramLoginMode(): InstagramLoginMode {
+  const mode = process.env.INSTAGRAM_LOGIN_MODE?.trim().toLowerCase();
+  return mode === "unified" || mode === "facebook" ? mode : "legacy";
+}
+
+/** Both Facebook-based modes call graph.facebook.com with the account id in the path. */
+export function usesFacebookGraph(): boolean {
+  return getInstagramLoginMode() !== "legacy";
 }
 
 export function getMetaGraphApiVersion(): string {

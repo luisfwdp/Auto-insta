@@ -34,6 +34,14 @@ vi.mock("@/lib/meta/oauth-nonce", () => ({
 vi.mock("@/lib/db/client", () => ({ prisma: db }));
 vi.mock("@/lib/auth", () => ({ auth: authMock }));
 vi.mock("@/lib/meta/client", () => meta);
+const fbLogin = vi.hoisted(() => ({
+  exchangeForLongLivedUserToken: vi.fn(),
+  resolvePageInstagramAccounts: vi.fn(),
+  getGrantedPermissions: vi.fn(async () => ["instagram_basic", "pages_show_list"]),
+  subscribePageToWebhooks: vi.fn(),
+  getFacebookLoginScopes: vi.fn(() => "instagram_basic,pages_show_list"),
+}));
+vi.mock("@/lib/meta/facebook-login", () => fbLogin);
 vi.mock("@/lib/instagram-accounts", () => ({
   canConnectInstagramAccount: vi.fn(async () => ({ allowed: true })),
 }));
@@ -233,5 +241,46 @@ describe("authorized callback (Unified Login)", () => {
     expect(res.headers.get("location")).not.toContain("Invalid verification code");
     expect(res.headers.get("location")).not.toContain("app_secret_value");
     expect(JSON.stringify(db.operationalEvent.create.mock.calls)).not.toContain("app_secret_value");
+  });
+});
+
+describe("authorized callback (Facebook Login mode)", () => {
+  beforeEach(() => vi.stubEnv("INSTAGRAM_LOGIN_MODE", "facebook"));
+
+  it("stores the encrypted Page token for the Instagram account linked to the shared Page", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "short-user-token" })));
+    fbLogin.exchangeForLongLivedUserToken.mockResolvedValue("long-user-token");
+    fbLogin.resolvePageInstagramAccounts.mockResolvedValue({
+      pageCount: 1,
+      accounts: [{ pageId: "page_1", pageAccessToken: "page-token", instagramId: "ig_178", username: "acct" }],
+    });
+    fbLogin.subscribePageToWebhooks.mockResolvedValue({ success: true });
+    meta.getUserInfo.mockResolvedValue({ id: "ig_178", username: "acct", name: "A" });
+    db.instagramAccount.findUnique.mockResolvedValue(null);
+    db.instagramAccount.create.mockResolvedValue({});
+
+    const res = await callback({ code: "code_abc", state: validState() });
+
+    expect(location(res).pathname).toBe("/dashboard");
+    expect(meta.getUserInfo).toHaveBeenCalledWith("page-token", "ig_178");
+    expect(fbLogin.subscribePageToWebhooks).toHaveBeenCalledWith("page_1", "page-token");
+    const created = db.instagramAccount.create.mock.calls[0][0].data;
+    expect(created).toMatchObject({ workspaceId: "ws_1", instagramId: "ig_178", webhookSubscribed: true, tokenExpiresAt: null });
+    expect(created.accessToken).not.toBe("page-token");
+  });
+
+  it("fails with diagnostics when no shared Page has an Instagram account", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "short-user-token" })));
+    fbLogin.exchangeForLongLivedUserToken.mockResolvedValue("long-user-token");
+    fbLogin.resolvePageInstagramAccounts.mockResolvedValue({ pageCount: 0, accounts: [] });
+
+    const res = await callback({ code: "code_abc", state: validState() });
+
+    expect(location(res).searchParams.get("reason")).toBe("no_account_shared");
+    const event = db.operationalEvent.create.mock.calls.at(-1)![0].data.payload;
+    expect(event.unifiedLogin).toMatchObject({ source: "facebook_pages", lookups: { pages: 0, instagram: 0 } });
+    expect(JSON.stringify(event)).not.toContain("long-user-token");
+    expect(db.instagramAccount.create).not.toHaveBeenCalled();
   });
 });

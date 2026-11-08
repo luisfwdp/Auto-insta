@@ -1,3 +1,4 @@
+import { getFacebookLoginScopes } from "@/lib/meta/facebook-login";
 import {
   createCipheriv,
   createDecipheriv,
@@ -136,6 +137,18 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
 }
 
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
+  if (getInstagramLoginMode() === "facebook") {
+    // https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow
+    const params = new URLSearchParams({
+      client_id: requireEnv("INSTAGRAM_APP_ID"),
+      redirect_uri: redirectUri,
+      scope: getFacebookLoginScopes(),
+      response_type: "code",
+      auth_type: "rerequest",
+      state,
+    });
+    return `https://www.facebook.com/dialog/oauth?${params.toString()}`;
+  }
   if (getInstagramLoginMode() === "unified") {
     const params = new URLSearchParams({
       client_id: requireEnv("INSTAGRAM_APP_ID"),
@@ -169,7 +182,7 @@ export async function exchangeCodeForToken(
   code: string,
   redirectUri: string
 ): Promise<{ accessToken: string; userId?: string }> {
-  if (getInstagramLoginMode() === "unified") {
+  if (getInstagramLoginMode() !== "legacy") {
     const url = new URL(
       `https://graph.facebook.com/${getMetaGraphApiVersion()}/oauth/access_token`
     );
