@@ -1,12 +1,12 @@
 import {
-  getInstagramLoginMode,
   getMetaGraphApiVersion,
   requireEnv,
+  usesFacebookGraph,
 } from "@/lib/env";
 
 function instagramGraphBase() {
   const host =
-    getInstagramLoginMode() === "unified"
+    usesFacebookGraph()
       ? "graph.facebook.com"
       : "graph.instagram.com";
   return `https://${host}/${getMetaGraphApiVersion()}`;
@@ -629,7 +629,7 @@ export async function getConversationMessages(
 }
 
 function instagramAccountPath(instagramAccountId?: string) {
-  if (getInstagramLoginMode() === "unified") {
+  if (usesFacebookGraph()) {
     if (!instagramAccountId) {
       throw new Error("Instagram account ID is required for Unified Login");
     }
@@ -789,7 +789,7 @@ export async function getUserInfo(
   );
   url.searchParams.set(
     "fields",
-    getInstagramLoginMode() === "unified"
+    usesFacebookGraph()
       ? "id,username,name,profile_picture_url,followers_count"
       : "id,user_id,username,name,profile_picture_url,followers_count"
   );

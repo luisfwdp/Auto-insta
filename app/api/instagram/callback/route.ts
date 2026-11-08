@@ -18,6 +18,12 @@ import {
 } from "@/lib/meta/oauth";
 import { timingSafeEqual } from "node:crypto";
 import { consumeOAuthNonce } from "@/lib/meta/oauth-nonce";
+import {
+  exchangeForLongLivedUserToken,
+  getGrantedPermissions,
+  resolvePageInstagramAccounts,
+  subscribePageToWebhooks,
+} from "@/lib/meta/facebook-login";
 import { canManageWorkspace } from "@/lib/workspace-access";
 
 export async function GET(request: NextRequest) {
@@ -122,7 +128,30 @@ export async function GET(request: NextRequest) {
     let instagramId: string;
     let userInfo: InstagramUser;
 
-    if (unifiedLogin) {
+    let facebookPageId: string | null = null;
+    if (getInstagramLoginMode() === "facebook") {
+      const userToken = await exchangeForLongLivedUserToken(exchangedToken);
+      const { accounts, pageCount } = await resolvePageInstagramAccounts(userToken);
+      unifiedDiagnostic = {
+        attempts: 1,
+        assignedAccountCount: accounts.length,
+        source: "facebook_pages",
+        lookups: { pages: pageCount, instagram: accounts.length },
+        grantedPermissions: await getGrantedPermissions(userToken),
+      };
+      if (accounts.length !== 1) {
+        throw new Error(
+          accounts.length === 0
+            ? "No Instagram account was shared during login"
+            : "Share exactly one Instagram account during login"
+        );
+      }
+      const [selected] = accounts;
+      facebookPageId = selected.pageId;
+      accessToken = selected.pageAccessToken;
+      instagramId = selected.instagramId;
+      userInfo = await getUserInfo(accessToken, instagramId);
+    } else if (unifiedLogin) {
       const resolution = await resolveAssignedInstagramAccounts(accessToken);
       const assignedAccounts = resolution.accounts;
       unifiedDiagnostic = {
@@ -166,10 +195,9 @@ export async function GET(request: NextRequest) {
 
     let webhookSubscribed = false;
     try {
-      const subscription = await subscribeInstagramAccountToWebhooks(
-        instagramId,
-        accessToken
-      );
+      const subscription = facebookPageId
+        ? await subscribePageToWebhooks(facebookPageId, accessToken)
+        : await subscribeInstagramAccountToWebhooks(instagramId, accessToken);
       webhookSubscribed = Boolean(subscription.success);
     } catch (subscriptionError) {
       console.warn(
