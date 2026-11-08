@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated agent tooling (Ruflo, graphify), not app code.
+    ".claude/**",
+    ".claude-flow/**",
+    ".swarm/**",
+    "graphify-out/**",
   ]),
 ]);
 

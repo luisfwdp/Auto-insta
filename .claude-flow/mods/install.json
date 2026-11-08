@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "installedAt": "2026-11-06T02:21:04.767Z",
+  "files": {
+    "/home/user/Auto-insta/.claude/settings.json": {
+      "plugins": [
+        "ruflo-mods@ruflo",
+        "ruflo-swarm@ruflo",
+        "ruflo-console@ruflo"
+      ],
+      "marketplace": true,
+      "env": true,
+      "claudeInstalled": [
+        "ruflo-mods@ruflo",
+        "ruflo-swarm@ruflo",
+        "ruflo-console@ruflo"
+      ]
+    }
+  }
+}
