@@ -12,6 +12,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { zernioLink } from "@/lib/zernio-links";
 import { usePathname } from "next/navigation";
+import LogoutButton from "@/components/logout-button";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard" },
@@ -67,8 +68,21 @@ export default function Sidebar({
           style={{ paddingTop: "calc(1.25rem + env(safe-area-inset-top))" }}
         >
           <div className="flex items-center justify-between gap-3">
-            <Link href="/dashboard" className={newDesign ? "font-[family-name:var(--cp-font-heading)] text-lg font-bold tracking-tight" : "text-base font-semibold"}>
-              {newDesign ? <>CRIA <span className="text-[#C7FF2F]">PING</span></> : "OpenReply"}
+            <Link
+              href="/dashboard"
+              className={newDesign ? "block rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#C7FF2F]" : "text-base font-semibold"}
+              aria-label={newDesign ? "PING CHAT dashboard" : undefined}
+            >
+              {newDesign ? (
+                <Image
+                  src="/brand/ping-chat/logo-horizontal.svg"
+                  alt="PING CHAT by Creator Lab School"
+                  width={195}
+                  height={52}
+                  priority
+                  className="h-auto w-[168px]"
+                />
+              ) : "OpenReply"}
             </Link>
             <button type="button" onClick={onClose} className="min-h-11 min-w-11 rounded border border-[#828282] lg:hidden" aria-label={t("Close menu")}>×</button>
           </div>
@@ -118,6 +132,7 @@ export default function Sidebar({
               className="m-2"
             />
           </a>
+          <LogoutButton newDesign={newDesign} />
         </div>
       </aside>
     </>

@@ -19,8 +19,8 @@
  */
 
 export const FEATURE_FLAGS = {
-  /** CRIA PING visual design system (roadmap F1). */
-  newDesign: { default: false },
+  /** PING CHAT visual design system. Shipped after brand review in PR #41. */
+  newDesign: { default: true },
   /** Workspace and Instagram account switchers (roadmap F2). */
   workspaceSwitcher: { default: false },
   /** Comments center and moderation (roadmap F6). */

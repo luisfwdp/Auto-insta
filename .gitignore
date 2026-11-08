@@ -56,3 +56,5 @@ next-env.d.ts
 .swarm/
 graphify-out/
 .claude/settings.json.*bak*
+# Local worker secrets (scripts/worker/install-macos-launchagent.sh)
+.env.worker

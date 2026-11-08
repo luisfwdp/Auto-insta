@@ -37,13 +37,36 @@ const INSTAGRAM_OAUTH_ENV = [
 ] as const;
 
 export function getMissingInstagramOAuthEnv(): string[] {
-  return INSTAGRAM_OAUTH_ENV.filter((name) => {
+  const required = [
+    ...INSTAGRAM_OAUTH_ENV,
+    ...(getInstagramLoginMode() === "unified"
+      ? (["INSTAGRAM_CONFIG_ID"] as const)
+      : []),
+  ];
+  return required.filter((name) => {
     const value = process.env[name];
     if (!value) return true;
     // A malformed key fails later inside encryptToken, after the user has
     // already round-tripped through Meta — catch the bad format here instead.
     return name === "ENCRYPTION_KEY" && !HEX_32_BYTE.test(value);
   });
+}
+
+export type InstagramLoginMode = "legacy" | "unified" | "facebook";
+
+/**
+ * legacy   Instagram Login (graph.instagram.com)
+ * unified  Facebook Login for Business with a login configuration (config_id)
+ * facebook Instagram API with Facebook Login, permissions requested by scope
+ */
+export function getInstagramLoginMode(): InstagramLoginMode {
+  const mode = process.env.INSTAGRAM_LOGIN_MODE?.trim().toLowerCase();
+  return mode === "unified" || mode === "facebook" ? mode : "legacy";
+}
+
+/** Both Facebook-based modes call graph.facebook.com with the account id in the path. */
+export function usesFacebookGraph(): boolean {
+  return getInstagramLoginMode() !== "legacy";
 }
 
 export function getMetaGraphApiVersion(): string {

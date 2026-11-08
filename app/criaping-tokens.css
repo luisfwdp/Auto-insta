@@ -1,6 +1,7 @@
 /* Opt-in foundations. Legacy Tailwind semantics remain unchanged until their
    consumers migrate with verified foreground/background pairs. */
 [data-design="criaping"] {
+  color-scheme: dark;
   --cp-black: #0B0B0B;
   --cp-charcoal: #1A1A1A;
   --cp-neon: #C7FF2F;
@@ -66,6 +67,32 @@
   --cp-z-dropdown: 40;
   --cp-z-dialog: 50;
   --cp-z-toast: 60;
+
+  /* Bridge legacy Tailwind color utilities to the active PING CHAT tokens.
+     This prevents old .panel/bg-surface components from rendering as light
+     islands inside the dark product shell while they are migrated. */
+  --color-background: var(--cp-background);
+  --color-foreground: var(--cp-text);
+  --color-surface: var(--cp-surface);
+  --color-surface-hover: var(--cp-surface-hover);
+  --color-border: var(--cp-border);
+  --color-border-hover: var(--cp-control-border);
+  --color-muted: var(--cp-text-muted);
+  --color-accent: var(--cp-action);
+  --color-accent-hover: var(--cp-action-hover);
+  --color-success: var(--cp-success);
+  --color-error: var(--cp-error);
+  --color-warning: var(--cp-warning);
+}
+[data-design="criaping"] .zernio-sponsor {
+  background: var(--cp-surface);
+  color: var(--cp-text);
+  border-color: var(--cp-border);
+}
+[data-design="criaping"] .zernio-sponsor :is(input, select, button):not(.zernio-action) {
+  background: var(--cp-background);
+  color: var(--cp-text);
+  border-color: var(--cp-control-border);
 }
 [data-design="criaping"] :focus-visible {
   outline-color: #C7FF2F;

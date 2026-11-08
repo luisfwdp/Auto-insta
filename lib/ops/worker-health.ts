@@ -1,4 +1,5 @@
 import { getRedisConnection } from "@/lib/queue/client";
+import { evaluateConsumer, getLastCanaryAt, type ConsumerState } from "@/lib/ops/worker-canary";
 
 const WORKER_HEALTH_KEY = "health:worker:dm";
 const WORKER_ALERTS_KEY = "alerts:worker:dm";
@@ -10,13 +11,16 @@ export interface WorkerHeartbeat {
   pid: number;
   hostname?: string;
   startedAt?: string;
+  consumerReadySince?: string | null;
   checkedAt: string;
 }
 
 export interface WorkerHealth {
+  /** Heartbeat fresh (process alive, consumer ready) AND a canary processed recently. */
   healthy: boolean;
   heartbeat: WorkerHeartbeat | null;
   ageMs: number | null;
+  consumer?: { state: ConsumerState; lastProcessedAt: string | null; ageMs: number | null };
 }
 
 export interface WorkerAlert {
@@ -56,19 +60,23 @@ export async function recordWorkerHeartbeat(
 }
 
 export async function getWorkerHealth(): Promise<WorkerHealth> {
-  const heartbeat = parseJson<WorkerHeartbeat>(
-    await getRedisConnection().get(WORKER_HEALTH_KEY)
-  );
+  const [raw, lastCanaryAt] = await Promise.all([
+    getRedisConnection().get(WORKER_HEALTH_KEY),
+    getLastCanaryAt(),
+  ]);
+  const heartbeat = parseJson<WorkerHeartbeat>(raw);
+  const consumer = evaluateConsumer(lastCanaryAt);
 
   if (!heartbeat) {
-    return { healthy: false, heartbeat: null, ageMs: null };
+    return { healthy: false, heartbeat: null, ageMs: null, consumer };
   }
 
   const ageMs = Date.now() - new Date(heartbeat.checkedAt).getTime();
   return {
-    healthy: ageMs <= WORKER_HEARTBEAT_TTL_SECONDS * 1000,
+    healthy: ageMs <= WORKER_HEARTBEAT_TTL_SECONDS * 1000 && consumer.state === "processing",
     heartbeat,
     ageMs,
+    consumer,
   };
 }
 

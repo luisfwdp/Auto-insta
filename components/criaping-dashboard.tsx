@@ -58,6 +58,7 @@ export default function CriapingDashboard({ stats, loading, error, selectedAccou
           {t("Hello, {name}!", { name: stats.userName ?? t("there") })}
         </h1>
         <p className="mt-2 text-sm text-[#B5B5B5]">{t("Real results from your connected Instagram accounts.")}</p>
+        <Link href="/onboarding" className="mt-3 inline-flex min-h-11 items-center text-[#C7FF2F] underline">{t("First steps")}</Link>
       </div>
       {stats.instagramAccounts.length > 1 && <AccountSelect newDesign accounts={stats.instagramAccounts} value={selectedAccountId} onChange={onAccountChange} />}
     </header>

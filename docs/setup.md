@@ -30,7 +30,7 @@ The web app and the worker must share the same `DATABASE_URL`, the same `REDIS_U
 
 - **Direct Meta only:** a Facebook account for Meta developer registration. Zernio users skip the own-app setup.
 - An Instagram Business or Creator account. A personal account cannot be connected. Switch it in the Instagram app under Settings, Account type, if needed.
-- A [Resend](https://resend.com) account for login emails, with a verified sender domain. Login is email magic links only, so without this nobody can sign in. If you already run your own mail server, you can point `EMAIL_SERVER` at it instead and skip Resend entirely — see the [environment variables](#environment-variables) table.
+- A [Resend](https://resend.com) account for login emails, with a verified sender domain. Login is email magic links only, so without this nobody can sign in.
 - Somewhere to host. The recommended setup, used throughout this guide, is Vercel for the web app and Railway for the worker plus Postgres and Redis. Check hosting costs for your usage; the always-on worker needs a suitable service plan.
 
 ## Hosting and your domain
@@ -107,16 +107,17 @@ Copy `.env.example` to `.env` for local work, or set these in Vercel and Railway
 | `EMAIL_FROM` | A sender on a domain you verified in Resend. The placeholder will not deliver. |
 | `ALLOWED_EMAILS` | Optional. Comma-separated allowlist of addresses that may sign in, case insensitive. Unset, anyone who reaches your public URL can request a magic link and gets their own workspace, which is worth closing on an instance you run for yourself. |
 | `ALLOWED_EMAILS_REQUIRED` | Optional. Set to `true` to make the allowlist fail closed: with `ALLOWED_EMAILS` empty or missing, nobody can sign in, instead of everyone. Recommended on any public deployment, so a forgotten or wiped list locks the instance rather than opening it. Removing an address from the list blocks new sign-ins only; delete that user's rows in the `Session` table to end sessions already open. |
-| `EMAIL_SERVER` | Optional. An SMTP URL, for example `smtps://login%40example.com:password@mail.example.com:465`. Set it to send magic links through your own mail server instead of Resend; then `RESEND_API_KEY` is not needed. URL-encode special characters in the user and password (`@` becomes `%40`). Port 465 with `smtps://` is implicit TLS, port 587 with `smtp://` is STARTTLS. |
 
 **Direct Meta only.** Leave these unset if all accounts use Zernio:
 
 | Variable | What it is |
 | --- | --- |
-| `META_GRAPH_API_VERSION` | Graph API version, for example `v25.0`. |
-| `INSTAGRAM_APP_ID` | From the Meta app, see Step 6. |
-| `INSTAGRAM_APP_SECRET` | From the Meta app. |
-| `FACEBOOK_APP_SECRET` | From the Meta app. |
+| `META_GRAPH_API_VERSION` | Graph API version, for example `v26.0`. |
+| `INSTAGRAM_LOGIN_MODE` | Set to `unified` for Meta apps created with Unified Login. Leave unset only for an existing legacy Instagram Login app. |
+| `INSTAGRAM_APP_ID` | The Meta App ID from App settings, Basic. |
+| `INSTAGRAM_APP_SECRET` | The Meta App Secret from App settings, Basic. |
+| `INSTAGRAM_CONFIG_ID` | The configuration ID created under API setup with Unified Login. |
+| `FACEBOOK_APP_SECRET` | The same Meta App Secret. Kept separately for webhook signature verification compatibility. |
 | `WEBHOOK_VERIFY_TOKEN` | Any random string. You paste the same value into Meta's webhook config. |
 
 `ENCRYPTION_KEY` must be exactly 64 hex characters or the app throws on boot.
@@ -148,23 +149,21 @@ Go to [developers.facebook.com/apps](https://developers.facebook.com/apps) and c
 - App type: Business.
 - Contact email: one you actually check.
 
-When it asks you to add a use case, filter to All, then choose Manage messaging and content on Instagram. Do not pick "Create and manage ads with Marketing API", and do not pick "Authenticate with Facebook Login". OpenReply uses Instagram Login. Picking the Facebook Login variant makes the OAuth flow fail later with a mismatched client error.
+When it asks you to add a use case, choose **Manage messaging and content on Instagram** and attach the app to a business portfolio. New Meta apps use **Instagram API with Unified Login**, built on Facebook Login for Business. Set `INSTAGRAM_LOGIN_MODE=unified` for these apps.
 
 If you accidentally added the Marketing API use case, remove it. It has its own heavy review requirements and can block publishing.
 
-### Step 5: Collect the three secrets
+### Step 5: Collect the app credentials
 
-There are two app secrets and two app IDs, which is confusing. Here is what maps to what.
+Open App settings, Basic. Use the Meta App ID and App Secret for both the login code exchange and webhook signature verification.
 
 | Environment variable | Where it lives |
 | --- | --- |
-| `INSTAGRAM_APP_ID` | Instagram, API setup with Instagram login. A number like `2036...` |
-| `INSTAGRAM_APP_SECRET` | Same page, click Show |
-| `FACEBOOK_APP_SECRET` | App settings, Basic, App secret, click Show |
+| `INSTAGRAM_APP_ID` | App settings, Basic, App ID |
+| `INSTAGRAM_APP_SECRET` | App settings, Basic, App Secret, click Show |
+| `FACEBOOK_APP_SECRET` | The same App Secret |
 
-The Instagram app ID is not the same number as the Facebook App ID shown on the Basic settings page. Use the one under the Instagram product.
-
-OpenReply verifies webhook signatures against both `FACEBOOK_APP_SECRET` and `INSTAGRAM_APP_SECRET`, so you do not have to guess which one Meta signs with. Set both.
+Never paste the App Secret into a client-side field, issue, chat, or log. OpenReply stores it only as a server environment variable.
 
 ### Step 6: Add your Instagram account as a tester, and accept the invite
 
@@ -183,15 +182,22 @@ Half two, on the Instagram side. This is the part that gets skipped. Open Instag
 
 Until you accept here, the account is not really a tester and the login will keep failing. If you do not see the invite, double-check you sent it to the exact username and that the account is a Business or Creator account.
 
-### Step 7: Register the OAuth redirect
+### Step 7: Create the Unified Login configuration and register the redirect
 
-In the Instagram product, open Set up Instagram business login, then Business login settings. In the OAuth redirect URIs field, add exactly, using your Vercel domain:
+In the Instagram use case, open **API setup with Unified Login** and choose **Create new configuration**. Edit the default permissions down to what OpenReply uses:
+
+- `instagram_basic`
+- `instagram_manage_messages`
+- `instagram_manage_comments`
+- `instagram_manage_insights`
+
+Do not request ad-management or content-publishing permissions unless you separately implement and review those features. Select **Use this configuration**, copy its `config_id` into `INSTAGRAM_CONFIG_ID`, and register exactly this HTTPS redirect:
 
 ```
 https://your-app.vercel.app/api/instagram/callback
 ```
 
-No trailing slash. If this is missing or wrong, connecting an account fails with a redirect_uri mismatch. You can register more than one, which is useful if you change domains later; keep the old and new both listed.
+No trailing slash. If this is missing or wrong, connecting an account fails with a redirect mismatch. The application builds the Facebook Login for Business URL from the App ID, configuration ID, redirect URL, and a signed ten-minute state value.
 
 You do not need the "Embed URL" that Meta shows here. OpenReply builds its own login URL. Users connect by opening your app, going to Settings, and clicking Connect Instagram.
 
@@ -228,7 +234,7 @@ Then publish. Depending on your access level, Meta may let you go live for your 
 
 This one costs an afternoon because the symptom points nowhere near the cause.
 
-A published app still holds **Standard Access** to `instagram_business_basic`, `instagram_business_manage_comments`, and `instagram_business_manage_messages`. Standard Access only covers Instagram accounts that have a role on your app — admins, developers, and Instagram testers. Publishing makes the app live; it does not widen who the permissions apply to. Advanced Access, which covers everyone else, comes only from App Review.
+A published app still holds **Standard Access** to `instagram_basic`, `instagram_manage_comments`, and `instagram_manage_messages`. Standard Access only covers Instagram accounts that have a role on your app — admins, developers, and Instagram testers. Publishing makes the app live; it does not widen who the permissions apply to. Advanced Access, which covers everyone else, comes only from App Review.
 
 So connecting a second account fails even though the first one works, on the same app, with the same code.
 
