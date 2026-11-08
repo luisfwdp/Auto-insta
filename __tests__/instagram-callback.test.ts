@@ -269,6 +269,38 @@ describe("authorized callback (Facebook Login mode)", () => {
     expect(created.accessToken).not.toBe("page-token");
   });
 
+  it("connects every Instagram account from the shared Pages and skips one owned by another workspace", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "short-user-token" })));
+    fbLogin.exchangeForLongLivedUserToken.mockResolvedValue("long-user-token");
+    fbLogin.resolvePageInstagramAccounts.mockResolvedValue({
+      pageCount: 3,
+      accounts: [
+        { pageId: "p1", pageAccessToken: "tok1", instagramId: "ig_1", username: "one" },
+        { pageId: "p2", pageAccessToken: "tok2", instagramId: "ig_2", username: "two" },
+        { pageId: "p3", pageAccessToken: "tok3", instagramId: "ig_3", username: "taken" },
+      ],
+    });
+    fbLogin.subscribePageToWebhooks.mockRejectedValue(new Error("needs pages_manage_metadata"));
+    meta.getUserInfo.mockImplementation(async (_t: string, id: string) => ({ id, username: id === "ig_1" ? "one" : "two" }));
+    db.instagramAccount.findUnique.mockImplementation(async ({ where }: { where: { instagramId: string } }) =>
+      where.instagramId === "ig_3" ? { id: "x", workspaceId: "ws_other", provider: "META" } : null
+    );
+    // The workspace-scoped update matches nothing for an account owned elsewhere.
+    db.instagramAccount.updateMany.mockResolvedValue({ count: 0 });
+    db.instagramAccount.create.mockResolvedValue({});
+
+    const res = await callback({ code: "code_abc", state: validState() });
+
+    expect(location(res).pathname).toBe("/dashboard");
+    const created = db.instagramAccount.create.mock.calls.map((c) => c[0].data);
+    expect(created.map((d) => d.instagramId)).toEqual(["ig_1", "ig_2"]);
+    expect(created.every((d) => d.workspaceId === "ws_1" && d.webhookSubscribed === false)).toBe(true);
+    expect(created.map((d) => d.accessToken)).not.toContain("tok1");
+    const event = db.operationalEvent.create.mock.calls.at(-1)![0].data.payload;
+    expect(event).toMatchObject({ connected: ["one", "two"], skipped: ["taken"], failed: [] });
+    expect(JSON.stringify(event)).not.toContain("tok");
+  });
+
   it("fails with diagnostics when no shared Page has an Instagram account", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "short-user-token" })));

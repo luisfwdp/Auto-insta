@@ -23,6 +23,7 @@ import {
   getGrantedPermissions,
   resolvePageInstagramAccounts,
   subscribePageToWebhooks,
+  type PageInstagramAccount,
 } from "@/lib/meta/facebook-login";
 import { canManageWorkspace } from "@/lib/workspace-access";
 
@@ -128,7 +129,6 @@ export async function GET(request: NextRequest) {
     let instagramId: string;
     let userInfo: InstagramUser;
 
-    let facebookPageId: string | null = null;
     if (getInstagramLoginMode() === "facebook") {
       const userToken = await exchangeForLongLivedUserToken(exchangedToken);
       const { accounts, pageCount } = await resolvePageInstagramAccounts(userToken);
@@ -139,18 +139,35 @@ export async function GET(request: NextRequest) {
         lookups: { pages: pageCount, instagram: accounts.length },
         grantedPermissions: await getGrantedPermissions(userToken),
       };
-      if (accounts.length !== 1) {
-        throw new Error(
-          accounts.length === 0
-            ? "No Instagram account was shared during login"
-            : "Share exactly one Instagram account during login"
+      if (accounts.length === 0) {
+        throw new Error("No Instagram account was shared during login");
+      }
+      // Connect every Instagram account linked to a Page the member shared.
+      // Each one is validated, subscribed and stored on its own; an account
+      // already owned by another workspace is skipped, never moved.
+      const outcome = await connectFacebookPageAccounts(accounts, state.workspaceId);
+      await prisma.operationalEvent
+        .create({
+          data: {
+            source: "SYSTEM",
+            level: outcome.connected.length ? "INFO" : "WARNING",
+            workspaceId: state.workspaceId,
+            message: "Instagram accounts connected via Facebook Login",
+            payload: {
+              connected: outcome.connected,
+              skipped: outcome.skipped,
+              failed: outcome.failed,
+              grantedPermissions: unifiedDiagnostic.grantedPermissions ?? [],
+            },
+          },
+        })
+        .catch(() => {});
+      if (!outcome.connected.length) {
+        return finish(
+          `${baseUrl}/settings?instagram=${outcome.skipped.length ? "already_connected" : "failed"}`
         );
       }
-      const [selected] = accounts;
-      facebookPageId = selected.pageId;
-      accessToken = selected.pageAccessToken;
-      instagramId = selected.instagramId;
-      userInfo = await getUserInfo(accessToken, instagramId);
+      return finish(`${baseUrl}/dashboard?connected=true`);
     } else if (unifiedLogin) {
       const resolution = await resolveAssignedInstagramAccounts(accessToken);
       const assignedAccounts = resolution.accounts;
@@ -195,9 +212,7 @@ export async function GET(request: NextRequest) {
 
     let webhookSubscribed = false;
     try {
-      const subscription = facebookPageId
-        ? await subscribePageToWebhooks(facebookPageId, accessToken)
-        : await subscribeInstagramAccountToWebhooks(instagramId, accessToken);
+      const subscription = await subscribeInstagramAccountToWebhooks(instagramId, accessToken);
       webhookSubscribed = Boolean(subscription.success);
     } catch (subscriptionError) {
       console.warn(
@@ -300,4 +315,66 @@ function failureCode(message: string): string {
   if (message === "Share exactly one Instagram account during login") return "multiple_accounts_shared";
   if (/access[_ ]token|oauth|verification code/i.test(message)) return "token_exchange_failed";
   return "connection_failed";
+}
+
+type ConnectOutcome = {
+  connected: string[];
+  skipped: string[];
+  failed: Array<{ username: string; reason: string }>;
+};
+
+/** Stores every shared Page-linked Instagram account in the state's workspace. */
+async function connectFacebookPageAccounts(
+  accounts: PageInstagramAccount[],
+  workspaceId: string
+): Promise<ConnectOutcome> {
+  const outcome: ConnectOutcome = { connected: [], skipped: [], failed: [] };
+  for (const account of accounts) {
+    const label = account.username ?? account.instagramId;
+    try {
+      const allowed = await canConnectInstagramAccount({ workspaceId, instagramId: account.instagramId });
+      if (!allowed.allowed) {
+        outcome.skipped.push(label);
+        continue;
+      }
+      const userInfo = await getUserInfo(account.pageAccessToken, account.instagramId);
+      let webhookSubscribed = false;
+      try {
+        webhookSubscribed = Boolean(
+          (await subscribePageToWebhooks(account.pageId, account.pageAccessToken)).success
+        );
+      } catch {
+        // Needs pages_manage_metadata; the account still works for polling.
+      }
+      const data = {
+        username: userInfo.username,
+        name: userInfo.name,
+        accessToken: encryptToken(account.pageAccessToken),
+        tokenExpiresAt: null,
+        webhookSubscribed,
+      };
+      const existing = await prisma.instagramAccount.findUnique({ where: { instagramId: account.instagramId } });
+      if (existing) {
+        const updated = await prisma.instagramAccount.updateMany({
+          where: { id: existing.id, workspaceId, provider: "META" },
+          data,
+        });
+        if (!updated.count) {
+          outcome.skipped.push(label);
+          continue;
+        }
+      } else {
+        await prisma.instagramAccount.create({
+          data: { ...data, workspaceId, instagramId: account.instagramId, provider: "META" },
+        });
+      }
+      outcome.connected.push(userInfo.username ?? label);
+    } catch (error) {
+      outcome.failed.push({
+        username: label,
+        reason: error instanceof Error ? error.message.slice(0, 200) : "unknown",
+      });
+    }
+  }
+  return outcome;
 }
