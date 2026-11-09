@@ -62,13 +62,22 @@ async function getMemberPayload(
     }),
   ]);
 
+  const mayManage = currentUserRole
+    ? canManageWorkspace(currentUserRole)
+    : false;
   return {
     ...(currentUserRole ? { currentUserRole } : {}),
     members,
-    invitations: invitations.map((invitation) => ({
-      ...invitation,
-      inviteUrl: buildInvitationUrl(invitation.token),
-    })),
+    invitations: mayManage
+      ? invitations.map((invitation) => ({
+          id: invitation.id,
+          email: invitation.email,
+          role: invitation.role,
+          expiresAt: invitation.expiresAt,
+          createdAt: invitation.createdAt,
+          inviteUrl: buildInvitationUrl(invitation.token),
+        }))
+      : [],
   };
 }
 
