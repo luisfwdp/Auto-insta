@@ -85,6 +85,9 @@ model Workspace {
   linkClicks        LinkClick[]
   webhookEvents     WebhookEvent[]
   operationalEvents OperationalEvent[]
+  publishingAssets PublishingAsset[]
+  scheduledPublications ScheduledPublication[]
+  speedPostBatches SpeedPostBatch[]
 
   @@index([ownerId])
 }
@@ -144,6 +147,8 @@ model InstagramAccount {
   dmLogs      DmLog[]
   linkClicks  LinkClick[]
   followerSnapshots FollowerSnapshot[]
+  scheduledPublications ScheduledPublication[]
+  speedPostBatches SpeedPostBatch[]
 
   @@index([workspaceId])
 }
@@ -418,4 +423,168 @@ model ZernioConnection {
 model PostbackDelivery {
   id String @id
   createdAt DateTime @default(now())
+}
+
+/// Private media metadata. The object itself lives in the workspace-prefixed
+/// Supabase Storage path stored in storagePath; public URLs are never persisted.
+model PublishingAsset {
+  id            String                @id @default(cuid())
+  workspaceId   String
+  filename      String
+  storagePath   String                @unique
+  mimeType      String
+  mediaType     PublishingMediaType
+  byteSize      Int
+  width         Int?
+  height        Int?
+  durationMs    Int?
+  checksum      String?
+  status        PublishingAssetStatus @default(UPLOADING)
+  errorMessage  String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  publications PublicationAsset[]
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
+}
+
+/// One publish attempt, either created manually by Programacao or generated
+/// from a Speed Post batch. idempotencyKey is also used as the BullMQ job id.
+model ScheduledPublication {
+  id                 String            @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String
+  batchId            String?
+  type               PublicationType
+  reelMode           PublishingReelMode @default(STANDARD)
+  caption            String?
+  scheduledFor       DateTime?
+  timezone           String
+  status             PublicationStatus @default(DRAFT)
+  idempotencyKey     String             @unique
+  metaContainerId    String?
+  metaMediaId        String?
+  metaStatus         String?
+  attempts           Int                @default(0)
+  maxAttempts        Int                @default(5)
+  lastError          String?
+  publishedAt        DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  batch            SpeedPostBatch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  assets           PublicationAsset[]
+
+  @@index([workspaceId, scheduledFor])
+  @@index([workspaceId, status])
+  @@index([instagramAccountId, status, scheduledFor])
+  @@index([batchId, scheduledFor])
+}
+
+model PublicationAsset {
+  publicationId String
+  assetId       String
+  position      Int
+
+  publication ScheduledPublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  asset       PublishingAsset      @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@id([publicationId, assetId])
+  @@unique([publicationId, position])
+  @@index([assetId])
+}
+
+/// Configuration and progress for an automatically expanded Speed Post run.
+/// timeSlots is an ordered JSON array of local HH:mm strings.
+model SpeedPostBatch {
+  id                 String               @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String
+  name               String
+  status             SpeedPostBatchStatus @default(DRAFT)
+  postsPerDay        Int
+  scheduleMode       SpeedPostSchedule
+  orderMode          SpeedPostOrder
+  timezone           String
+  timeSlots          Json
+  defaultCaption     String?
+  reelMode           PublishingReelMode   @default(STANDARD)
+  startsOn           DateTime              @db.Date
+  totalItems         Int                   @default(0)
+  publishedItems     Int                   @default(0)
+  failedItems        Int                   @default(0)
+  randomSeed         String?
+  pausedAt           DateTime?
+  cancelledAt        DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  workspace        Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount       @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  publications     ScheduledPublication[]
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
+  @@index([instagramAccountId, status])
+}
+
+enum PublishingMediaType {
+  IMAGE
+  VIDEO
+}
+
+enum PublishingAssetStatus {
+  UPLOADING
+  READY
+  FAILED
+  DELETED
+}
+
+enum PublicationType {
+  IMAGE_POST
+  CAROUSEL
+  REEL
+}
+
+enum PublicationStatus {
+  DRAFT
+  SCHEDULED
+  QUEUED
+  PROCESSING
+  PUBLISHED
+  FAILED
+  CANCELLED
+}
+
+enum PublishingReelMode {
+  STANDARD
+  TRIAL
+}
+
+enum SpeedPostBatchStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum SpeedPostOrder {
+  MANUAL
+  SEQUENTIAL
+  RANDOM
+}
+
+enum SpeedPostSchedule {
+  FIXED
+  CUSTOM
 }
