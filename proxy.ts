@@ -14,6 +14,8 @@ export const PROTECTED_PREFIXES = [
   "/logs",
   "/diagnostics",
   "/settings",
+  "/scheduling",
+  "/speed-post",
 ];
 
 function hasSessionCookie(request: NextRequest): boolean {
@@ -63,6 +65,8 @@ export const config = {
     "/logs/:path*",
     "/diagnostics/:path*",
     "/settings/:path*",
+    "/scheduling/:path*",
+    "/speed-post/:path*",
     "/login",
     "/api/:path*",
   ],
