@@ -31,7 +31,10 @@ fly secrets set --stage \
   REDIS_URL='rediss://...' \
   ENCRYPTION_KEY='<igual à Vercel Production>' \
   NEXTAUTH_URL='https://<domínio de produção>' \
-  META_GRAPH_API_VERSION='v25.0'
+  META_GRAPH_API_VERSION='v25.0' \
+  SUPABASE_URL='https://<projeto>.supabase.co' \
+  SUPABASE_SERVICE_ROLE_KEY='<service-role somente no servidor>' \
+  SUPABASE_MEDIA_BUCKET='instagram-publishing'
 ```
 
 `--stage` só grava; o próximo `fly deploy` aplica. Os valores nunca aparecem no `fly.toml`, no
@@ -95,4 +98,6 @@ docker run --rm --network host \
 ```
 
 Contra o `docker-compose.yml` local, com as migrações aplicadas, o log mostra
-`[DM Worker] Started` e a chave `health:worker:dm` aparece no Redis.
+`[DM Worker] Started` e a chave `health:worker:dm` aparece no Redis. Quando o
+módulo de publicação está instalado, o heartbeat só fica saudável depois que os
+consumidores de DM e publicação estão prontos.
