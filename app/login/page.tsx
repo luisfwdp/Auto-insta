@@ -2,7 +2,10 @@ import { EMAIL_PROVIDER_ID, signIn } from "@/lib/auth";
 import { getI18n } from "@/lib/i18n/server";
 import { getCampaignTemplate } from "@/lib/templates/campaign-templates";
 import { DemoNotice } from "@/components/demo-notice";
-import { isPublicDemoHost } from "@/lib/env";
+import { isEmailAllowedToSignIn, isPublicDemoHost } from "@/lib/env";
+import { checkMagicLinkRateLimit } from "@/lib/api/auth-rate-limit";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 
 const GITHUB_URL = "https://github.com/diwenne/openreply";
 const SETUP_DOCS_URL = `${GITHUB_URL}/blob/main/docs/setup.md`;
@@ -63,10 +66,19 @@ export default async function LoginPage({
 
   async function sendMagicLink(formData: FormData) {
     "use server";
-    await signIn(EMAIL_PROVIDER_ID, {
-      email: String(formData.get("email") ?? ""),
-      redirectTo: callbackUrl,
-    });
+    const email = String(formData.get("email") ?? "").trim().toLowerCase();
+    const limit = await checkMagicLinkRateLimit({
+      headers: await headers(),
+      email,
+    }).catch(() => ({ allowed: false as const, retryAfter: 60 }));
+
+    if (!limit.allowed) redirect("/login?checkEmail=1");
+
+    // Keep the browser response identical for allowed and unknown addresses.
+    // The signIn callback repeats this check when the magic link is consumed.
+    if (!isEmailAllowedToSignIn(email)) redirect("/login?checkEmail=1");
+
+    await signIn(EMAIL_PROVIDER_ID, { email, redirectTo: callbackUrl });
   }
 
   return (

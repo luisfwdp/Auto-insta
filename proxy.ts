@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { isTrustedBrowserOrigin } from "@/lib/api/origin";
 
 // Every page under app/(dashboard). The layout there already refuses requests
 // without a session; this redirect only keeps the page the user asked for in
@@ -26,6 +27,12 @@ function hasSessionCookie(request: NextRequest): boolean {
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  if (pathname.startsWith("/api/") && !isTrustedBrowserOrigin(request)) {
+    return NextResponse.json(
+      { success: false, error: "Forbidden" },
+      { status: 403 }
+    );
+  }
   const isProtected = PROTECTED_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
@@ -57,5 +64,6 @@ export const config = {
     "/diagnostics/:path*",
     "/settings/:path*",
     "/login",
+    "/api/:path*",
   ],
 };
