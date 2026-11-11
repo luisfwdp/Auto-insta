@@ -19,6 +19,7 @@ import {
   MCP_SERVER_NAME,
 } from "@/lib/mcp/server";
 import type { McpCampaignService } from "@/lib/mcp/campaign-tools";
+import type { McpPublishingService } from "@/lib/mcp/publishing-tools";
 
 export const LOCAL_MCP_HOST = "127.0.0.1";
 export const LOCAL_MCP_REQUEST_TIMEOUT_MS = 15_000;
@@ -41,6 +42,7 @@ export type McpLogger = (record: McpLogRecord) => void;
 export type LocalMcpServerOptions = {
   logger?: McpLogger;
   campaignService?: McpCampaignService;
+  publishingService?: McpPublishingService;
 };
 
 export type LocalMcpAddress = {
@@ -112,7 +114,7 @@ export function createLocalMcpServer(
       event: "mcp_handler_error",
       errorName: error.name,
     });
-  }, options.campaignService);
+  }, options.campaignService, options.publishingService);
   const nodeMcpHandler = toNodeHandler(mcpHandler, {
     maxRequestBodySize: MCP_MAX_REQUEST_BODY_BYTES,
     onerror(error) {
