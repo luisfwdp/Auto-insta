@@ -46,6 +46,7 @@ import {
   releaseWorkspaceDMReservation,
   reserveWorkspaceDMSend,
 } from "@/lib/billing/usage";
+import { createRepeatedErrorThrottle } from "@/lib/ops/repeated-error-throttle";
 import { recordWorkerAlert } from "@/lib/ops/worker-health";
 import {
   buildTrackedUrl,
@@ -1615,6 +1616,10 @@ async function recordWorkerFailure(
 }
 
 export function createDMWorker(): Worker<DmQueueJob> {
+  // Redis providers may emit connection/quota errors many times per second.
+  // Recording every identical event can overload Postgres while Redis is down,
+  // so keep the circuit breaker local to this worker process.
+  const shouldReportProcessError = createRepeatedErrorThrottle(60_000);
   const worker = new Worker<DmQueueJob>("dm-processing", processJob, {
     connection: getRedisConnection(),
     concurrency: 5,
@@ -1637,6 +1642,7 @@ export function createDMWorker(): Worker<DmQueueJob> {
   });
 
   worker.on("error", (err) => {
+    if (!shouldReportProcessError(err.message)) return;
     console.error("[DM Worker] Worker error:", err.message);
     void prisma.operationalEvent
       .create({
