@@ -32,6 +32,7 @@ describe("Facebook Login mode", () => {
     expect(url.origin + url.pathname).toBe("https://www.facebook.com/dialog/oauth");
     expect(url.searchParams.get("scope")?.split(",")).toEqual(DEFAULT_FACEBOOK_LOGIN_SCOPES);
     expect(url.searchParams.get("scope")).toContain("pages_show_list");
+    expect(url.searchParams.get("scope")).toContain("pages_manage_metadata");
     expect(url.searchParams.has("config_id")).toBe(false);
     expect(url.searchParams.get("state")).toBe("st");
   });
