@@ -5,6 +5,7 @@ import { getRedisConnection } from "@/lib/queue/client";
 const WINDOW_SECONDS = 15 * 60;
 const IP_LIMIT = 10;
 const ACCOUNT_LIMIT = 5;
+const MCP_OAUTH_IP_LIMIT = 30;
 
 const INCREMENT_WITH_TTL = `
 local count = redis.call("INCR", KEYS[1])
@@ -57,8 +58,23 @@ export async function checkMagicLinkRateLimit({
   return { allowed: true };
 }
 
+export async function checkMcpOAuthRateLimit({
+  headers,
+  redis = getRedisConnection(),
+}: {
+  headers: Headers;
+  redis?: Redis;
+}): Promise<{ allowed: true } | { allowed: false; retryAfter: number }> {
+  const key = `auth:mcp-oauth:ip:${fingerprint(requestIp(headers))}`;
+  const result = await increment(redis, key);
+  return result.count > MCP_OAUTH_IP_LIMIT
+    ? { allowed: false, retryAfter: result.ttl }
+    : { allowed: true };
+}
+
 export const AUTH_RATE_LIMITS = {
   windowSeconds: WINDOW_SECONDS,
   ip: IP_LIMIT,
   account: ACCOUNT_LIMIT,
+  mcpOAuthIp: MCP_OAUTH_IP_LIMIT,
 } as const;

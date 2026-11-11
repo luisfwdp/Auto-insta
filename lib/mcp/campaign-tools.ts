@@ -49,16 +49,16 @@ export type McpCampaignService = {
   prepareActivation(id: string): Promise<unknown>;
 };
 
-function configuredWorkspaceId() {
-  const workspaceId = process.env.PINGCHAT_MCP_WORKSPACE_ID?.trim();
+function configuredWorkspaceId(explicitWorkspaceId?: string) {
+  const workspaceId = explicitWorkspaceId?.trim() || process.env.PINGCHAT_MCP_WORKSPACE_ID?.trim();
   if (!workspaceId) {
     throw new Error("PINGCHAT_MCP_WORKSPACE_ID is required for campaign tools");
   }
   return workspaceId;
 }
 
-export function createPrismaMcpCampaignService(): McpCampaignService {
-  const workspaceId = configuredWorkspaceId();
+export function createPrismaMcpCampaignService(workspace?: string): McpCampaignService {
+  const workspaceId = configuredWorkspaceId(workspace);
 
   async function findDraft(id: string) {
     const draft = await prisma.automation.findFirst({
@@ -210,10 +210,14 @@ async function safeResult(operation: () => Promise<unknown>) {
   }
 }
 
-export function registerCampaignTools(server: McpServer, service: McpCampaignService) {
+export function registerCampaignTools(
+  server: McpServer,
+  service: McpCampaignService,
+  permissions = { accountsRead: true, campaignsRead: true, draftsWrite: true }
+) {
   server.registerTool(
     "get_campaign_capabilities",
-    { description: "Describe safe PING CHAT campaign capabilities and approval limits" },
+    { description: "Describe safe PING CHAT campaign capabilities and approval limits", annotations: { readOnlyHint: true } },
     async () =>
       result({
         objectives: objectiveSchema.options,
@@ -223,36 +227,39 @@ export function registerCampaignTools(server: McpServer, service: McpCampaignSer
         maxKeywords: 10,
       })
   );
-  server.registerTool(
+  if (permissions.accountsRead) server.registerTool(
     "list_instagram_accounts",
-    { description: "List Instagram accounts in the pre-authorized workspace" },
+    { description: "List Instagram accounts in the pre-authorized workspace", annotations: { readOnlyHint: true } },
     async () => safeResult(() => service.listAccounts())
   );
-  server.registerTool(
+  if (permissions.campaignsRead) server.registerTool(
     "list_campaigns",
-    { description: "List campaigns and drafts in the pre-authorized workspace" },
+    { description: "List campaigns and drafts in the pre-authorized workspace", annotations: { readOnlyHint: true } },
     async () => safeResult(() => service.listCampaigns())
   );
-  server.registerTool(
+  if (permissions.draftsWrite) server.registerTool(
     "create_campaign_draft",
     {
       description: "Persist an inactive campaign draft. This never sends messages or activates the campaign.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       inputSchema: draftInputSchema,
     },
     async (input) => safeResult(() => service.createDraft(input))
   );
-  server.registerTool(
+  if (permissions.draftsWrite) server.registerTool(
     "preview_campaign_draft",
     {
       description: "Return the canonical preview and impact of an inactive draft",
+      annotations: { readOnlyHint: true },
       inputSchema: z.object({ draft_id: z.string().min(1) }),
     },
     async ({ draft_id }) => safeResult(() => service.previewDraft(draft_id))
   );
-  server.registerTool(
+  if (permissions.draftsWrite) server.registerTool(
     "prepare_campaign_activation",
     {
       description: "Return a PING CHAT approval URL. This tool never activates a campaign.",
+      annotations: { readOnlyHint: true },
       inputSchema: z.object({ draft_id: z.string().min(1) }),
     },
     async ({ draft_id }) => safeResult(() => service.prepareActivation(draft_id))

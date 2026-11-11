@@ -18,6 +18,7 @@ import {
   MCP_MAX_REQUEST_BODY_BYTES,
   MCP_SERVER_NAME,
 } from "@/lib/mcp/server";
+import type { McpToolPermissions } from "@/lib/mcp/server";
 import type { McpCampaignService } from "@/lib/mcp/campaign-tools";
 import type { McpPublishingService } from "@/lib/mcp/publishing-tools";
 
@@ -43,6 +44,7 @@ export type LocalMcpServerOptions = {
   logger?: McpLogger;
   campaignService?: McpCampaignService;
   publishingService?: McpPublishingService;
+  permissions?: McpToolPermissions;
 };
 
 export type LocalMcpAddress = {
@@ -114,7 +116,7 @@ export function createLocalMcpServer(
       event: "mcp_handler_error",
       errorName: error.name,
     });
-  }, options.campaignService, options.publishingService);
+  }, options.campaignService, options.publishingService, options.permissions);
   const nodeMcpHandler = toNodeHandler(mcpHandler, {
     maxRequestBodySize: MCP_MAX_REQUEST_BODY_BYTES,
     onerror(error) {
