@@ -378,6 +378,29 @@ describe("parseMessageEvents", () => {
     ]);
   });
 
+  it("captures the originating Story ID from an inbound Story reply", () => {
+    const payload = messagingPayload([
+      {
+        sender: { id: "user_999" },
+        recipient: { id: "ig_456" },
+        message: {
+          mid: "mid_story_abc",
+          text: "EU QUERO",
+          reply_to: { story: { id: "4028147829863364233", url: "https://lookaside.fbsbx.com/temporary" } },
+        },
+      },
+    ]);
+    expect(parseMessageEvents(payload)).toEqual([
+      {
+        instagramAccountId: "ig_456",
+        messageId: "mid_story_abc",
+        messageText: "EU QUERO",
+        senderId: "user_999",
+        storyId: "4028147829863364233",
+      },
+    ]);
+  });
+
   it("should ignore echoes of the account's own messages", () => {
     const payload = messagingPayload([
       {

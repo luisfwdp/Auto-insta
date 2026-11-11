@@ -83,6 +83,7 @@ interface WebhookEntry {
       is_deleted?: boolean;
       is_unsupported?: boolean;
       attachments?: Array<{ type?: string }>;
+      reply_to?: { story?: { id?: string; url?: string } };
     };
   }>;
 }
@@ -92,6 +93,8 @@ export interface WebhookMessageEvent {
   messageId: string;
   messageText: string;
   senderId: string;
+  /** Populated only for a reply to an Instagram Story. */
+  storyId?: string;
 }
 
 export interface WebhookPostbackEvent {
@@ -233,6 +236,7 @@ export function parseMessageEvents(
         messageId,
         messageText: text,
         senderId,
+        ...(message.reply_to?.story?.id ? { storyId: message.reply_to.story.id } : {}),
       });
     }
   }
