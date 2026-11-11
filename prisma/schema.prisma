@@ -23,6 +23,7 @@ model User {
   ownedWorkspaces   Workspace[]       @relation("WorkspaceOwner")
   workspaceMembers  WorkspaceMember[]
   sentInvitations   WorkspaceInvitation[] @relation("WorkspaceInvitationsSent")
+  mcpGrants         McpGrant[]
 }
 
 model Account {
@@ -88,6 +89,7 @@ model Workspace {
   publishingAssets PublishingAsset[]
   scheduledPublications ScheduledPublication[]
   speedPostBatches SpeedPostBatch[]
+  mcpGrants        McpGrant[]
 
   @@index([ownerId])
 }
@@ -104,6 +106,77 @@ model WorkspaceMember {
 
   @@unique([workspaceId, userId])
   @@index([userId])
+}
+
+/// OAuth client registered by an MCP host such as ChatGPT or Claude.
+model McpOAuthClient {
+  id                      String   @id @default(cuid())
+  clientId                String   @unique
+  clientName              String
+  redirectUris            Json
+  tokenEndpointAuthMethod String   @default("none")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  grants McpGrant[]
+}
+
+/// Revocable consent binding one user, workspace and MCP OAuth client.
+model McpGrant {
+  id          String    @id @default(cuid())
+  userId      String
+  workspaceId String
+  clientDbId  String
+  scopes      String[]
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user               User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace          Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client             McpOAuthClient         @relation(fields: [clientDbId], references: [id], onDelete: Cascade)
+  authorizationCodes McpAuthorizationCode[]
+  tokens              McpToken[]
+
+  @@index([userId, revokedAt])
+  @@index([workspaceId, revokedAt])
+  @@index([clientDbId, revokedAt])
+}
+
+/// Single-use PKCE authorization code. Only its SHA-256 hash is stored.
+model McpAuthorizationCode {
+  id            String    @id @default(cuid())
+  codeHash      String    @unique
+  grantId       String
+  redirectUri   String
+  codeChallenge String
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  grant McpGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId, expiresAt])
+}
+
+/// Opaque OAuth access/refresh token pair stored only as hashes.
+model McpToken {
+  id                String    @id @default(cuid())
+  grantId           String
+  accessTokenHash   String    @unique
+  refreshTokenHash  String?   @unique
+  scopes            String[]
+  accessExpiresAt   DateTime
+  refreshExpiresAt  DateTime?
+  revokedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  grant McpGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId, revokedAt])
+  @@index([accessExpiresAt])
+  @@index([refreshExpiresAt])
 }
 
 model WorkspaceInvitation {

@@ -23,8 +23,8 @@ export type McpPublishingService = {
   manageBatch(id: string, action: BatchAction): Promise<unknown>;
 };
 
-function configuredWorkspaceId() {
-  const workspaceId = process.env.PINGCHAT_MCP_WORKSPACE_ID?.trim();
+function configuredWorkspaceId(explicitWorkspaceId?: string) {
+  const workspaceId = explicitWorkspaceId?.trim() || process.env.PINGCHAT_MCP_WORKSPACE_ID?.trim();
   if (!workspaceId) throw new Error("PINGCHAT_MCP_WORKSPACE_ID is required for publishing tools");
   return workspaceId;
 }
@@ -41,8 +41,8 @@ const publicationInclude = {
   },
 };
 
-export function createPrismaMcpPublishingService(): McpPublishingService {
-  const workspaceId = configuredWorkspaceId();
+export function createPrismaMcpPublishingService(workspace?: string): McpPublishingService {
+  const workspaceId = configuredWorkspaceId(workspace);
 
   async function assertRelations(accountId: string, assetIds: string[], videosOnly = false) {
     const [account, assets] = await Promise.all([
@@ -260,10 +260,14 @@ async function safeResult(operation: () => Promise<unknown>) {
   }
 }
 
-export function registerPublishingTools(server: McpServer, service: McpPublishingService) {
+export function registerPublishingTools(
+  server: McpServer,
+  service: McpPublishingService,
+  permissions = { publishingRead: true, publishingWrite: true }
+) {
   server.registerTool(
     "get_publishing_capabilities",
-    { description: "Describe PING CHAT scheduling and Speed Post limits" },
+    { description: "Describe PING CHAT scheduling and Speed Post limits", annotations: { readOnlyHint: true } },
     async () => result({
       publicationTypes: ["IMAGE_POST", "CAROUSEL", "REEL"],
       reelModes: ["STANDARD", "TRIAL"],
@@ -273,29 +277,34 @@ export function registerPublishingTools(server: McpServer, service: McpPublishin
       trialReelsRequireMetaEligibility: true,
     })
   );
-  server.registerTool("list_publishing_media", { description: "List ready private media in the authorized workspace" }, async () => safeResult(() => service.listMedia()));
-  server.registerTool("list_scheduled_publications", { description: "List scheduled, draft and historical publications" }, async () => safeResult(() => service.listPublications()));
-  server.registerTool("list_speed_post_batches", { description: "List Speed Post batches and progress" }, async () => safeResult(() => service.listBatches()));
-  server.registerTool(
+  if (permissions.publishingRead) {
+    server.registerTool("list_publishing_media", { description: "List ready private media in the authorized workspace", annotations: { readOnlyHint: true } }, async () => safeResult(() => service.listMedia()));
+    server.registerTool("list_scheduled_publications", { description: "List scheduled, draft and historical publications", annotations: { readOnlyHint: true } }, async () => safeResult(() => service.listPublications()));
+    server.registerTool("list_speed_post_batches", { description: "List Speed Post batches and progress", annotations: { readOnlyHint: true } }, async () => safeResult(() => service.listBatches()));
+  }
+  if (permissions.publishingWrite) server.registerTool(
     "create_scheduled_publication",
     {
       description: "Create a draft, scheduled publication, or immediate publication request. This is a write action.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       inputSchema: publicationInputSchema,
     },
     async (input) => safeResult(() => service.createPublication(input))
   );
-  server.registerTool(
+  if (permissions.publishingWrite) server.registerTool(
     "create_speed_post_batch",
     {
       description: "Create and expand a Speed Post batch of up to 100 videos. This is a write action.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       inputSchema: createBatchSchema,
     },
     async (input) => safeResult(() => service.createBatch(input))
   );
-  server.registerTool(
+  if (permissions.publishingWrite) server.registerTool(
     "manage_speed_post_batch",
     {
       description: "Pause, resume, or cancel a Speed Post batch. This is a write action.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
       inputSchema: z.object({ batchId: z.string().min(1), action: batchActionSchema.shape.action }),
     },
     async ({ batchId, action }) => safeResult(() => service.manageBatch(batchId, action))
