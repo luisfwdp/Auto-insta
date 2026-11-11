@@ -40,6 +40,7 @@ import {
   type InstagramContext,
 } from "@/lib/instagram/provider";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
+import { storyIdFromPermalink, matchesStoryReplyScope } from "@/lib/automation/story-reply-scoping";
 import { reserveDMSlot, releaseDMSlot } from "@/lib/utils/rate-limiter";
 import {
   releaseWorkspaceDMReservation,
@@ -322,6 +323,9 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
   });
 
   for (const automation of automations) {
+    // Story-specific DM campaigns must never answer comments, even if Meta
+    // reports a matching media ID for the Story.
+    if (storyIdFromPermalink(automation.postUrl)) continue;
     // "Any word" campaigns fire on every comment; otherwise require a keyword hit.
     const matchResult = automation.matchAnyWord
       ? { matched: true, matchedKeyword: null }
@@ -1278,7 +1282,7 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
  * Dedup is per inbound message id, so each message triggers at most one reply.
  */
 async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
-  const { instagramAccountId, messageId, messageText, senderId } = job.data;
+  const { instagramAccountId, messageId, messageText, senderId, storyId } = job.data;
 
   const automations = await prisma.automation.findMany({
     where: {
@@ -1301,6 +1305,9 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const dedupeId = `dm:${messageId}`;
 
   for (const automation of automations) {
+    // When a story permalink is configured, reject ordinary DMs and replies to
+    // every other Story. An absent Meta story ID must fail closed.
+    if (!matchesStoryReplyScope({ postUrl: automation.postUrl, postId: automation.postId, incomingStoryId: storyId })) continue;
     const matchResult = automation.matchAnyWord
       ? { matched: true, matchedKeyword: null }
       : matchKeywords(
