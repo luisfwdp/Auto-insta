@@ -232,6 +232,36 @@ describe("authorized callback (Unified Login)", () => {
     expect(tokenRequest.pathname).toBe("/v26.0/oauth/access_token");
   });
 
+  it("connects every Instagram account shared through Unified Login", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "user-token" })));
+    meta.resolveAssignedInstagramAccounts.mockResolvedValue({
+      accounts: [
+        { id: "ig_1", username: "one" },
+        { id: "ig_2", username: "two" },
+      ],
+      attempts: 1,
+      source: "assigned",
+    });
+    meta.getUserInfo.mockImplementation(async (_token: string, id: string) => ({
+      id,
+      username: id === "ig_1" ? "one" : "two",
+    }));
+    meta.subscribeInstagramAccountToWebhooks.mockResolvedValue({ success: true });
+    db.instagramAccount.findUnique.mockResolvedValue(null);
+    db.instagramAccount.create.mockResolvedValue({});
+
+    const res = await callback({ code: "code_abc", state: validState() });
+
+    expect(location(res).pathname).toBe("/dashboard");
+    const created = db.instagramAccount.create.mock.calls.map((call) => call[0].data);
+    expect(created.map((account) => account.instagramId)).toEqual(["ig_1", "ig_2"]);
+    expect(created.every((account) => account.workspaceId === "ws_1")).toBe(true);
+    expect(meta.subscribeInstagramAccountToWebhooks).toHaveBeenCalledTimes(2);
+    const event = db.operationalEvent.create.mock.calls.at(-1)![0].data;
+    expect(event.message).toBe("Instagram accounts connected via Unified Login");
+    expect(event.payload).toMatchObject({ connected: ["one", "two"], skipped: [], failed: [] });
+  });
+
   it("reports a failed token exchange without leaking the app secret", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "Invalid verification code format." } }), { status: 400 }));
