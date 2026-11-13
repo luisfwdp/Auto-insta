@@ -8,10 +8,20 @@ import { publishingRequest, usePublishingData } from "./use-publishing";
 import type { ScheduledPublication } from "./types";
 import MediaUploader from "./media-uploader";
 
-function monthDays(date: Date) {
+export function monthDays(date: Date) {
   const first = new Date(date.getFullYear(), date.getMonth(), 1);
   const count = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
   return [...Array(first.getDay()).fill(null), ...Array.from({ length: count }, (_, index) => index + 1)];
+}
+
+export function publicationIsInMonth(value: string, month: Date) {
+  const date = new Date(value);
+  return date.getFullYear() === month.getFullYear() && date.getMonth() === month.getMonth();
+}
+
+function localDateTimeInput(value: string | null | undefined) {
+  const date = value ? new Date(value) : new Date(Date.now() + 3_600_000);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
 export default function ProgrammingWorkspace() {
@@ -24,8 +34,10 @@ export default function ProgrammingWorkspace() {
   const [scheduledAt, setScheduledAt] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const now = useMemo(() => new Date(), []);
-  const days = useMemo(() => monthDays(now), [now]);
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingDate, setEditingDate] = useState("");
+  const days = useMemo(() => monthDays(calendarMonth), [calendarMonth]);
   const effectiveAccount = accountId || data.accounts[0]?.id || "";
 
   async function createPublication(publishNow: boolean) {
@@ -43,11 +55,12 @@ export default function ProgrammingWorkspace() {
     finally { setSubmitting(false); }
   }
 
-  async function updatePublication(id: string, action: "cancel" | "publish") {
+  async function updatePublication(id: string, action: "cancel" | "publish" | "reschedule", date?: string) {
     setFeedback(null);
     try {
-      await publishingRequest(`/api/publishing/publications?id=${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ action }) });
+      await publishingRequest(`/api/publishing/publications?id=${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ action, scheduledFor: date ? new Date(date).toISOString() : undefined, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
       await data.refresh();
+      setEditingId(null); setEditingDate("");
     } catch (cause) { setFeedback(cause instanceof Error ? cause.message : t("The request could not be completed.")); }
   }
 
@@ -68,9 +81,9 @@ export default function ProgrammingWorkspace() {
       </div></section>
       <div className={styles.fields}>
         <section className={styles.panel}><h2>{t("Private media library")} · <span className={styles.counter}>{selectedMedia.length}</span></h2><MediaUploader onUploaded={data.refresh} />{data.loading ? <p className={styles.muted}>{t("Loading...")}</p> : data.media.length === 0 ? <p className={styles.notice}>{t("No media uploaded yet. Use the secure uploader to add photos or videos.")}</p> : <div className={styles.mediaGrid}>{data.media.map(asset => { const selected = selectedMedia.includes(asset.id); return <button type="button" key={asset.id} aria-pressed={selected} className={`${styles.media} ${selected ? styles.mediaSelected : ""}`} onClick={() => setSelectedMedia(items => selected ? items.filter(id => id !== asset.id) : mediaType === "CAROUSEL" ? [...items, asset.id].slice(0,10) : [asset.id])}><span className={styles.thumb}>{asset.mediaType === "VIDEO" ? "▶" : "▧"}</span><span className={styles.mediaName}>{asset.filename}</span></button>; })}</div>}</section>
-        <section className={styles.panel}><h2>{new Intl.DateTimeFormat(locale, { month: "long", year: "numeric" }).format(now)}</h2><div className={styles.calendarWrap}><div className={styles.calendar}>{days.map((day,index) => <div className={styles.day} key={index}>{day && <><span className={styles.dayNumber}>{day}</span>{data.publications.filter(item => item.scheduledFor && new Date(item.scheduledFor).getDate() === day && new Date(item.scheduledFor).getMonth() === now.getMonth()).map(item => <div className={styles.event} key={item.id}>{new Date(item.scheduledFor!).toLocaleTimeString(locale,{hour:"2-digit",minute:"2-digit"})} · {item.type}<br/><span className={styles.status}>{item.status}</span></div>)}</>}</div>)}</div></div></section>
+        <section className={styles.panel}><div className={styles.row}><button className={styles.button} aria-label={t("Previous")} onClick={() => setCalendarMonth(value => new Date(value.getFullYear(), value.getMonth() - 1, 1))}>←</button><h2>{new Intl.DateTimeFormat(locale, { month: "long", year: "numeric" }).format(calendarMonth)}</h2><button className={styles.button} aria-label={t("Next")} onClick={() => setCalendarMonth(value => new Date(value.getFullYear(), value.getMonth() + 1, 1))}>→</button></div><div className={styles.calendarWrap}><div className={styles.calendar}>{days.map((day,index) => <div className={styles.day} key={index}>{day && <><span className={styles.dayNumber}>{day}</span>{data.publications.filter(item => item.scheduledFor && publicationIsInMonth(item.scheduledFor, calendarMonth) && new Date(item.scheduledFor).getDate() === day).map(item => <div className={styles.event} key={item.id}>{new Date(item.scheduledFor!).toLocaleTimeString(locale,{hour:"2-digit",minute:"2-digit"})} · {item.type}<br/><span className={styles.status}>{item.status}</span></div>)}</>}</div>)}</div></div></section>
       </div>
     </div>
-    <section className={styles.panel}><h2>{t("History and status")}</h2><div className={styles.list}>{data.publications.length === 0 ? <p className={styles.muted}>{t("No publications yet.")}</p> : data.publications.map(item => <article className={styles.listItem} key={item.id}><div><strong>{item.type}</strong> <span className={styles.status}>{item.status}</span><p className={styles.muted}>{item.scheduledFor ? new Date(item.scheduledFor).toLocaleString(locale) : t("Publish immediately")}{item.lastError ? ` · ${item.lastError}` : ""}</p></div><div className={styles.row}>{item.status === "DRAFT" && <button className={styles.button} onClick={() => void updatePublication(item.id,"publish")}>{t("Publish now")}</button>}{["DRAFT","SCHEDULED","FAILED"].includes(item.status) && <button className={`${styles.button} ${styles.danger}`} onClick={() => void updatePublication(item.id,"cancel")}>{t("Cancel")}</button>}</div></article>)}</div></section>
+    <section className={styles.panel}><h2>{t("History and status")}</h2><div className={styles.list}>{data.publications.length === 0 ? <p className={styles.muted}>{t("No publications yet.")}</p> : data.publications.map(item => <article className={styles.listItem} key={item.id}><div><strong>{item.type}</strong> <span className={styles.status}>{item.status}</span><p className={styles.muted}>{item.scheduledFor ? new Date(item.scheduledFor).toLocaleString(locale) : t("Publish immediately")}{item.lastError ? ` · ${item.lastError}` : ""}</p>{editingId === item.id && <div className={styles.row}><input aria-label={t("Date and time")} className={styles.control} type="datetime-local" value={editingDate} min={new Date().toISOString().slice(0,16)} onChange={event => setEditingDate(event.target.value)} /><button className={`${styles.button} ${styles.primary}`} disabled={!editingDate} onClick={() => void updatePublication(item.id,"reschedule",editingDate)}>{t("Save changes")}</button><button className={styles.button} onClick={() => { setEditingId(null); setEditingDate(""); }}>{t("Cancel")}</button></div>}</div><div className={styles.row}>{item.status === "DRAFT" && <button className={styles.button} onClick={() => void updatePublication(item.id,"publish")}>{t("Publish now")}</button>}{["DRAFT","SCHEDULED","FAILED"].includes(item.status) && <button className={styles.button} onClick={() => { setEditingId(item.id); setEditingDate(localDateTimeInput(item.scheduledFor)); }}>{t("Edit")}</button>}{["DRAFT","SCHEDULED","FAILED"].includes(item.status) && <button className={`${styles.button} ${styles.danger}`} onClick={() => void updatePublication(item.id,"cancel")}>{t("Cancel")}</button>}</div></article>)}</div></section>
   </div>;
 }
