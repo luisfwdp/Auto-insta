@@ -79,6 +79,7 @@ export const createBatchSchema = z.object({
   postsPerDay: z.number().int().min(1).max(25),
   scheduleMode: z.enum(["FIXED", "CUSTOM"]),
   orderMode: z.enum(["MANUAL", "SEQUENTIAL", "RANDOM"]),
+  randomSeed: z.string().uuid().optional(),
   timezone,
   timeSlots: z.array(timeSlot).max(25),
   startsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -87,6 +88,9 @@ export const createBatchSchema = z.object({
 }).superRefine((value, ctx) => {
   if (value.scheduleMode === "FIXED" && value.timeSlots.length < value.postsPerDay) {
     ctx.addIssue({ code: "custom", path: ["timeSlots"], message: "Provide at least one time slot per daily post" });
+  }
+  if (value.scheduleMode === "FIXED" && new Set(value.timeSlots).size !== value.timeSlots.length) {
+    ctx.addIssue({ code: "custom", path: ["timeSlots"], message: "Publishing times must be unique" });
   }
   if (value.scheduleMode === "CUSTOM" && value.items.some((item) => !item.scheduledFor)) {
     ctx.addIssue({ code: "custom", path: ["items"], message: "Every custom item needs its own scheduled date" });

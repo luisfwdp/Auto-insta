@@ -7,8 +7,25 @@ import styles from "./publishing.module.css";
 import { publishingRequest, usePublishingData } from "./use-publishing";
 import type { PublishingBatch } from "./types";
 import MediaUploader from "./media-uploader";
+import { orderBatchItems } from "@/lib/publishing/schedule";
 
 const DEFAULT_SLOTS = ["10:00", "12:00", "15:00", "18:00", "21:00"];
+
+export function fillUniqueTimeSlots(current: string[], count: number) {
+  const slots = current.slice(0, count);
+  const used = new Set(slots);
+  while (slots.length < count) {
+    let minutes = (10 * 60 + slots.length * 60) % (24 * 60);
+    let candidate = "";
+    do {
+      candidate = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+      minutes = (minutes + 15) % (24 * 60);
+    } while (used.has(candidate));
+    slots.push(candidate);
+    used.add(candidate);
+  }
+  return slots;
+}
 
 export default function SpeedPostWorkspace() {
   const { t, locale } = useI18n();
@@ -21,6 +38,7 @@ export default function SpeedPostWorkspace() {
   const [scheduleMode, setScheduleMode] = useState<"FIXED" | "CUSTOM">("FIXED");
   const [customDates, setCustomDates] = useState<Record<string, string>>({});
   const [order, setOrder] = useState<"SEQUENTIAL" | "MANUAL" | "RANDOM">("SEQUENTIAL");
+  const [randomSeed, setRandomSeed] = useState("");
   const [caption, setCaption] = useState("");
   const [itemCaptions, setItemCaptions] = useState<Record<string, string>>({});
   const [trialReels, setTrialReels] = useState(false);
@@ -28,29 +46,38 @@ export default function SpeedPostWorkspace() {
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const effectiveAccount = accountId || data.accounts[0]?.id || "";
-  const schedule = useMemo(() => mediaIds.map((id,index) => {
+  const orderedMediaIds = useMemo(() => {
+    const filenames = new Map(data.media.map(asset => [asset.id, asset.filename]));
+    return orderBatchItems(
+      mediaIds.map(assetId => ({ assetId })),
+      order,
+      randomSeed || "pending-random-seed",
+      filenames
+    ).map(item => item.assetId);
+  }, [data.media, mediaIds, order, randomSeed]);
+  const schedule = useMemo(() => orderedMediaIds.map((id,index) => {
     if (scheduleMode === "CUSTOM" && customDates[id]) return { id, date: new Date(customDates[id]) };
     const dayOffset = Math.floor(index / Math.max(1,postsPerDay));
     const date = new Date(`${startDate}T${slots[index % Math.max(1,postsPerDay)] || "10:00"}:00`);
     date.setDate(date.getDate() + dayOffset);
     return { id, date };
-  }), [mediaIds, postsPerDay, slots, startDate, scheduleMode, customDates]);
+  }), [orderedMediaIds, postsPerDay, slots, startDate, scheduleMode, customDates]);
 
   function moveMedia(index: number, delta: number) {
     setMediaIds(ids => { const next = [...ids]; const target = index + delta; if (target < 0 || target >= next.length) return ids; [next[index],next[target]] = [next[target],next[index]]; return next; });
   }
 
   function changePostsPerDay(value: number) {
-    const count = Math.min(10, Math.max(1,value));
+    const count = Math.min(25, Math.max(1,value));
     setPostsPerDay(count);
-    setSlots(current => Array.from({ length: count }, (_,i) => current[i] ?? `${String(Math.min(23,10+i*2)).padStart(2,"0")}:00`));
+    setSlots(current => fillUniqueTimeSlots(current, count));
   }
 
   async function createBatch() {
     if (!effectiveAccount || mediaIds.length === 0) return;
     setSubmitting(true); setFeedback(null);
     try {
-      await publishingRequest<PublishingBatch>("/api/publishing/batches", { method: "POST", body: JSON.stringify({ name: name || t("Speed Post batch"), instagramAccountId: effectiveAccount, items: mediaIds.map(assetId => ({ assetId, caption: itemCaptions[assetId] || undefined, scheduledFor: scheduleMode === "CUSTOM" ? new Date(customDates[assetId]).toISOString() : undefined })), postsPerDay, scheduleMode, timeSlots: scheduleMode === "FIXED" ? slots : [], orderMode: order, defaultCaption: caption, reelMode: trialReels ? "TRIAL" : "STANDARD", startsOn: startDate, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
+      await publishingRequest<PublishingBatch>("/api/publishing/batches", { method: "POST", body: JSON.stringify({ name: name || t("Speed Post batch"), instagramAccountId: effectiveAccount, items: mediaIds.map(assetId => ({ assetId, caption: itemCaptions[assetId] || undefined, scheduledFor: scheduleMode === "CUSTOM" ? new Date(customDates[assetId]).toISOString() : undefined })), postsPerDay, scheduleMode, timeSlots: scheduleMode === "FIXED" ? slots : [], orderMode: order, randomSeed: order === "RANDOM" ? randomSeed : undefined, defaultCaption: caption, reelMode: trialReels ? "TRIAL" : "STANDARD", startsOn: startDate, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
       setFeedback(t("Batch created and scheduled successfully.")); setMediaIds([]); setName("");
       await data.refresh();
     } catch (cause) { setFeedback(cause instanceof Error ? cause.message : t("The request could not be completed.")); }
@@ -71,10 +98,10 @@ export default function SpeedPostWorkspace() {
         <label className={styles.field}>{t("Batch name")}<input className={styles.control} value={name} onChange={e => setName(e.target.value)} maxLength={100} /></label>
         <label className={styles.field}>{t("Instagram account")}<select className={styles.control} value={effectiveAccount} onChange={e => setAccountId(e.target.value)}><option value="">{t("Select an account")}</option>{data.accounts.map(a => <option key={a.id} value={a.id}>@{a.username}</option>)}</select></label>
         <label className={styles.field}>{t("Start date")}<input className={styles.control} type="date" min={new Date().toISOString().slice(0,10)} value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
-        <label className={styles.field}>{t("Posts per day")}<input className={styles.control} type="number" min={1} max={10} value={postsPerDay} onChange={e => changePostsPerDay(Number(e.target.value))} /></label>
+        <label className={styles.field}>{t("Posts per day")}<input className={styles.control} type="number" min={1} max={25} value={postsPerDay} onChange={e => changePostsPerDay(Number(e.target.value))} /></label>
         <label className={styles.field}>{t("Schedule mode")}<select className={styles.control} value={scheduleMode} onChange={e => setScheduleMode(e.target.value as typeof scheduleMode)}><option value="FIXED">{t("Fixed daily times")}</option><option value="CUSTOM">{t("Custom date per item")}</option></select></label>
         {scheduleMode === "FIXED" && <fieldset className={styles.field}><legend>{t("Publishing times")}</legend><div className={styles.slots}>{slots.map((slot,index) => <input key={index} aria-label={`${t("Time")} ${index+1}`} className={styles.control} type="time" value={slot} onChange={e => setSlots(values => values.map((value,i) => i === index ? e.target.value : value))} />)}</div></fieldset>}
-        <label className={styles.field}>{t("Order")}<select className={styles.control} value={order} onChange={e => setOrder(e.target.value as typeof order)}><option value="SEQUENTIAL">{t("Sequential")}</option><option value="MANUAL">{t("Manual")}</option><option value="RANDOM">{t("Random")}</option></select></label>
+        <label className={styles.field}>{t("Order")}<select className={styles.control} value={order} onChange={e => { const next = e.target.value as typeof order; if (next === "RANDOM" && order !== "RANDOM") setRandomSeed(crypto.randomUUID()); setOrder(next); }}><option value="SEQUENTIAL">{t("Sequential")}</option><option value="MANUAL">{t("Manual")}</option><option value="RANDOM">{t("Random")}</option></select></label>
         <label className={styles.field}>{t("Default caption")}<textarea className={styles.control} maxLength={2200} value={caption} onChange={e => setCaption(e.target.value)} placeholder={t("Applied to every Reel unless an individual caption is set.")} /></label>
         {mediaIds.length > 0 && <details><summary className={styles.button}>{t("Individual settings")}</summary><div className={styles.fields}>{mediaIds.map((id,index) => <div className={styles.notice} key={id}><div className={styles.row}><strong>Reel {index+1}</strong>{order === "MANUAL" && <><button className={styles.button} onClick={() => moveMedia(index,-1)} disabled={index === 0} aria-label={t("Move earlier")}>↑</button><button className={styles.button} onClick={() => moveMedia(index,1)} disabled={index === mediaIds.length-1} aria-label={t("Move later")}>↓</button></>}</div>{scheduleMode === "CUSTOM" && <label className={styles.field}>{t("Custom date and time")}<input className={styles.control} type="datetime-local" value={customDates[id] ?? ""} onChange={e => setCustomDates(values => ({...values,[id]:e.target.value}))} /></label>}<label className={styles.field}>{t("Individual caption")}<textarea className={styles.control} maxLength={2200} value={itemCaptions[id] ?? ""} onChange={e => setItemCaptions(values => ({...values,[id]:e.target.value}))} placeholder={t("Use the default caption")} /></label></div>)}</div></details>}
         <label className={styles.row}><input type="checkbox" checked={trialReels} onChange={e => setTrialReels(e.target.checked)} /> <span>{t("Use Trial Reels when the account is eligible")}</span></label>
