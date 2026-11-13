@@ -25,6 +25,7 @@
  * filter on the account to widen results.
  */
 
+import { storyIdFromPermalink } from "@/lib/automation/story-reply-scoping";
 import { MAX_COMMENT_SEND_ATTEMPTS } from "@/lib/queue/comment-delivery";
 import { hasLegacyUnconfirmedDelivery } from "@/lib/instagram/delivery-errors";
 import { prisma } from "@/lib/db/client";
@@ -68,12 +69,13 @@ function errMessage(error: unknown): string {
 
 /** One reconciliation pass across every active campaign. */
 export async function reconcileComments(): Promise<void> {
-  const automations = await prisma.automation.findMany({
+  const active = await prisma.automation.findMany({
     where: { isActive: true },
     select: {
       id: true,
       name: true,
       postId: true,
+      postUrl: true,
       matchAnyPost: true,
       matchAnyWord: true,
       keywords: true,
@@ -93,6 +95,11 @@ export async function reconcileComments(): Promise<void> {
       },
     },
   });
+
+  // A Story-scoped campaign's postId is a Story id: Stories have no comments
+  // edge (Meta answers error 100), and those campaigns are driven by the
+  // messages webhook, so sweeping them only burns API calls and logs a warning.
+  const automations = active.filter((automation) => !storyIdFromPermalink(automation.postUrl));
 
   const sinceMs = Date.now() - LOOKBACK_HOURS * 60 * 60 * 1000;
   const tokenCache = new Map<string, InstagramContext | null>();
