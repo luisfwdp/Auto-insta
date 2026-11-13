@@ -79,6 +79,7 @@ export const createBatchSchema = z.object({
   postsPerDay: z.number().int().min(1).max(25),
   scheduleMode: z.enum(["FIXED", "CUSTOM"]),
   orderMode: z.enum(["MANUAL", "SEQUENTIAL", "RANDOM"]),
+  randomSeed: z.string().uuid().optional(),
   timezone,
   timeSlots: z.array(timeSlot).max(25),
   startsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

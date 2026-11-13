@@ -21,6 +21,23 @@ describe("publishing validation", () => {
     expect(createBatchSchema.safeParse({ ...base, items: Array.from({ length: 101 }, (_, index) => ({ assetId: `a${index}` })) }).success).toBe(false);
   });
 
+  it("accepts the UI limit of 25 daily posts and a client preview seed", () => {
+    const parsed = createBatchSchema.safeParse({
+      name: "Daily launch",
+      instagramAccountId: "ig",
+      items: Array.from({ length: 25 }, (_, index) => ({ assetId: `a${index}` })),
+      postsPerDay: 25,
+      scheduleMode: "FIXED",
+      orderMode: "RANDOM",
+      randomSeed: "a68ee5d7-7922-4950-98fe-67882fe913f7",
+      timezone: "UTC",
+      timeSlots: Array.from({ length: 25 }, () => "10:00"),
+      startsOn: "2030-01-01",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.randomSeed).toBe("a68ee5d7-7922-4950-98fe-67882fe913f7");
+  });
+
   it("requires an explicit date for every custom item", () => {
     const parsed = createBatchSchema.safeParse({
       name: "Custom", instagramAccountId: "ig", postsPerDay: 1,

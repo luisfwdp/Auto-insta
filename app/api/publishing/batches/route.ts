@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
   if (!account) return NextResponse.json({ success: false, error: "Instagram account not found" }, { status: 404 });
   if (assets.length !== assetIds.length) return NextResponse.json({ success: false, error: "Every Speed Post item must be an available video" }, { status: 400 });
 
-  const randomSeed = input.orderMode === "RANDOM" ? randomUUID() : null;
+  const randomSeed = input.orderMode === "RANDOM" ? input.randomSeed ?? randomUUID() : null;
   const filenames = new Map(assets.map((asset) => [asset.id, asset.filename]));
   const ordered = orderBatchItems(input.items, input.orderMode, randomSeed ?? "sequential", filenames);
   let schedule: Date[];
