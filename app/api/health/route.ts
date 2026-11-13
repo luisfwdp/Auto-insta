@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import type { JobType } from "bullmq";
 import { prisma } from "@/lib/db/client";
 import { getDMQueue, getRedisConnection } from "@/lib/queue/client";
+import { getPublishingQueue } from "@/lib/queue/publishing";
 import { getWorkerHealth } from "@/lib/ops/worker-health";
 
 export const runtime = "nodejs";
@@ -57,12 +59,15 @@ const STUCK_QUEUE_MIN_WAITING = Number(
   process.env.HEALTH_STUCK_QUEUE_WAITING ?? 25
 );
 
-async function checkQueue(): Promise<HealthCheck & { counts?: unknown }> {
+async function checkQueue(
+  getQueue: () => { getJobCounts: (...types: JobType[]) => Promise<Record<string, number>> },
+  label: string
+): Promise<HealthCheck & { counts?: unknown }> {
   if (!process.env.REDIS_URL) {
     return { status: "error", detail: "REDIS_URL is not configured" };
   }
   try {
-    const counts = await getDMQueue().getJobCounts(
+    const counts = await getQueue().getJobCounts(
       "waiting",
       "active",
       "delayed",
@@ -73,7 +78,7 @@ async function checkQueue(): Promise<HealthCheck & { counts?: unknown }> {
     if (waiting >= STUCK_QUEUE_MIN_WAITING && active === 0) {
       return {
         status: "error",
-        detail: `${waiting} jobs waiting with none active — the worker is not consuming`,
+        detail: `${label}: ${waiting} jobs waiting with none active — the worker is not consuming`,
         counts,
       };
     }
@@ -105,10 +110,11 @@ async function checkWorker() {
 }
 
 export async function GET() {
-  const [database, redis, queue, worker] = await Promise.all([
+  const [database, redis, queue, publishingQueue, worker] = await Promise.all([
     checkDatabase(),
     checkRedis(),
-    checkQueue(),
+    checkQueue(getDMQueue, "DM queue"),
+    checkQueue(getPublishingQueue, "Publishing queue"),
     checkWorker(),
   ]);
 
@@ -116,6 +122,7 @@ export async function GET() {
     database.status === "ok" &&
     redis.status === "ok" &&
     queue.status === "ok" &&
+    publishingQueue.status === "ok" &&
     worker.healthy;
 
   return NextResponse.json(
@@ -125,6 +132,7 @@ export async function GET() {
         database,
         redis,
         queue,
+        publishingQueue,
         worker,
       },
     },
