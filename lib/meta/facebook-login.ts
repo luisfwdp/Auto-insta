@@ -17,6 +17,8 @@ export const DEFAULT_FACEBOOK_LOGIN_SCOPES = [
   "instagram_basic",
   "instagram_manage_comments",
   "instagram_manage_messages",
+  "instagram_content_publish",
+  "instagram_manage_contents",
   "pages_show_list",
   "pages_read_engagement",
   "pages_manage_metadata",

@@ -33,6 +33,8 @@ describe("Facebook Login mode", () => {
     expect(url.searchParams.get("scope")?.split(",")).toEqual(DEFAULT_FACEBOOK_LOGIN_SCOPES);
     expect(url.searchParams.get("scope")).toContain("pages_show_list");
     expect(url.searchParams.get("scope")).toContain("pages_manage_metadata");
+    expect(url.searchParams.get("scope")).toContain("instagram_content_publish");
+    expect(url.searchParams.get("scope")).toContain("instagram_manage_contents");
     expect(url.searchParams.has("config_id")).toBe(false);
     expect(url.searchParams.get("state")).toBe("st");
   });
