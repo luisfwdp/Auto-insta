@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBatchSchema, createAssetSchema, publicationInputSchema } from "@/lib/publishing/schemas";
 import { generateBatchSchedule, orderBatchItems, zonedDateTimeToUtc } from "@/lib/publishing/schedule";
+import { fillUniqueTimeSlots } from "@/components/publishing/speed-post-workspace";
 
 describe("publishing validation", () => {
   it("rejects oversized or unsupported uploads", () => {
@@ -31,11 +32,28 @@ describe("publishing validation", () => {
       orderMode: "RANDOM",
       randomSeed: "a68ee5d7-7922-4950-98fe-67882fe913f7",
       timezone: "UTC",
-      timeSlots: Array.from({ length: 25 }, () => "10:00"),
+      timeSlots: fillUniqueTimeSlots([], 25),
       startsOn: "2030-01-01",
     });
     expect(parsed.success).toBe(true);
     if (parsed.success) expect(parsed.data.randomSeed).toBe("a68ee5d7-7922-4950-98fe-67882fe913f7");
+  });
+
+  it("rejects duplicate daily times and generates 25 unique UI defaults", () => {
+    const slots = fillUniqueTimeSlots(["10:00", "12:00", "15:00", "18:00", "21:00"], 25);
+    expect(slots).toHaveLength(25);
+    expect(new Set(slots).size).toBe(25);
+    expect(createBatchSchema.safeParse({
+      name: "Burst",
+      instagramAccountId: "ig",
+      items: [{ assetId: "a1" }, { assetId: "a2" }],
+      postsPerDay: 2,
+      scheduleMode: "FIXED",
+      orderMode: "SEQUENTIAL",
+      timezone: "UTC",
+      timeSlots: ["10:00", "10:00"],
+      startsOn: "2030-01-01",
+    }).success).toBe(false);
   });
 
   it("requires an explicit date for every custom item", () => {

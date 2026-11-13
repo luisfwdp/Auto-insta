@@ -11,6 +11,22 @@ import { orderBatchItems } from "@/lib/publishing/schedule";
 
 const DEFAULT_SLOTS = ["10:00", "12:00", "15:00", "18:00", "21:00"];
 
+export function fillUniqueTimeSlots(current: string[], count: number) {
+  const slots = current.slice(0, count);
+  const used = new Set(slots);
+  while (slots.length < count) {
+    let minutes = (10 * 60 + slots.length * 60) % (24 * 60);
+    let candidate = "";
+    do {
+      candidate = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+      minutes = (minutes + 15) % (24 * 60);
+    } while (used.has(candidate));
+    slots.push(candidate);
+    used.add(candidate);
+  }
+  return slots;
+}
+
 export default function SpeedPostWorkspace() {
   const { t, locale } = useI18n();
   const data = usePublishingData();
@@ -54,7 +70,7 @@ export default function SpeedPostWorkspace() {
   function changePostsPerDay(value: number) {
     const count = Math.min(25, Math.max(1,value));
     setPostsPerDay(count);
-    setSlots(current => Array.from({ length: count }, (_,i) => current[i] ?? `${String(Math.min(23,10+i*2)).padStart(2,"0")}:00`));
+    setSlots(current => fillUniqueTimeSlots(current, count));
   }
 
   async function createBatch() {

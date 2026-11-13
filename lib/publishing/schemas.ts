@@ -89,6 +89,9 @@ export const createBatchSchema = z.object({
   if (value.scheduleMode === "FIXED" && value.timeSlots.length < value.postsPerDay) {
     ctx.addIssue({ code: "custom", path: ["timeSlots"], message: "Provide at least one time slot per daily post" });
   }
+  if (value.scheduleMode === "FIXED" && new Set(value.timeSlots).size !== value.timeSlots.length) {
+    ctx.addIssue({ code: "custom", path: ["timeSlots"], message: "Publishing times must be unique" });
+  }
   if (value.scheduleMode === "CUSTOM" && value.items.some((item) => !item.scheduledFor)) {
     ctx.addIssue({ code: "custom", path: ["items"], message: "Every custom item needs its own scheduled date" });
   }
