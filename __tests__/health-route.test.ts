@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const queryRaw = vi.fn(async () => 1);
 const getRedisConnection = vi.fn(() => ({ ping: vi.fn() }));
 const getDMQueue = vi.fn(() => ({ getJobCounts: vi.fn() }));
+const getPublishingQueue = vi.fn(() => ({ getJobCounts: vi.fn() }));
 const getWorkerHealth = vi.fn();
 
 vi.mock("@/lib/db/client", () => ({
@@ -11,6 +12,9 @@ vi.mock("@/lib/db/client", () => ({
 vi.mock("@/lib/queue/client", () => ({
   getRedisConnection,
   getDMQueue,
+}));
+vi.mock("@/lib/queue/publishing", () => ({
+  getPublishingQueue,
 }));
 vi.mock("@/lib/ops/worker-health", () => ({
   getWorkerHealth,
@@ -37,11 +41,13 @@ describe("GET /api/health", () => {
         database: { status: "ok" },
         redis: { status: "error", detail: "REDIS_URL is not configured" },
         queue: { status: "error", detail: "REDIS_URL is not configured" },
+        publishingQueue: { status: "error", detail: "REDIS_URL is not configured" },
         worker: { healthy: false, error: "REDIS_URL is not configured" },
       },
     });
     expect(getRedisConnection).not.toHaveBeenCalled();
     expect(getDMQueue).not.toHaveBeenCalled();
+    expect(getPublishingQueue).not.toHaveBeenCalled();
     expect(getWorkerHealth).not.toHaveBeenCalled();
   });
 });
@@ -51,6 +57,7 @@ describe("GET /api/health with Redis configured", () => {
     process.env.REDIS_URL = "redis://localhost:6379";
     getRedisConnection.mockReturnValue({ ping: vi.fn(async () => "PONG") });
     getDMQueue.mockReturnValue({ getJobCounts: vi.fn(async () => ({ waiting: 1, active: 0 })) });
+    getPublishingQueue.mockReturnValue({ getJobCounts: vi.fn(async () => ({ waiting: 0, active: 0 })) });
   });
   afterEach(() => {
     delete process.env.REDIS_URL;
@@ -75,5 +82,21 @@ describe("GET /api/health with Redis configured", () => {
     getWorkerHealth.mockResolvedValue({ healthy: true, heartbeat: { pid: 1 }, ageMs: 1000, consumer: { state: "processing" } });
     const { GET } = await import("@/app/api/health/route");
     expect((await GET()).status).toBe(200);
+  });
+
+  it("reports 503 when publishing has a stuck backlog", async () => {
+    getDMQueue.mockReturnValue({ getJobCounts: vi.fn(async () => ({ waiting: 0, active: 0 })) });
+    getPublishingQueue.mockReturnValue({ getJobCounts: vi.fn(async () => ({ waiting: 25, active: 0 })) });
+    getWorkerHealth.mockResolvedValue({ healthy: true, heartbeat: { pid: 1 }, ageMs: 1000, consumer: { state: "processing" } });
+
+    const { GET } = await import("@/app/api/health/route");
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.checks.publishingQueue).toMatchObject({
+      status: "error",
+      counts: { waiting: 25, active: 0 },
+    });
   });
 });
