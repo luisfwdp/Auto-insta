@@ -118,15 +118,28 @@ async function processPublication(job: Job<PublishPublicationJob>) {
   const state = await waitForContainer(containerId, context.accessToken);
   // If a previous attempt published but crashed before its DB update, stop here:
   // never call media_publish twice for the same container.
-  const mediaId = state.status_code === "PUBLISHED"
-    ? publication.metaMediaId
-    : await publishContainer(context.instagramId, context.accessToken, containerId);
+  const recoveredPublishedContainer = state.status_code === "PUBLISHED";
+  let mediaId = publication.metaMediaId;
+  if (!recoveredPublishedContainer) {
+    // Persist the external-call boundary before media_publish. The Graph API
+    // returns the final media ID only in the publish response, so a process
+    // crash after Meta accepts the request cannot safely reconstruct that ID.
+    // The container's later PUBLISHED status is authoritative, however, and
+    // lets a retry finish without issuing a duplicate publish request.
+    await prisma.scheduledPublication.updateMany({
+      where: { id: publication.id, workspaceId: publication.workspaceId, status: "PROCESSING" },
+      data: { metaStatus: "PUBLISHING" },
+    });
+    mediaId = await publishContainer(context.instagramId, context.accessToken, containerId);
+  }
   await prisma.scheduledPublication.updateMany({
     where: { id: publication.id, workspaceId: publication.workspaceId, status: "PROCESSING" },
     data: {
       status: "PUBLISHED",
-      metaStatus: "PUBLISHED",
-      metaMediaId: mediaId,
+      // Preserve an explicit recovery marker when Meta confirms publication
+      // but the original media_publish response (and its media ID) was lost.
+      metaStatus: recoveredPublishedContainer && !mediaId ? "PUBLISHED_RECOVERED" : "PUBLISHED",
+      ...(mediaId ? { metaMediaId: mediaId } : {}),
       publishedAt: new Date(),
       lastError: null,
     },
