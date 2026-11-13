@@ -34,6 +34,11 @@ const {
     },
     instagramAccount: {
       findUnique: vi.fn(),
+      findMany: vi.fn(),
+    },
+    webhookEvent: {
+      create: vi.fn(),
+      updateMany: vi.fn(),
     },
     operationalEvent: {
       create: vi.fn(),
@@ -141,6 +146,7 @@ import { MetaApiError, RateLimitError } from "@/lib/meta/client";
 import { createDMWorker } from "../lib/queue/dm-worker";
 import { getRedisConnection } from "@/lib/queue/client";
 import { hashRecipientId } from "@/lib/tracking/server";
+import { processInstagramWebhook } from "@/lib/queue/process-webhook";
 
 const usagePeriodStart = new Date("2026-05-01T00:00:00.000Z");
 
@@ -243,6 +249,9 @@ beforeEach(() => {
   mockPrisma.instagramAccount.findUnique.mockResolvedValue({
     workspaceId: "workspace_123",
   });
+  mockPrisma.instagramAccount.findMany.mockResolvedValue([]);
+  mockPrisma.webhookEvent.create.mockResolvedValue({ id: "webhook_001" });
+  mockPrisma.webhookEvent.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.operationalEvent.create.mockResolvedValue({});
   mockDecryptToken.mockReturnValue("decrypted_token");
   mockMatchKeywords.mockReturnValue({ matched: true, matchedKeyword: "LINK" });
@@ -1178,6 +1187,96 @@ describe("DM Worker — DM keyword trigger", () => {
         create: expect.objectContaining({ status: "FAILED" }),
       })
     );
+  });
+});
+
+describe("Story reply webhook pipeline", () => {
+  const configuredStoryId = "4028147829863364233";
+  const storyAutomation = {
+    ...mockAutomation,
+    postId: configuredStoryId,
+    postUrl: `https://www.instagram.com/stories/luispagodinsta/${configuredStoryId}`,
+    dmTriggerEnabled: true,
+    requireFollow: false,
+    followPromptMessage: null,
+    followPromptButtonLabel: null,
+  };
+
+  async function deliverStoryReply(storyId?: string) {
+    const payload = {
+      object: "instagram",
+      entry: [
+        {
+          id: "ig_456",
+          time: 1_783_900_000,
+          messaging: [
+            {
+              sender: { id: "commenter_999" },
+              recipient: { id: "ig_456" },
+              message: {
+                mid: `mid_${storyId ?? "missing"}`,
+                text: "EU QUERO",
+                ...(storyId ? { reply_to: { story: { id: storyId } } } : {}),
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    await processInstagramWebhook({ payload, provider: "META" });
+    const queuedJob = mockQueueAdd.mock.calls.find(
+      ([name]) => name === "process-message"
+    );
+    expect(queuedJob).toBeDefined();
+
+    const processor = getProcessor();
+    await processor({
+      name: "process-message",
+      data: queuedJob![1],
+      id: "message_job_001",
+      attemptsMade: 0,
+    });
+
+    return queuedJob![1] as { storyId?: string };
+  }
+
+  beforeEach(() => {
+    mockPrisma.instagramAccount.findMany.mockResolvedValue([
+      {
+        id: "ig_account_row_1",
+        instagramId: "ig_456",
+        workspaceId: "workspace_123",
+      },
+    ]);
+    mockPrisma.automation.findMany.mockResolvedValue([storyAutomation]);
+    mockMatchKeywords.mockReturnValue({
+      matched: true,
+      matchedKeyword: "EU QUERO",
+    });
+  });
+
+  it("queues the Story id and sends exactly one DM for the configured Story", async () => {
+    const queuedData = await deliverStoryReply(configuredStoryId);
+
+    expect(queuedData.storyId).toBe(configuredStoryId);
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ status: "SENT" }),
+      })
+    );
+  });
+
+  it.each([
+    ["a different Story", "9999999999999999999"],
+    ["no Story context", undefined],
+  ])("does not send a DM for %s", async (_case, storyId) => {
+    const queuedData = await deliverStoryReply(storyId);
+
+    expect(queuedData.storyId).toBe(storyId);
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockPrisma.dmLog.upsert).not.toHaveBeenCalled();
   });
 });
 
