@@ -5,7 +5,7 @@ import {
   InstagramConnectNotice,
   resolveInstagramConnectFeedback,
 } from "../components/instagram-connect-notice";
-import { InstagramConnectionPanel } from "../components/instagram-connection-panel";
+import { InstagramConnectionPanel, tokenExpiryState } from "../components/instagram-connection-panel";
 
 const navigation = vi.hoisted(() => ({ params: new URLSearchParams() }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => navigation.params }));
@@ -58,6 +58,22 @@ describe("Instagram connection interface", () => {
 
     const pending = renderPanel({ accounts: [{ ...account, webhookSubscribed: false }] });
     expect(pending).toContain("Webhook pending");
+  });
+
+  it("warns about expiring and expired tokens without treating unknown expiry as failure", () => {
+    const now = Date.parse("2030-01-01T00:00:00.000Z");
+    expect(tokenExpiryState(null, now)).toBeNull();
+    expect(tokenExpiryState("2030-01-20T00:00:00.000Z", now)).toBeNull();
+    expect(tokenExpiryState("2030-01-08T00:00:00.000Z", now)).toBe("expiring");
+    expect(tokenExpiryState("2029-12-31T00:00:00.000Z", now)).toBe("expired");
+
+    const expired = renderPanel({ accounts: [{ ...account, tokenExpiresAt: "2020-01-01T00:00:00.000Z" }] });
+    expect(expired).toContain('role="alert"');
+    expect(expired).toContain("Instagram authorization expired");
+    expect(expired).toContain("Reconnect Instagram");
+
+    const unknown = renderPanel({ accounts: [account] });
+    expect(unknown).not.toContain("Instagram authorization expired");
   });
 
   it.each([
