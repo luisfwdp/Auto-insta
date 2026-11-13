@@ -18,17 +18,34 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
   const allowed = new Set(accountMap.keys());
   const payload = { ...incoming, entry: incoming.entry.filter(e => allowed.has(e.id)) };
   if (!payload.entry.length) return;
-  const webhookEvent = await prisma.webhookEvent.create({
-    data: {
-      object:
-        typeof payload === "object" && payload && "object" in payload
-          ? String(payload.object)
-          : null,
-      payload: payload as unknown as Prisma.InputJsonValue,
-      ...(workspaceId ? { workspaceId } : {}),
-      status: "PENDING",
-    },
-  });
+  const entriesByWorkspace = new Map<string, typeof payload.entry>();
+  for (const entry of payload.entry) {
+    const account = accountMap.get(entry.id);
+    if (!account) continue;
+    const entries = entriesByWorkspace.get(account.workspaceId) ?? [];
+    entries.push(entry);
+    entriesByWorkspace.set(account.workspaceId, entries);
+  }
+  const webhookEvents = await Promise.all(
+    [...entriesByWorkspace.entries()].map(([eventWorkspaceId, entries]) =>
+      prisma.webhookEvent.create({
+        data: {
+          object:
+            typeof payload === "object" && payload && "object" in payload
+              ? String(payload.object)
+              : null,
+          payload: {
+            ...payload,
+            entry: entries,
+          } as unknown as Prisma.InputJsonValue,
+          workspaceId: eventWorkspaceId,
+          status: "PENDING",
+        },
+        select: { id: true },
+      })
+    )
+  );
+  const webhookEventIds = webhookEvents.map((event) => event.id);
 
   try {
     const commentEvents = parseCommentEvents(
@@ -57,13 +74,6 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
           jobId: `comment_${event.instagramAccountId}_${event.commentId}`,
         }
       );
-
-      if (account) {
-        await prisma.webhookEvent.update({
-          where: { id: webhookEvent.id },
-          data: { workspaceId: account.workspaceId },
-        });
-      }
     }
 
     // Button taps from opening DMs → deliver the reveal message.
@@ -120,13 +130,6 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
           ).toString("base64url")}`,
         }
       );
-
-      if (account) {
-        await prisma.webhookEvent.update({
-          where: { id: webhookEvent.id },
-          data: { workspaceId: account.workspaceId },
-        });
-      }
     }
 
     // If a user reads the opening DM and never taps the button, deliver the
@@ -168,7 +171,7 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
           POSTBACK_JOB_NAME,
           {
             instagramAccountId: event.instagramAccountId,
-          accountConnectionId: accountMap.get(event.instagramAccountId)?.id,
+            accountConnectionId: accountMap.get(event.instagramAccountId)?.id,
             userId: event.userId,
             payload: `reveal:${automation.id}`,
             fallback: true,
@@ -181,8 +184,8 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
       }
     }
 
-    await prisma.webhookEvent.update({
-      where: { id: webhookEvent.id },
+    await prisma.webhookEvent.updateMany({
+      where: { id: { in: webhookEventIds } },
       data: {
         status: "PROCESSED",
         processedAt: new Date(),
@@ -192,8 +195,8 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
     return;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    await prisma.webhookEvent.update({
-      where: { id: webhookEvent.id },
+    await prisma.webhookEvent.updateMany({
+      where: { id: { in: webhookEventIds } },
       data: {
         status: "FAILED",
         errorMessage: message,
