@@ -7,6 +7,8 @@ import { publishingRequest } from "./use-publishing";
 
 interface Props { onUploaded: () => Promise<void>; multiple?: boolean }
 
+export const MEDIA_FILE_ACCEPT = "image/jpeg,video/mp4,video/quicktime";
+
 export default function MediaUploader({ onUploaded, multiple = true }: Props) {
   const { t } = useI18n();
   const input = useRef<HTMLInputElement>(null);
@@ -33,7 +35,7 @@ export default function MediaUploader({ onUploaded, multiple = true }: Props) {
   }
 
   return <div className={styles.row}>
-    <input ref={input} className={styles.visuallyHidden} type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime" multiple={multiple} onChange={event => void uploadFiles(event.target.files)} />
+    <input ref={input} className={styles.visuallyHidden} type="file" accept={MEDIA_FILE_ACCEPT} multiple={multiple} onChange={event => void uploadFiles(event.target.files)} />
     <button className={styles.button} disabled={uploading} onClick={() => input.current?.click()}>{uploading ? t("Uploading...") : t("Upload media")}</button>
     {message && <span className={styles.muted} role="status">{message}</span>}
   </div>;
