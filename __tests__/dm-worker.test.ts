@@ -38,7 +38,7 @@ const {
     },
     webhookEvent: {
       create: vi.fn(),
-      update: vi.fn(),
+      updateMany: vi.fn(),
     },
     operationalEvent: {
       create: vi.fn(),
@@ -251,7 +251,7 @@ beforeEach(() => {
   });
   mockPrisma.instagramAccount.findMany.mockResolvedValue([]);
   mockPrisma.webhookEvent.create.mockResolvedValue({ id: "webhook_001" });
-  mockPrisma.webhookEvent.update.mockResolvedValue({});
+  mockPrisma.webhookEvent.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.operationalEvent.create.mockResolvedValue({});
   mockDecryptToken.mockReturnValue("decrypted_token");
   mockMatchKeywords.mockReturnValue({ matched: true, matchedKeyword: "LINK" });
