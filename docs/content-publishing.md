@@ -29,6 +29,11 @@ antes de disponibilizar a mídia na biblioteca.
 - O worker consulta `content_publishing_limit`, cria e acompanha o container e
   chama `media_publish`. Jobs têm chave determinística e o banco é a fonte de
   verdade para idempotência.
+- Antes de `media_publish`, o worker registra `PUBLISHING`. Se a resposta da
+  Meta se perder após a publicação, o retry consulta o mesmo container: quando
+  ele já estiver `PUBLISHED`, não publica novamente e conclui como
+  `PUBLISHED_RECOVERED`. Nesse caso o ID final da mídia pode não estar disponível,
+  pois a API o devolve na resposta original de `media_publish`.
 - Trial Reels enviam `trial_params`; se a conta/API não for elegível, a Meta
   rejeita a operação e o erro fica no histórico. Não existe fallback simulado.
 
