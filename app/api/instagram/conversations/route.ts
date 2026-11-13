@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { getWorkspaceInstagramAccount } from "@/lib/instagram-accounts";
+import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 import {
   getConversations,
   sendDirectMessage,
@@ -101,11 +102,17 @@ export async function GET(request: NextRequest) {
 
 // Send a direct message reply.
 export async function POST(request: NextRequest) {
-  const workspaceId = await getCurrentWorkspaceId();
-  if (!workspaceId) {
+  const context = await getCurrentWorkspaceContext();
+  if (!context) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
+    );
+  }
+  if (!canManageWorkspace(context.role)) {
+    return NextResponse.json(
+      { success: false, error: "Only workspace owners and admins can send messages." },
+      { status: 403 }
     );
   }
 
@@ -132,7 +139,7 @@ export async function POST(request: NextRequest) {
   }
 
   const account = await getWorkspaceInstagramAccount(
-    workspaceId,
+    context.workspaceId,
     body.instagramAccountId ?? null
   );
   if (!account) {
