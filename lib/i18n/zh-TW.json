@@ -622,7 +622,7 @@
   "Default caption": "預設說明文字",
   "Applied to every Reel unless an individual caption is set.": "套用至每個 Reel，已設定個別說明文字者除外。",
   "Use Trial Reels when the account is eligible": "帳號符合資格時使用 Trial Reels",
-  "Eligibility is checked by Meta at publishing time. Unsupported accounts will not be treated as Trial Reels.": "發布時由 Meta 檢查資格；不支援的帳號不會被視為 Trial Reels。",
+  "Meta checks eligibility at publishing time. If the account is not eligible, the publication fails and is not silently published as a standard Reel.": "Meta 會在發布時檢查資格。若帳號不符合資格，發布會失敗，不會在未告知的情況下改為一般 Reels。",
   "Create automatic calendar": "建立自動日曆",
   "Select media": "選擇媒體",
   "Generated calendar": "產生的日曆",

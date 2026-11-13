@@ -622,7 +622,7 @@
   "Default caption": "Legenda padrão",
   "Applied to every Reel unless an individual caption is set.": "Aplicada a todos os Reels, exceto quando houver legenda individual.",
   "Use Trial Reels when the account is eligible": "Usar Trial Reels quando a conta for elegível",
-  "Eligibility is checked by Meta at publishing time. Unsupported accounts will not be treated as Trial Reels.": "A elegibilidade é verificada pela Meta no momento da publicação. Contas sem suporte não serão tratadas como Trial Reels.",
+  "Meta checks eligibility at publishing time. If the account is not eligible, the publication fails and is not silently published as a standard Reel.": "A Meta verifica a elegibilidade no momento da publicação. Se a conta não for elegível, a publicação falha e não é publicada silenciosamente como Reel comum.",
   "Create automatic calendar": "Criar calendário automático",
   "Select media": "Selecionar mídias",
   "Generated calendar": "Calendário gerado",
