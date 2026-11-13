@@ -82,9 +82,10 @@ interface WebhookEntry {
       is_echo?: boolean;
       is_deleted?: boolean;
       is_unsupported?: boolean;
-      attachments?: Array<{ type?: string }>;
+      attachments?: Array<{ type?: string; payload?: { url?: string } }>;
       reply_to?: { story?: { id?: string; url?: string } };
     };
+    reaction?: { mid?: string; action?: string; reaction?: string; emoji?: string };
   }>;
 }
 
@@ -272,5 +273,71 @@ export function parseReadEvents(payload: WebhookPayload): WebhookReadEvent[] {
     }
   }
 
+  return events;
+}
+
+export interface WebhookStoryMentionEvent {
+  instagramAccountId: string;
+  messageId: string;
+  senderId: string;
+}
+
+/**
+ * Someone mentioned the connected account in their own Story. Meta delivers it
+ * on the `messages` field as an attachment of type `story_mention` (the CDN
+ * url in the attachment expires and is not kept).
+ * https://developers.facebook.com/docs/messenger-platform/instagram/features/story-mention
+ */
+export function parseStoryMentionEvents(payload: WebhookPayload): WebhookStoryMentionEvent[] {
+  const events: WebhookStoryMentionEvent[] = [];
+  if (payload.object !== "instagram") return events;
+  for (const entry of payload.entry ?? []) {
+    for (const messaging of entry.messaging ?? []) {
+      const message = messaging.message;
+      if (!message || message.is_echo || message.is_deleted) continue;
+      if (!message.attachments?.some((attachment) => attachment.type === "story_mention")) continue;
+      const messageId = message.mid;
+      const senderId = messaging.sender?.id;
+      const accountId = entry.id ?? messaging.recipient?.id;
+      if (!messageId || !senderId || !accountId || senderId === accountId) continue;
+      events.push({ instagramAccountId: accountId, messageId, senderId });
+    }
+  }
+  return events;
+}
+
+export interface WebhookReactionEvent {
+  instagramAccountId: string;
+  /** The message that was reacted to. */
+  messageId: string;
+  senderId: string;
+  reaction: string;
+  emoji?: string;
+}
+
+/**
+ * A reaction added to a message in the thread (`message_reactions` field).
+ * Removals (`action: "unreact"`) are dropped: they never start an automation.
+ * https://developers.facebook.com/docs/messenger-platform/instagram/features/webhook
+ */
+export function parseReactionEvents(payload: WebhookPayload): WebhookReactionEvent[] {
+  const events: WebhookReactionEvent[] = [];
+  if (payload.object !== "instagram") return events;
+  for (const entry of payload.entry ?? []) {
+    for (const messaging of entry.messaging ?? []) {
+      const reaction = messaging.reaction;
+      if (!reaction || reaction.action !== "react") continue;
+      const senderId = messaging.sender?.id;
+      const accountId = entry.id ?? messaging.recipient?.id;
+      if (!reaction.mid || !senderId || !accountId || senderId === accountId) continue;
+      events.push({
+        instagramAccountId: accountId,
+        messageId: reaction.mid,
+        senderId,
+        reaction: reaction.reaction ?? "other",
+        ...(reaction.emoji ? { emoji: reaction.emoji } : {}),
+      });
+    }
+  }
   return events;
 }

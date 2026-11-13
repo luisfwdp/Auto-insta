@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentWorkspaceId } from "@/lib/auth";
+import { checkManualDmRateLimit } from "@/lib/api/manual-dm-rate-limit";
+import { prisma } from "@/lib/db/client";
 import { getWorkspaceInstagramAccount } from "@/lib/instagram-accounts";
+import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 import {
   getConversations,
   sendDirectMessage,
@@ -23,6 +26,39 @@ export interface ConversationListItem {
 export interface ConversationsResponse {
   conversations: ConversationListItem[];
   account: { id: string; username: string; instagramId: string };
+}
+
+async function recordManualDmAudit({
+  workspaceId,
+  userId,
+  instagramAccountId,
+  outcome,
+  messageLength,
+}: {
+  workspaceId: string;
+  userId: string;
+  instagramAccountId: string;
+  outcome: "SENT" | "FAILED" | "RATE_LIMITED";
+  messageLength: number;
+}) {
+  await prisma.operationalEvent
+    .create({
+      data: {
+        workspaceId,
+        source: "SYSTEM",
+        level: outcome === "SENT" ? "INFO" : "WARNING",
+        message: `Manual Instagram DM ${outcome.toLowerCase()}`,
+        payload: {
+          userId,
+          instagramAccountId,
+          outcome,
+          messageLength,
+        },
+      },
+    })
+    .catch(() => {
+      console.error("[Conversations] Failed to record manual DM audit event");
+    });
 }
 
 // List the account's DM conversations for the inbox.
@@ -101,11 +137,17 @@ export async function GET(request: NextRequest) {
 
 // Send a direct message reply.
 export async function POST(request: NextRequest) {
-  const workspaceId = await getCurrentWorkspaceId();
-  if (!workspaceId) {
+  const context = await getCurrentWorkspaceContext();
+  if (!context) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
       { status: 401 }
+    );
+  }
+  if (!canManageWorkspace(context.role)) {
+    return NextResponse.json(
+      { success: false, error: "Only workspace owners and admins can send messages." },
+      { status: 403 }
     );
   }
 
@@ -132,13 +174,42 @@ export async function POST(request: NextRequest) {
   }
 
   const account = await getWorkspaceInstagramAccount(
-    workspaceId,
+    context.workspaceId,
     body.instagramAccountId ?? null
   );
   if (!account) {
     return NextResponse.json(
       { success: false, error: "Instagram account not connected." },
       { status: 400 }
+    );
+  }
+
+  let rateLimit: Awaited<ReturnType<typeof checkManualDmRateLimit>>;
+  try {
+    rateLimit = await checkManualDmRateLimit({
+      workspaceId: context.workspaceId,
+      instagramAccountId: account.id,
+    });
+  } catch {
+    return NextResponse.json(
+      { success: false, error: "Message service temporarily unavailable." },
+      { status: 503 }
+    );
+  }
+  if (!rateLimit.allowed) {
+    await recordManualDmAudit({
+      workspaceId: context.workspaceId,
+      userId: context.userId,
+      instagramAccountId: account.id,
+      outcome: "RATE_LIMITED",
+      messageLength: text.length,
+    });
+    return NextResponse.json(
+      { success: false, error: "Too many messages. Try again later." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rateLimit.retryAfter) },
+      }
     );
   }
 
@@ -150,6 +221,13 @@ export async function POST(request: NextRequest) {
       userId: body.recipientId,
       message: text,
     });
+    await recordManualDmAudit({
+      workspaceId: context.workspaceId,
+      userId: context.userId,
+      instagramAccountId: account.id,
+      outcome: "SENT",
+      messageLength: text.length,
+    });
     return NextResponse.json({ success: true, data: result });
   } catch (err) {
     console.error("[Conversations] Send error:", err);
@@ -157,6 +235,13 @@ export async function POST(request: NextRequest) {
     // window having closed, which the user needs to see explicitly.
     const message =
       err instanceof MetaApiError ? err.message : "Failed to send message";
+    await recordManualDmAudit({
+      workspaceId: context.workspaceId,
+      userId: context.userId,
+      instagramAccountId: account.id,
+      outcome: "FAILED",
+      messageLength: text.length,
+    });
     return NextResponse.json(
       { success: false, error: message },
       { status: 502 }

@@ -32,6 +32,16 @@ This document records the controls applied to the PING CHAT web application.
 - SQL uses Prisma's parameterized APIs/tagged templates. Unsafe raw query APIs
   are not used in the application.
 
+## Manual message sending
+
+- Inbox messages sent by an owner or administrator are limited per workspace
+  and Instagram account to 60 attempts in a 15-minute Redis window.
+- Redis failure fails the send closed so an infrastructure outage cannot
+  silently disable this abuse control.
+- Sent, failed, and rate-limited attempts create a workspace-scoped operational
+  event containing the actor, account, outcome, and message length. Message
+  content and recipient identifiers are never copied into the audit event.
+
 ## Session model
 
 - PING CHAT has no password authentication and stores no password hashes.

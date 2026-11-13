@@ -20,6 +20,13 @@ import {
 // api.instagram.com — only the authorize hop moved.
 const INSTAGRAM_OAUTH_URL = "https://www.instagram.com/oauth/authorize";
 const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
+export const DEFAULT_INSTAGRAM_LOGIN_SCOPES = [
+  "instagram_business_basic",
+  "instagram_business_manage_messages",
+  "instagram_business_manage_comments",
+  "instagram_business_manage_insights",
+  "instagram_business_content_publish",
+] as const;
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
@@ -169,8 +176,7 @@ export function getAuthorizationUrl(redirectUri: string, state: string): string 
   const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
-    scope:
-      "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_manage_insights",
+    scope: DEFAULT_INSTAGRAM_LOGIN_SCOPES.join(","),
     response_type: "code",
     state,
   });

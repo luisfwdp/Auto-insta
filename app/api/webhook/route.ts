@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import {
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
           payload: {
             hadSignatureHeader: Boolean(signature),
             bodyLength: rawBody.length,
-            bodyPreview: rawBody.slice(0, 200),
+            bodySha256: createHash("sha256").update(rawBody).digest("hex"),
           },
         },
       })

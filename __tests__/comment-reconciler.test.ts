@@ -136,3 +136,31 @@ describe("comment polling does not recreate unsafe sends", () => {
     },
   );
 });
+
+describe("comment polling skips Story-scoped campaigns", () => {
+  it("never asks Meta for comments on a Story id", async () => {
+    queueAdd.mockReset();
+    readComments.mockReset();
+    mockPrisma.operationalEvent.create.mockReset();
+    mockPrisma.operationalEvent.create.mockResolvedValue({});
+    mockPrisma.automation.findMany.mockResolvedValue([
+      {
+        id: "story-campaign",
+        name: "Story campaign",
+        workspaceId: "workspace",
+        postId: "4028147829863364233",
+        postUrl: "https://www.instagram.com/stories/someone/4028147829863364233",
+        matchAnyWord: false,
+        keywords: ["EU QUERO"],
+        publicReplyEnabled: false,
+        instagramAccount: { id: "connection", instagramId: "owner", provider: "META", accessToken: "test" },
+      },
+    ]);
+
+    await reconcileComments();
+
+    expect(readComments).not.toHaveBeenCalled();
+    expect(queueAdd).not.toHaveBeenCalled();
+    expect(mockPrisma.operationalEvent.create).not.toHaveBeenCalled();
+  });
+});

@@ -5,15 +5,37 @@
  */
 
 import { Queue } from "bullmq";
-import Redis from "ioredis";
+import Redis, { type RedisOptions } from "ioredis";
 
 let connection: Redis | null = null;
 
+export function redisOptionsFromUrl(rawUrl: string): RedisOptions {
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== "redis:" && parsed.protocol !== "rediss:") {
+    throw new Error("REDIS_URL must use redis:// or rediss://");
+  }
+
+  const database = parsed.pathname.replace(/^\//, "");
+  const databaseNumber = database ? Number(database) : undefined;
+  if (databaseNumber !== undefined && (!Number.isInteger(databaseNumber) || databaseNumber < 0)) {
+    throw new Error("REDIS_URL database must be a non-negative integer");
+  }
+  const family = parsed.searchParams.get("family");
+  return {
+    host: parsed.hostname,
+    port: parsed.port ? Number(parsed.port) : 6379,
+    ...(parsed.username ? { username: decodeURIComponent(parsed.username) } : {}),
+    ...(parsed.password ? { password: decodeURIComponent(parsed.password) } : {}),
+    ...(databaseNumber !== undefined ? { db: databaseNumber } : {}),
+    ...(family === "4" || family === "6" ? { family: Number(family) } : {}),
+    ...(parsed.protocol === "rediss:" ? { tls: {} } : {}),
+    maxRetriesPerRequest: null, // Required by BullMQ
+  };
+}
+
 export function getRedisConnection(): Redis {
   if (!connection) {
-    connection = new Redis(process.env.REDIS_URL!, {
-      maxRetriesPerRequest: null, // Required by BullMQ
-    });
+    connection = new Redis(redisOptionsFromUrl(process.env.REDIS_URL!));
   }
   return connection;
 }
