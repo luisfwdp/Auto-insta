@@ -91,6 +91,25 @@ describe("browser origin allowlist", () => {
     );
     expect(response.status).toBe(200);
   });
+
+  it("rejects cookie-authenticated writes that omit Origin", () => {
+    const response = proxy(
+      new NextRequest("https://app.example/api/automations", {
+        method: "POST",
+        headers: { cookie: "__Secure-authjs.session-token=browser-session" },
+      })
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it("allows server-to-server writes without Origin or a session cookie", () => {
+    const response = proxy(
+      new NextRequest("https://app.example/api/webhook", {
+        method: "POST",
+      })
+    );
+    expect(response.status).toBe(200);
+  });
 });
 
 describe("response hardening", () => {
