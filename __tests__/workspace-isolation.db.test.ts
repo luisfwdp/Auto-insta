@@ -75,6 +75,7 @@ import * as statsRoute from "../app/api/dashboard/stats/route";
 import * as membersRoute from "../app/api/workspace/members/route";
 import * as acceptInvitationRoute from "../app/api/workspace/invitations/accept/route";
 import * as diagnosticsRoute from "../app/api/admin/diagnostics/route";
+import { ensureWorkspaceForUser } from "../lib/workspace";
 
 const schema = `workspace_isolation_${randomBytes(4).toString("hex")}`;
 let sql: Client;
@@ -124,6 +125,34 @@ function expectNoWorkspaceAData(payload: unknown) {
   expect(text).not.toContain("secret-token-a");
   expect(text).not.toContain("Campaign A");
   expect(text).not.toContain("commenter_a");
+}
+
+// Coordinate a competing commit after a real pending-invitation read. No
+// database result or membership write is mocked by this scheduling hook.
+async function afterInvitationRead(change: () => Promise<void>, run: () => Promise<void>) {
+  const original = state.db;
+  state.db = original.$extends({ query: { workspaceInvitation: {
+    async findMany({ args, query }) {
+      const rows = await query(args);
+      await change();
+      return rows;
+    },
+  } } }) as unknown as PrismaClient;
+  try { await run(); } finally { state.db = original; }
+}
+
+async function withNewInvitation(run: (user: { id: string; email: string }, invitationId: string) => Promise<void>) {
+  const email = `new_${randomBytes(4).toString("hex")}@test.dev`;
+  const user = await state.db.user.create({ data: { email } });
+  const invitation = await state.db.workspaceInvitation.create({ data: {
+    workspaceId: B.workspace, email, role: "ADMIN", token: randomBytes(18).toString("hex"), expiresAt: new Date(Date.now() + 60_000),
+  } });
+  try { await run({ id: user.id, email }, invitation.id); } finally {
+    await state.db.workspace.deleteMany({ where: { ownerId: user.id } });
+    await state.db.workspaceMember.deleteMany({ where: { userId: user.id } });
+    await state.db.workspaceInvitation.deleteMany({ where: { id: invitation.id } });
+    await state.db.user.delete({ where: { id: user.id } });
+  }
 }
 
 async function workspaceASnapshot() {
@@ -422,6 +451,59 @@ describe.skipIf(!DATABASE_URL)("workspace isolation on a real Postgres", () => {
   });
 
   describe("roles inside a workspace", () => {
+    it.each(["revoked", "expired", "email changed", "role/token rotated"])("automatic signup acceptance rejects a snapshot that was %s after reading", async (scenario) => {
+      await withNewInvitation(async (user, invitationId) => {
+        const original = state.db;
+        const data = scenario === "revoked" ? { status: "REVOKED" as const }
+          : scenario === "expired" ? { expiresAt: new Date(Date.now() - 1) }
+          : scenario === "email changed" ? { email: "different@test.dev" }
+          : { role: "MEMBER" as const, token: "rotated-invitation-token" };
+        await afterInvitationRead(async () => { await original.workspaceInvitation.update({ where: { id: invitationId }, data }); }, async () => {
+          const workspace = await ensureWorkspaceForUser(user.id, user.email);
+          expect(workspace.id).not.toBe(B.workspace);
+        });
+        expect(await state.db.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: B.workspace, userId: user.id } } })).toBeNull();
+        expect(await state.db.workspaceInvitation.findUnique({ where: { id: invitationId } })).toMatchObject({ ...data, acceptedAt: null });
+      });
+    });
+
+    it("automatic signup acceptance preserves an existing OWNER role", async () => {
+      const invitation = await state.db.workspaceInvitation.create({ data: {
+        workspaceId: B.workspace, email: "b@test.dev", role: "MEMBER", token: "automatic-owner-invite", expiresAt: new Date(Date.now() + 60_000),
+      } });
+      try {
+        await ensureWorkspaceForUser(B.user, "b@test.dev");
+        expect(await state.db.workspaceMember.findUnique({ where: { id: B.member } })).toMatchObject({ role: "OWNER" });
+      } finally {
+        await state.db.workspaceMember.update({ where: { id: B.member }, data: { role: "OWNER" } });
+        await state.db.workspaceInvitation.delete({ where: { id: invitation.id } });
+      }
+    });
+
+    it("automatic acceptance consumes a valid invitation once under concurrent signup hooks", async () => {
+      await withNewInvitation(async (user, invitationId) => {
+        const workspaces = await Promise.all([1, 2].map(() => ensureWorkspaceForUser(user.id, user.email)));
+        expect(workspaces.map((workspace) => workspace.id)).toEqual([B.workspace, B.workspace]);
+        expect(await state.db.workspaceMember.count({ where: { workspaceId: B.workspace, userId: user.id } })).toBe(1);
+        expect(await state.db.workspaceInvitation.findUnique({ where: { id: invitationId } })).toMatchObject({ status: "ACCEPTED" });
+      });
+    });
+
+    it("rolls back automatic invitation consumption when membership persistence fails", async () => {
+      await withNewInvitation(async (user, invitationId) => {
+        await sql.query(`CREATE FUNCTION "${schema}".reject_membership() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated membership failure'; END $$`);
+        await sql.query(`CREATE TRIGGER reject_membership BEFORE INSERT ON "${schema}"."WorkspaceMember" FOR EACH ROW EXECUTE FUNCTION "${schema}".reject_membership()`);
+        try {
+          await expect(ensureWorkspaceForUser(user.id, user.email)).rejects.toThrow();
+          expect(await state.db.workspaceInvitation.findUnique({ where: { id: invitationId } })).toMatchObject({ status: "PENDING", acceptedAt: null });
+          expect(await state.db.workspaceMember.count({ where: { userId: user.id } })).toBe(0);
+        } finally {
+          await sql.query(`DROP TRIGGER reject_membership ON "${schema}"."WorkspaceMember"`);
+          await sql.query(`DROP FUNCTION "${schema}".reject_membership()`);
+        }
+      });
+    });
+
     it("an ADMIN cannot demote the OWNER through an invitation", async () => {
       const admin = await state.db.user.create({ data: { email: "admin-b@test.dev" } });
       await state.db.workspaceMember.create({ data: { workspaceId: B.workspace, userId: admin.id, role: "ADMIN" } });
