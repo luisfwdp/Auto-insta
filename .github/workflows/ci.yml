@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, test/f6-rescue-integration]
+    branches: [main]
   pull_request:
     branches: [main]
 
