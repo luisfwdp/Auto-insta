@@ -1,5 +1,10 @@
 # CRIA PING — checklist de go-live
 
+> **Histórico do primeiro deploy.** Os estados de banco vazio, variáveis ausentes
+> e worker inexistente abaixo são de 29/10/2026 e não representam a produção atual.
+> Consulte [a validação de 16/11/2026](GO-LIVE-2026-11-16.md) antes de operar.
+> Preserve as exigências de autorização; não repita procedimentos de primeiro deploy.
+
 > Estado verificado em 2026-10-29 (Claude Code). Atualize as caixas quando cada item mudar.
 > Regras: nenhuma migração, escrita no banco de produção, mudança de segredo, compra ou desativação da Deployment Protection sem autorização explícita do administrador (luisfwdp@gmail.com). Nenhuma DM real sem aprovação específica.
 

@@ -12,6 +12,7 @@ import {
 import { createSignedDownload } from "@/lib/publishing/storage";
 import { RateLimitError } from "@/lib/meta/client";
 import { getRedisConnection } from "./client";
+import { refreshBatchProgress } from "./publishing-batch-progress";
 import {
   PUBLISHING_QUEUE_NAME,
   type PublishPublicationJob,
@@ -25,25 +26,6 @@ async function assertPublishingQuota(instagramId: string, accessToken: string) {
   const quota = await getContentPublishingLimit(instagramId, accessToken);
   if (quota.quotaUsage >= quota.quotaTotal)
     throw new RateLimitError(`Instagram publishing quota exhausted (${quota.quotaUsage}/${quota.quotaTotal})`);
-}
-
-async function refreshBatch(batchId: string | null) {
-  if (!batchId) return;
-  const [publishedItems, failedItems, batch] = await Promise.all([
-    prisma.scheduledPublication.count({ where: { batchId, status: "PUBLISHED" } }),
-    prisma.scheduledPublication.count({ where: { batchId, status: "FAILED" } }),
-    prisma.speedPostBatch.findUnique({ where: { id: batchId }, select: { totalItems: true, status: true } }),
-  ]);
-  if (!batch || batch.status === "CANCELLED") return;
-  const complete = publishedItems + failedItems >= batch.totalItems;
-  await prisma.speedPostBatch.update({
-    where: { id: batchId },
-    data: {
-      publishedItems,
-      failedItems,
-      ...(complete ? { status: failedItems > 0 ? "FAILED" : "COMPLETED", completedAt: new Date() } : {}),
-    },
-  });
 }
 
 async function mediaFor(publication: {
@@ -155,7 +137,7 @@ async function processPublication(job: Job<PublishPublicationJob>) {
       lastError: null,
     },
   });
-  await refreshBatch(publication.batchId);
+  await refreshBatchProgress(publication.batchId, publication.workspaceId);
 }
 
 export function createPublishingWorker(): Worker<PublishPublicationJob> {
@@ -172,7 +154,7 @@ export function createPublishingWorker(): Worker<PublishPublicationJob> {
       data: { status: "FAILED", lastError: message(error) },
     }).then(() => prisma.scheduledPublication.findFirst({
       where: { id: job.data.publicationId, workspaceId: job.data.workspaceId }, select: { batchId: true },
-    })).then((row) => refreshBatch(row?.batchId ?? null)).catch((recordError) => {
+    })).then((row) => refreshBatchProgress(row?.batchId ?? null, job.data.workspaceId)).catch((recordError) => {
       console.error("[Publishing Worker] Failed to persist terminal failure:", message(recordError));
     });
   });
