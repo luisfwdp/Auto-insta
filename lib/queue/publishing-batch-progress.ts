@@ -8,8 +8,8 @@ export async function refreshBatchProgress(batchId: string | null, workspaceId: 
     // or counts produced by a later worker. Template parameters stay bound.
     // lib/db/client.ts uses the default public schema; disposable tests set
     // their adapter schema and search_path together for this unqualified table.
-    const [batch] = await tx.$queryRaw<Array<{ totalItems: number; status: string }>>`
-      SELECT "totalItems", "status" FROM "SpeedPostBatch"
+    const [batch] = await tx.$queryRaw<Array<{ totalItems: number; status: string; completedAt: Date | null }>>`
+      SELECT "totalItems", "status", "completedAt" FROM "SpeedPostBatch"
       WHERE "id" = ${batchId} AND "workspaceId" = ${workspaceId}
       FOR UPDATE
     `;
@@ -23,12 +23,17 @@ export async function refreshBatchProgress(batchId: string | null, workspaceId: 
     const publishedItems = counts.find((row) => row.status === "PUBLISHED")?._count._all ?? 0;
     const failedItems = counts.find((row) => row.status === "FAILED")?._count._all ?? 0;
     const complete = publishedItems + failedItems >= batch.totalItems;
+    const terminalStatus = failedItems > 0 ? "FAILED" : "COMPLETED";
     await tx.speedPostBatch.updateMany({
       where: { id: batchId, workspaceId },
       data: {
         publishedItems,
         failedItems,
-        ...(complete ? { status: failedItems > 0 ? "FAILED" : "COMPLETED", completedAt: new Date() } : {}),
+        ...(complete ? {
+          status: terminalStatus,
+          // Duplicate refreshes reconcile counters without moving completion.
+          ...(batch.status !== terminalStatus || !batch.completedAt ? { completedAt: new Date() } : {}),
+        } : {}),
       },
     });
   });

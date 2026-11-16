@@ -31,6 +31,9 @@ essa publicação e o retry não repete `media_publish`.
 Se a falha de progresso ocorrer em uma tentativa não terminal, o retry de uma
 publicação já `PUBLISHED` refaz somente o progresso do lote. Não repete claim,
 consulta de cota ou publicação Meta. Publicações `CANCELLED` continuam sem ação.
+Refreshes duplicados preservam `completedAt` quando o desfecho terminal já é o
+mesmo e a data existe. Os contadores continuam reconciliados; a primeira
+conclusão, uma mudança de desfecho ou uma data ausente recebem uma nova data.
 
 `lib/db/client.ts` cria o adapter PostgreSQL sem opção de schema personalizado;
 a configuração padrão usa `public`. O schema aleatório e o `search_path` da
@@ -48,3 +51,9 @@ Sem mudança de schema, migração ou dados históricos. Exige revisão de Claud
 Code, Codex e aprovação humana específica conforme `AGENTS.md`, seguida de deploy autorizado do
 worker. Rollback: reverta o commit e reimplante a imagem anterior aprovada. Não
 execute rollback de dados ou migração em produção.
+
+Se o refresh continuar falhando depois da última tentativa, a publicação
+`PUBLISHED` permanece protegida, mas os contadores do lote podem estar
+desatualizados. O operador deve comparar publicações e contadores com consultas
+restritas ao workspace e preparar uma reconciliação revisada por humano.
+Não reagende nem publique novamente conteúdo para corrigir apenas métricas.

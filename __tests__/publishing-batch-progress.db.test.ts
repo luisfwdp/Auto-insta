@@ -220,4 +220,31 @@ describe.skipIf(!DATABASE_URL)("Speed Post batch progress on disposable PostgreS
       publishedItems: 1, failedItems: 0, status: "COMPLETED",
     }));
   });
+
+  it("preserves the original completion timestamp for duplicate COMPLETED and FAILED refreshes", async () => {
+    const completedAt = new Date("2020-01-02T12:34:56.000Z");
+    const results = [];
+    for (const status of ["COMPLETED", "FAILED"] as const) {
+      await batch(`duplicate_${status}`);
+      await publication(`terminal_${status}`, `duplicate_${status}`, status === "COMPLETED" ? "PUBLISHED" : "FAILED");
+      await state.db.speedPostBatch.update({ where: { id: `duplicate_${status}` }, data: { status, completedAt } });
+      await refreshBatchProgress(`duplicate_${status}`, "workspace_a");
+      await refreshBatchProgress(`duplicate_${status}`, "workspace_a");
+      const result = await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: `duplicate_${status}` } });
+      results.push({ status: result.status, publishedItems: result.publishedItems, failedItems: result.failedItems, completedAt: result.completedAt });
+      await state.db.speedPostBatch.update({ where: { id: result.id }, data: { status: status === "COMPLETED" ? "FAILED" : "COMPLETED", completedAt } });
+      await refreshBatchProgress(result.id, "workspace_a");
+      const changedOutcome = await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: result.id } });
+      expect(changedOutcome.status).toBe(status);
+      expect(changedOutcome.completedAt).toBeInstanceOf(Date);
+      expect(changedOutcome.completedAt).not.toEqual(completedAt);
+      await state.db.speedPostBatch.update({ where: { id: result.id }, data: { completedAt: null } });
+      await refreshBatchProgress(result.id, "workspace_a");
+      expect((await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: result.id } })).completedAt).not.toBeNull();
+    }
+    expect(results).toEqual([
+      { status: "COMPLETED", publishedItems: 1, failedItems: 0, completedAt },
+      { status: "FAILED", publishedItems: 0, failedItems: 1, completedAt },
+    ]);
+  });
 });
