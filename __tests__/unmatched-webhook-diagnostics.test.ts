@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ accounts: vi.fn(), eventCreate: vi.fn(), eventUpdate: vi.fn(), operationalCreate: vi.fn(), queueAdd: vi.fn() }));
+const mocks = vi.hoisted(() => ({ accounts: vi.fn(), eventCreate: vi.fn(), eventUpdate: vi.fn(), operationalCreate: vi.fn(), queueAdd: vi.fn(), transaction: vi.fn(), executeRaw: vi.fn() }));
 vi.mock("@/lib/db/client", () => ({ prisma: {
   instagramAccount: { findMany: mocks.accounts },
   webhookEvent: { create: mocks.eventCreate, updateMany: mocks.eventUpdate },
   operationalEvent: { create: mocks.operationalCreate },
+  $transaction: mocks.transaction,
 } }));
 vi.mock("@/lib/queue/client", () => ({
   getDMQueue: () => ({ add: mocks.queueAdd }), MESSAGE_JOB_NAME: "process-message", POSTBACK_JOB_NAME: "process-postback",
@@ -26,6 +27,10 @@ beforeEach(async () => {
   mocks.operationalCreate.mockResolvedValue({});
   mocks.eventCreate.mockResolvedValue({ id: "event" });
   mocks.eventUpdate.mockResolvedValue({ count: 1 });
+  mocks.executeRaw.mockResolvedValue(0);
+  mocks.transaction.mockImplementation(async (operation) => operation({
+    $executeRaw: mocks.executeRaw, operationalEvent: { create: mocks.operationalCreate },
+  }));
   processWebhook = (await import("@/lib/queue/process-webhook")).processInstagramWebhook;
 });
 afterEach(() => vi.useRealTimers());
@@ -56,6 +61,25 @@ describe("signed unmatched Instagram webhook diagnostics", () => {
     expect(mocks.queueAdd).toHaveBeenCalledOnce();
     expect(mocks.queueAdd.mock.calls[0][1]).toEqual(expect.objectContaining({ instagramAccountId: "connected", accountConnectionId: "connection" }));
     expect(mocks.operationalCreate.mock.calls[0][0].data.payload).toEqual(expect.objectContaining({ receivedEntries: 2, matchedEntries: 1, unmatchedEntries: 1 }));
+  });
+
+  it("dispatches known-account delivery before awaiting a slow diagnostic transaction", async () => {
+    mocks.accounts.mockResolvedValue([{ id: "connection", instagramId: "connected", workspaceId: "workspace" }]);
+    let release!: () => void;
+    mocks.operationalCreate.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    const pending = processWebhook({ provider: "META", payload: { object: "instagram", entry: [unknown, { ...unknown, id: "connected" }] } });
+    try {
+      await vi.waitFor(() => expect(mocks.operationalCreate).toHaveBeenCalledOnce());
+      expect(mocks.queueAdd).toHaveBeenCalledOnce();
+      expect(mocks.eventUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PROCESSED" }) }));
+      expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 250, timeout: 1500 });
+      expect(mocks.executeRaw.mock.calls.map(([query]) => query.join(""))).toEqual([
+        "SET LOCAL statement_timeout = '1000ms'", "SET LOCAL lock_timeout = '250ms'",
+      ]);
+    } finally {
+      release();
+      await pending;
+    }
   });
 
   it("bounds concurrent diagnostics to one per provider per minute with at most five hashes", async () => {
