@@ -81,6 +81,29 @@ describe("signed unmatched Instagram webhook diagnostics", () => {
     expect(mocks.queueAdd).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    { changes: { malformed: true } },
+    { changes: [null] },
+    { messaging: { malformed: true } },
+    { messaging: [null] },
+  ])("delivers a matched message despite malformed unmatched diagnostic fields: %j", async (malformedFields) => {
+    mocks.accounts.mockResolvedValue([{ id: "connection", instagramId: "connected", workspaceId: "workspace" }]);
+    const matched = { ...unknown, id: "connected" };
+    // Signature verification authenticates the sender, not the runtime shape.
+    const malformed = { ...unknown, ...malformedFields } as unknown as typeof unknown;
+    const payload = { object: "instagram", entry: [malformed, matched] };
+    await expect(processWebhook({ provider: "META", payload })).resolves.toBeUndefined();
+    expect(mocks.operationalCreate).not.toHaveBeenCalled();
+    expect(mocks.eventCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+      workspaceId: "workspace", payload: { object: "instagram", entry: [matched] },
+    }) }));
+    expect(mocks.queueAdd).toHaveBeenCalledOnce();
+    expect(mocks.queueAdd.mock.calls[0][1]).toEqual(expect.objectContaining({
+      instagramAccountId: "connected", accountConnectionId: "connection", messageText: "private-message",
+    }));
+    expect(mocks.eventUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PROCESSED" }) }));
+  });
+
   it("emits no unmatched diagnostic for fully matching or non-Instagram payloads", async () => {
     mocks.accounts.mockResolvedValue([{ id: "connection", instagramId: unknown.id, workspaceId: "workspace" }]);
     await processWebhook({ provider: "META", payload: { object: "instagram", entry: [unknown] } });

@@ -21,33 +21,33 @@ export async function recordUnmatchedWebhook(args: {
   if (last !== null && now - last < INTERVAL_MS) return;
   lastRecorded[args.provider] = now; // Reserve before awaiting, including on DB failure.
 
-  const eventCounts = { comments: 0, liveComments: 0, messages: 0, postbacks: 0, reads: 0, reactions: 0, otherChanges: 0, otherMessaging: 0 };
-  const entryIdHashes: string[] = [];
-  for (const entry of args.unmatched) {
-    if (entryIdHashes.length < 5) {
-      const hash = createHash("sha256").update(entry.id).digest("hex");
-      if (!entryIdHashes.includes(hash)) entryIdHashes.push(hash);
-    }
-    for (const change of entry.changes ?? []) {
-      switch (change.field) {
-        case "comments": eventCounts.comments += 1; break;
-        case "live_comments": eventCounts.liveComments += 1; break;
-        case "messages": eventCounts.messages += 1; break;
-        case "messaging_postbacks": eventCounts.postbacks += 1; break;
-        case "messaging_seen": eventCounts.reads += 1; break;
-        case "message_reactions": eventCounts.reactions += 1; break;
-        default: eventCounts.otherChanges += 1;
+  try {
+    const eventCounts = { comments: 0, liveComments: 0, messages: 0, postbacks: 0, reads: 0, reactions: 0, otherChanges: 0, otherMessaging: 0 };
+    const entryIdHashes: string[] = [];
+    for (const entry of args.unmatched) {
+      if (entryIdHashes.length < 5) {
+        const hash = createHash("sha256").update(entry.id).digest("hex");
+        if (!entryIdHashes.includes(hash)) entryIdHashes.push(hash);
+      }
+      for (const change of entry.changes ?? []) {
+        switch (change.field) {
+          case "comments": eventCounts.comments += 1; break;
+          case "live_comments": eventCounts.liveComments += 1; break;
+          case "messages": eventCounts.messages += 1; break;
+          case "messaging_postbacks": eventCounts.postbacks += 1; break;
+          case "messaging_seen": eventCounts.reads += 1; break;
+          case "message_reactions": eventCounts.reactions += 1; break;
+          default: eventCounts.otherChanges += 1;
+        }
+      }
+      for (const event of entry.messaging ?? []) {
+        if (event.message) eventCounts.messages += 1;
+        if (event.postback) eventCounts.postbacks += 1;
+        if (event.read) eventCounts.reads += 1;
+        if (event.reaction) eventCounts.reactions += 1;
+        if (!event.message && !event.postback && !event.read && !event.reaction) eventCounts.otherMessaging += 1;
       }
     }
-    for (const event of entry.messaging ?? []) {
-      if (event.message) eventCounts.messages += 1;
-      if (event.postback) eventCounts.postbacks += 1;
-      if (event.read) eventCounts.reads += 1;
-      if (event.reaction) eventCounts.reactions += 1;
-      if (!event.message && !event.postback && !event.read && !event.reaction) eventCounts.otherMessaging += 1;
-    }
-  }
-  try {
     await prisma.operationalEvent.create({ data: {
       workspaceId: null,
       source: "SYSTEM",

@@ -15,12 +15,16 @@ visible only to instance operators through existing diagnostic access. The
 payload contains provider, counts, fixed event-type counters, and at most five
 SHA-256 entry-ID hashes. It contains no message/comment content, sender or
 recipient IDs, raw account IDs, URLs, tokens, or provider-supplied field names.
+These unsalted hashes are pseudonymization, not anonymization: someone who knows
+an account ID can compute its hash and correlate the sampled diagnostic.
 
 The fixed two-provider budget records at most one warning per provider per
 minute **per process instance**, reserving the slot before awaiting persistence.
 Restarts and multiple instances have separate budgets. The warning is sampled,
 not a complete delivery ledger. Diagnostic failure does not interrupt matched
 delivery and does not immediately retry logging.
+Hashing, event-type counting and persistence are all best-effort: malformed
+unmatched entries cannot interrupt delivery of otherwise valid matched entries.
 
 Compare a known account's locally computed entry-ID hash with the warning to
 investigate routing. Do not substitute sender IGSIDs for connected account IDs
