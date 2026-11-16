@@ -103,6 +103,15 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true, data: cancelled });
   }
 
+  if (existing.status === "FAILED" && existing.metaContainerId &&
+      (["instagramAccountId", "type", "reelMode", "caption", "assetIds"] as const)
+        .some((field) => parsed.data[field] !== undefined)) {
+    return NextResponse.json({
+      success: false,
+      error: "This publication already has an Instagram container. Retry its schedule unchanged or create a new publication to change its account or content.",
+    }, { status: 409 });
+  }
+
   const accountId = parsed.data.instagramAccountId ?? existing.instagramAccountId;
   const assetIds = parsed.data.assetIds ?? existing.assets.sort((a, b) => a.position - b.position).map((item) => item.assetId);
   const effective = publicationInputSchema.safeParse({

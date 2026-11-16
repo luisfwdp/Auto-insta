@@ -34,6 +34,13 @@ antes de disponibilizar a mídia na biblioteca.
   ele já estiver `PUBLISHED`, não publica novamente e conclui como
   `PUBLISHED_RECOVERED`. Nesse caso o ID final da mídia pode não estar disponível,
   pois a API o devolve na resposta original de `media_publish`.
+- Após criar um container na Meta, uma publicação com falha aceita cancelamento
+  ou retentativa pelo horário, preservando conta e conteúdo. Alterar conta,
+  mídia, tipo, modo do Reel ou legenda retorna `409`; crie outra publicação
+  para essas mudanças. O container existente nunca é apagado para tentar de
+  novo, porque um `PUBLISHING` pode já ter sido aceito pela Meta.
+- Retentativas apenas por horário preservam o modo do Reel (inclusive `TRIAL`);
+  os defaults de criação não são aplicados a campos omitidos em um `PATCH`.
 - Trial Reels enviam `trial_params`; se a conta/API não for elegível, a Meta
   rejeita a operação e o erro fica no histórico. Não existe fallback simulado.
 
@@ -49,3 +56,6 @@ Postgres descartável em `TEST_DATABASE_URL` para validar a migração. Em produ
 confirme o bucket privado, aplique a migração com aprovação humana, publique
 Vercel e Fly, verifique `/api/health` e só então faça uma publicação real em uma
 conta autorizada.
+
+Rollback da proteção de conteúdo de containers: reverta o commit e reimplante a
+versão aprovada anterior da aplicação. Não há mudança de schema ou de dados.
