@@ -66,6 +66,24 @@ describe("failed publications with an existing Instagram container", () => {
     expect(data.reelMode).toBeUndefined();
   });
 
+  it("blocks content edits after a schedule-only retry has left FAILED", async () => {
+    expect((await PATCH(request({ action: "reschedule", scheduledFor: "2030-01-02T10:00:00Z" }))).status).toBe(200);
+    mocks.findFirst.mockResolvedValue({ ...publication, status: "SCHEDULED" });
+    mocks.transaction.mockClear();
+    expect((await PATCH(request({ caption: "Changed after retry" }))).status).toBe(409);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("cannot edit content if a container appears after the initial read", async () => {
+    mocks.findFirst.mockResolvedValue({ ...publication, metaContainerId: null });
+    mocks.updateMany.mockResolvedValue({ count: 0 });
+    expect((await PATCH(request({ caption: "Racing content" }))).status).toBe(409);
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: publication.id, workspaceId: "workspace", status: "FAILED", metaContainerId: null },
+    }));
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+  });
+
   it("permits cancellation without clearing the container", async () => {
     expect((await PATCH(request({ action: "cancel" }))).status).toBe(200);
     expect(mocks.updateMany.mock.calls[0][0].data).toEqual(expect.objectContaining({ status: "CANCELLED" }));

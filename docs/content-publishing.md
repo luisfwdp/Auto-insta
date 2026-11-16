@@ -34,11 +34,13 @@ antes de disponibilizar a mídia na biblioteca.
   ele já estiver `PUBLISHED`, não publica novamente e conclui como
   `PUBLISHED_RECOVERED`. Nesse caso o ID final da mídia pode não estar disponível,
   pois a API o devolve na resposta original de `media_publish`.
-- Após criar um container na Meta, uma publicação com falha aceita cancelamento
+- Após criar um container na Meta, uma publicação editável aceita cancelamento
   ou retentativa pelo horário, preservando conta e conteúdo. Alterar conta,
   mídia, tipo, modo do Reel ou legenda retorna `409`; crie outra publicação
   para essas mudanças. O container existente nunca é apagado para tentar de
   novo, porque um `PUBLISHING` pode já ter sido aceito pela Meta.
+- Essa proteção continua após reagendar uma falha; a gravação de conteúdo
+  também exige atomicamente que nenhum container tenha sido criado em paralelo.
 - Retentativas apenas por horário preservam o modo do Reel (inclusive `TRIAL`);
   os defaults de criação não são aplicados a campos omitidos em um `PATCH`.
 - Trial Reels enviam `trial_params`; se a conta/API não for elegível, a Meta
