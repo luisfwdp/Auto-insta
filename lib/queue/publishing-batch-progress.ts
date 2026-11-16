@@ -6,6 +6,8 @@ export async function refreshBatchProgress(batchId: string | null, workspaceId: 
   await prisma.$transaction(async (tx) => {
     // Lock before counting. Otherwise a stale writer can overwrite cancellation
     // or counts produced by a later worker. Template parameters stay bound.
+    // lib/db/client.ts uses the default public schema; disposable tests set
+    // their adapter schema and search_path together for this unqualified table.
     const [batch] = await tx.$queryRaw<Array<{ totalItems: number; status: string }>>`
       SELECT "totalItems", "status" FROM "SpeedPostBatch"
       WHERE "id" = ${batchId} AND "workspaceId" = ${workspaceId}

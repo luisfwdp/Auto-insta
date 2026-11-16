@@ -57,7 +57,12 @@ async function processPublication(job: Job<PublishPublicationJob>) {
       assets: { orderBy: { position: "asc" }, include: { asset: true } },
     },
   });
-  if (!publication || publication.status === "CANCELLED" || publication.status === "PUBLISHED") return;
+  if (!publication || publication.status === "CANCELLED") return;
+  if (publication.status === "PUBLISHED") {
+    // An earlier attempt may have published before its batch refresh failed.
+    await refreshBatchProgress(publication.batchId, publication.workspaceId);
+    return;
+  }
   if (publication.batch && ["PAUSED", "CANCELLED"].includes(publication.batch.status)) {
     await prisma.scheduledPublication.updateMany({
       where: { id: publication.id, workspaceId: publication.workspaceId, status: "QUEUED" },

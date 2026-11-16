@@ -28,6 +28,9 @@ O agregado ignora publicações de outro workspace mesmo quando uma referência
 legada/inconsistente aponta para o lote local. Outro teste simula falha do
 refresh depois de persistir `PUBLISHED`: o handler de falha terminal preserva
 essa publicação e o retry não repete `media_publish`.
+Se a falha de progresso ocorrer em uma tentativa não terminal, o retry de uma
+publicação já `PUBLISHED` refaz somente o progresso do lote. Não repete claim,
+consulta de cota ou publicação Meta. Publicações `CANCELLED` continuam sem ação.
 
 `lib/db/client.ts` cria o adapter PostgreSQL sem opção de schema personalizado;
 a configuração padrão usa `public`. O schema aleatório e o `search_path` da

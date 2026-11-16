@@ -16,12 +16,13 @@ const state = vi.hoisted(() => ({
   processor: undefined as unknown as (job: TestJob) => Promise<void>,
   failed: undefined as unknown as (job: TestJob, error: Error) => void,
   publishContainer: vi.fn(async () => "media_progress_test"),
+  getQuota: vi.fn(async () => ({ quotaUsage: 0, quotaTotal: 100 })),
 }));
 vi.mock("@/lib/db/client", () => ({ get prisma() { return state.db; } }));
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: async () => ({ provider: "META", instagramId: "instagram_a", accessToken: "fake-test-token" }) }));
 vi.mock("@/lib/instagram/publish-content", () => ({
   assertContentPublishPermission: async () => {},
-  getContentPublishingLimit: async () => ({ quotaUsage: 0, quotaTotal: 100 }),
+  getContentPublishingLimit: state.getQuota,
   createPublishContainer: vi.fn(),
   waitForContainer: async () => ({ status_code: "FINISHED" }),
   publishContainer: state.publishContainer,
@@ -90,6 +91,7 @@ describe.skipIf(!DATABASE_URL)("Speed Post batch progress on disposable PostgreS
   });
   beforeEach(async () => {
     state.publishContainer.mockClear();
+    state.getQuota.mockClear();
     await state.db.scheduledPublication.deleteMany();
     await state.db.speedPostBatch.deleteMany();
   });
@@ -190,6 +192,31 @@ describe.skipIf(!DATABASE_URL)("Speed Post batch progress on disposable PostgreS
     expect(await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: job.data.publicationId } })).toEqual(published);
     expect(state.publishContainer).toHaveBeenCalledOnce();
     expect(await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: "progress_failure" } })).toEqual(expect.objectContaining({
+      publishedItems: 1, failedItems: 0, status: "COMPLETED",
+    }));
+  });
+
+  it("recovers progress on retry after a nonterminal failure following publication", async () => {
+    await batch("retry_progress");
+    await publication("published_before_retry", "retry_progress", "PROCESSING");
+    await state.db.scheduledPublication.update({ where: { id: "published_before_retry" }, data: { metaContainerId: "container_retry_test" } });
+    const error = new Error("Temporary progress failure");
+    vi.spyOn(progress, "refreshBatchProgress").mockRejectedValueOnce(error);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    createPublishingWorker();
+    const job: TestJob = { id: "retry_job", data: { publicationId: "published_before_retry", workspaceId: "workspace_a" }, attemptsMade: 1, opts: { attempts: 5 } };
+
+    await expect(state.processor(job)).rejects.toThrow(error.message);
+    const published = await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: job.data.publicationId } });
+    expect(published.status).toBe("PUBLISHED");
+    state.failed(job, error); // A nonterminal failure intentionally does not refresh here.
+    expect(await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: "retry_progress" } })).toEqual(expect.objectContaining({ publishedItems: 0, status: "RUNNING" }));
+    await expect(state.processor(job)).resolves.toBeUndefined();
+
+    expect(await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: job.data.publicationId } })).toEqual(published);
+    expect(state.publishContainer).toHaveBeenCalledOnce();
+    expect(state.getQuota).toHaveBeenCalledOnce();
+    expect(await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: "retry_progress" } })).toEqual(expect.objectContaining({
       publishedItems: 1, failedItems: 0, status: "COMPLETED",
     }));
   });
