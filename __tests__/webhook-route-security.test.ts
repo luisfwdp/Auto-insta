@@ -1,24 +1,41 @@
 import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const createOperationalEvent = vi.hoisted(() => vi.fn());
+const verifyWebhookSignature = vi.hoisted(() => vi.fn());
+const processInstagramWebhook = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/db/client", () => ({
   prisma: { operationalEvent: { create: createOperationalEvent } },
 }));
 vi.mock("@/lib/meta/webhook", () => ({
   parseCommentEvents: vi.fn(),
-  verifyWebhookSignature: vi.fn(() => false),
+  verifyWebhookSignature,
 }));
-vi.mock("@/lib/queue/process-webhook", () => ({ processInstagramWebhook: vi.fn() }));
+vi.mock("@/lib/queue/process-webhook", () => ({ processInstagramWebhook }));
 
-import { POST } from "@/app/api/webhook/route";
+let POST: typeof import("@/app/api/webhook/route").POST;
+
+function request(body: string, signature: string | null = "sha256=invalid") {
+  return new NextRequest("http://localhost/api/webhook", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(signature ? { "x-hub-signature-256": signature } : {}) },
+    body,
+  });
+}
 
 describe("webhook rejection logging", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-16T17:00:00Z"));
     createOperationalEvent.mockReset().mockResolvedValue({});
+    verifyWebhookSignature.mockReset().mockReturnValue(false);
+    processInstagramWebhook.mockReset().mockResolvedValue(undefined);
+    ({ POST } = await import("@/app/api/webhook/route"));
   });
+  afterEach(() => vi.useRealTimers());
 
   it("records a correlation hash without persisting untrusted body content", async () => {
     const body = JSON.stringify({ message: "private customer content", sender: "user_1" });
@@ -38,5 +55,41 @@ describe("webhook rejection logging", () => {
     });
     expect(JSON.stringify(payload)).not.toContain("private customer content");
     expect(JSON.stringify(payload)).not.toContain("user_1");
+  });
+
+  it("rejects 100 concurrent invalid requests while persisting only one event", async () => {
+    const responses = await Promise.all(Array.from({ length: 100 }, (_, index) => POST(
+      request(JSON.stringify({ attackerControlled: index }), index % 2 ? `sha256=${index}` : null)
+    )));
+    expect(responses.every((response) => response.status === 401)).toBe(true);
+    expect(verifyWebhookSignature).toHaveBeenCalledTimes(100);
+    expect(createOperationalEvent).toHaveBeenCalledOnce();
+    expect(processInstagramWebhook).not.toHaveBeenCalled();
+  });
+
+  it("allows a new diagnostic after the reporting window", async () => {
+    await POST(request("first"));
+    vi.setSystemTime(Date.now() + 59_999);
+    await POST(request("second"));
+    expect(createOperationalEvent).toHaveBeenCalledOnce();
+    vi.setSystemTime(Date.now() + 1);
+    expect((await POST(request("third"))).status).toBe(401);
+    expect(createOperationalEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps rejecting requests without retrying a failed diagnostic write", async () => {
+    createOperationalEvent.mockRejectedValue(new Error("database unavailable"));
+    expect((await POST(request("first"))).status).toBe(401);
+    expect((await POST(request("second"))).status).toBe(401);
+    expect(createOperationalEvent).toHaveBeenCalledOnce();
+  });
+
+  it("processes signed events even after invalid traffic fills the log window", async () => {
+    await POST(request("invalid"));
+    verifyWebhookSignature.mockReturnValue(true);
+    const payload = { object: "instagram", entry: [] };
+    expect((await POST(request(JSON.stringify(payload), "sha256=valid"))).status).toBe(200);
+    expect(processInstagramWebhook).toHaveBeenCalledWith({ payload, provider: "META" });
+    expect(createOperationalEvent).toHaveBeenCalledOnce();
   });
 });

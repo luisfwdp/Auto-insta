@@ -6,7 +6,12 @@ import {
   verifyWebhookSignature,
 } from "@/lib/meta/webhook";
 import { processInstagramWebhook } from "@/lib/queue/process-webhook";
+import { createRepeatedErrorThrottle } from "@/lib/ops/repeated-error-throttle";
 
+// Reject every invalid signature, but persist at most one rejection per minute
+// per warm instance. Use a fixed key so changing the attacker-controlled body
+// or signature cannot create a new reporting bucket; no Redis call is needed.
+const shouldLogInvalidSignature = createRepeatedErrorThrottle(60_000);
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -32,20 +37,22 @@ export async function POST(request: NextRequest) {
     // Record the attempt so a signature mismatch is visible rather than a
     // silent 401. This is the common symptom of FACEBOOK_APP_SECRET being
     // set to the wrong app's secret for the webhook's signing key.
-    await prisma.operationalEvent
-      .create({
-        data: {
-          source: "SYSTEM",
-          level: "WARNING",
-          message: "Webhook signature verification failed",
-          payload: {
-            hadSignatureHeader: Boolean(signature),
-            bodyLength: rawBody.length,
-            bodySha256: createHash("sha256").update(rawBody).digest("hex"),
+    if (shouldLogInvalidSignature("invalid_signature")) {
+      await prisma.operationalEvent
+        .create({
+          data: {
+            source: "SYSTEM",
+            level: "WARNING",
+            message: "Webhook signature verification failed",
+            payload: {
+              hadSignatureHeader: Boolean(signature),
+              bodyLength: rawBody.length,
+              bodySha256: createHash("sha256").update(rawBody).digest("hex"),
+            },
           },
-        },
-      })
-      .catch(() => {});
+        })
+        .catch(() => {});
+    }
     return NextResponse.json(
       { success: false, error: "Invalid signature" },
       { status: 401 }
