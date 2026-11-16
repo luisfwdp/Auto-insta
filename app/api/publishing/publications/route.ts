@@ -103,6 +103,15 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true, data: cancelled });
   }
 
+  const changesContent = (["instagramAccountId", "type", "reelMode", "caption", "assetIds"] as const)
+    .some((field) => parsed.data[field] !== undefined);
+  if (existing.metaContainerId && changesContent) {
+    return NextResponse.json({
+      success: false,
+      error: "This publication already has an Instagram container. Retry its schedule unchanged or create a new publication to change its account or content.",
+    }, { status: 409 });
+  }
+
   const accountId = parsed.data.instagramAccountId ?? existing.instagramAccountId;
   const assetIds = parsed.data.assetIds ?? existing.assets.sort((a, b) => a.position - b.position).map((item) => item.assetId);
   const effective = publicationInputSchema.safeParse({
@@ -125,7 +134,7 @@ export async function PATCH(request: NextRequest) {
 
   const publication = await prisma.$transaction(async (tx) => {
     const claimed = await tx.scheduledPublication.updateMany({
-      where: { id: existing.id, workspaceId, status: existing.status },
+      where: { id: existing.id, workspaceId, status: existing.status, ...(changesContent ? { metaContainerId: null } : {}) },
       data: {
         instagramAccountId: parsed.data.instagramAccountId,
         type: parsed.data.type,

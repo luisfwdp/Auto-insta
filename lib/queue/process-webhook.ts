@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db/client';
 import { getDMQueue, MESSAGE_JOB_NAME, POSTBACK_JOB_NAME } from '@/lib/queue/client';
 import { parseCommentEvents, parseMessageEvents, parsePostbackEvents, parseReadEvents } from '@/lib/meta/webhook';
 import { Prisma, type InstagramProvider } from '@/app/generated/prisma/client';
+import { recordUnmatchedWebhook } from './webhook-diagnostics';
 
 const OPENING_DM_READ_FALLBACK_DELAY_MS = 5 * 60 * 1000;
 type InstagramPayload = Parameters<typeof parseCommentEvents>[0];
@@ -17,6 +18,11 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
   const accountMap = new Map(accounts.map(a => [a.instagramId, a]));
   const allowed = new Set(accountMap.keys());
   const payload = { ...incoming, entry: incoming.entry.filter(e => allowed.has(e.id)) };
+  await recordUnmatchedWebhook({
+    provider,
+    incoming,
+    unmatched: incoming.entry.filter(e => !allowed.has(e.id)),
+  });
   if (!payload.entry.length) return;
   const entriesByWorkspace = new Map<string, typeof payload.entry>();
   for (const entry of payload.entry) {

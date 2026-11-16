@@ -655,5 +655,12 @@
   "Individual caption": "Legenda individual",
   "Custom date and time": "Data e hora personalizadas",
   "Move earlier": "Mover para antes",
-  "Move later": "Mover para depois"
+  "Move later": "Mover para depois",
+  "Campaign trigger": "Gatilho da campanha",
+  "Text reply to a specific Story": "Resposta de texto a um Story específico",
+  "Story link": "Link do Story",
+  "Only matching text replies to this Story can receive the DM. Mentions and reactions are not supported here.": "Somente respostas de texto a este Story que correspondam ao gatilho podem receber a DM. Menções e reações não são compatíveis aqui.",
+  "Confirm the original Story link and the received Story ID in a real test before activating. New Story campaigns start paused.": "Confirme o link original e o ID do Story recebido em um teste real antes de ativar. Novas campanhas de Story começam pausadas.",
+  "And this reply has": "E esta resposta contém",
+  "Enter the original HTTPS Instagram Story link with its numeric Story ID.": "Informe o link HTTPS original do Story do Instagram com o ID numérico do Story."
 }

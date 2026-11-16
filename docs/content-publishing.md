@@ -29,11 +29,42 @@ antes de disponibilizar a mídia na biblioteca.
 - O worker consulta `content_publishing_limit`, cria e acompanha o container e
   chama `media_publish`. Jobs têm chave determinística e o banco é a fonte de
   verdade para idempotência.
+- A varredura recupera publicações `QUEUED` sem job no Redis após cinco minutos,
+  usando a mesma chave determinística. A lease de inspeção usa `updatedAt` e
+  impede que réplicas recuperem a mesma linha simultaneamente. Jobs existentes
+  (inclusive concluídos ou com falha) nunca são removidos nem reenviados pela
+  recuperação. Como a retenção pode apagar jobs terminais, a ausência no Redis
+  não basta: a recuperação aceita apenas `attempts = 0`, sem `metaContainerId`,
+  `metaMediaId`, `metaStatus` ou `publishedAt`. O worker grava `PROCESSING` e
+  incrementa `attempts` atomicamente antes de chamadas externas. Marcadores Meta
+  também excluem itens cujo contador foi zerado ao retomar um lote. Itens com
+  histórico ambíguo ficam pendentes de inspeção; não são reenviados automaticamente.
+  Lotes pausados/cancelados não são recuperados.
+- Falhas isoladas de inspeção, enqueue ou liberação de lease não interrompem os
+  próximos itens recuperáveis nem a varredura normal de itens agendados. A
+  liberação usa comparação de status e timestamp, sem sobrescrever alterações
+  concorrentes. Falhas são registradas apenas no console, sem detalhes de erro,
+  no máximo uma vez por minuto por processo; não geram logs no banco ou Redis.
+  Se a liberação falhar, a lease pode aguardar os cinco minutos antes de nova
+  inspeção. Uma indisponibilidade geral do banco ainda pode impedir a varredura.
 - Antes de `media_publish`, o worker registra `PUBLISHING`. Se a resposta da
   Meta se perder após a publicação, o retry consulta o mesmo container: quando
   ele já estiver `PUBLISHED`, não publica novamente e conclui como
   `PUBLISHED_RECOVERED`. Nesse caso o ID final da mídia pode não estar disponível,
   pois a API o devolve na resposta original de `media_publish`.
+- A recuperação de um container já `PUBLISHED` independe da cota disponível:
+  a publicação anterior pode ter consumido o último espaço. A cota continua
+  obrigatória antes de criar um container novo e antes de publicar um existente
+  ainda não publicado.
+- Após criar um container na Meta, uma publicação editável aceita cancelamento
+  ou retentativa pelo horário, preservando conta e conteúdo. Alterar conta,
+  mídia, tipo, modo do Reel ou legenda retorna `409`; crie outra publicação
+  para essas mudanças. O container existente nunca é apagado para tentar de
+  novo, porque um `PUBLISHING` pode já ter sido aceito pela Meta.
+- Essa proteção continua após reagendar uma falha; a gravação de conteúdo
+  também exige atomicamente que nenhum container tenha sido criado em paralelo.
+- Retentativas apenas por horário preservam o modo do Reel (inclusive `TRIAL`);
+  os defaults de criação não são aplicados a campos omitidos em um `PATCH`.
 - Trial Reels enviam `trial_params`; se a conta/API não for elegível, a Meta
   rejeita a operação e o erro fica no histórico. Não existe fallback simulado.
 
@@ -49,3 +80,14 @@ Postgres descartável em `TEST_DATABASE_URL` para validar a migração. Em produ
 confirme o bucket privado, aplique a migração com aprovação humana, publique
 Vercel e Fly, verifique `/api/health` e só então faça uma publicação real em uma
 conta autorizada.
+
+Rollback da correção de recuperação por cota: reverta o commit e publique a
+imagem anterior aprovada do worker, após revisão humana. Não há alteração de
+schema, migração ou operação de rollback sobre dados.
+
+Implante a recuperação junto da correção que interrompe o worker quando o claim
+de `PROCESSING` perde para um cancelamento. Ambas exigem revisão humana conforme
+`AGENTS.md`. Rollback: reverta o commit e reimplante a imagem aprovada anterior do
+worker. Não há migração ou rollback de dados.
+Rollback da proteção de conteúdo de containers: reverta o commit e reimplante a
+versão aprovada anterior da aplicação. Não há mudança de schema ou de dados.

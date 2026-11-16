@@ -83,6 +83,37 @@ describe("Speed Post schedule generation", () => {
     expect(dates[99].toISOString()).toBe("2030-01-22T00:00:00.000Z");
   });
 
+  it("keeps the selected media order when growing from five to six daily posts", () => {
+    const slots = fillUniqueTimeSlots(["10:00", "12:00", "15:00", "18:00", "21:00"], 6);
+    const items = orderBatchItems(
+      Array.from({ length: 100 }, (_, index) => ({ assetId: `selected-${100 - index}` })),
+      "MANUAL", "unused", new Map()
+    );
+    const dates = generateBatchSchedule({
+      startsOn: "2030-01-02", postsPerDay: 6, timeSlots: slots, timezone: "America/Sao_Paulo",
+    }, items.length);
+    const actualExecutionOrder = items.map((item, index) => ({ item, date: dates[index] }))
+      .sort((left, right) => left.date.getTime() - right.date.getTime())
+      .map(({ item }) => item.assetId);
+
+    expect(actualExecutionOrder).toEqual(items.map(item => item.assetId));
+    expect(slots).toEqual(["10:00", "12:00", "15:00", "15:15", "18:00", "21:00"]);
+    expect(new Set(dates.map(date => date.toISOString())).size).toBe(100);
+  });
+
+  it("assigns edited daily times chronologically without mutating the submitted slots", () => {
+    const slots = ["21:00", "00:15", "10:00"];
+    const dates = generateBatchSchedule({
+      startsOn: "2030-01-02", postsPerDay: 3, timeSlots: slots, timezone: "America/Sao_Paulo",
+    }, 6);
+
+    expect(dates.map(date => date.toISOString())).toEqual([
+      "2030-01-02T03:15:00.000Z", "2030-01-02T13:00:00.000Z", "2030-01-03T00:00:00.000Z",
+      "2030-01-03T03:15:00.000Z", "2030-01-03T13:00:00.000Z", "2030-01-04T00:00:00.000Z",
+    ]);
+    expect(slots).toEqual(["21:00", "00:15", "10:00"]);
+  });
+
   it("uses a stable random order for retry-safe previews", () => {
     const items = Array.from({ length: 10 }, (_, index) => ({ assetId: `a${index}`, caption: null }));
     const first = orderBatchItems(items, "RANDOM", "seed", new Map());

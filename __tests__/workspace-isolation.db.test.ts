@@ -45,7 +45,7 @@ vi.mock("@/lib/db/client", () => ({
 vi.mock("next-auth", () => ({
   default: () => ({
     handlers: {},
-    auth: async () => (state.userId ? { user: { id: state.userId } } : null),
+    auth: async () => (state.userId ? { user: { id: state.userId, email: state.userId === "user_b" ? "b@test.dev" : "a@test.dev" } } : null),
     signIn: async () => undefined,
     signOut: async () => undefined,
   }),
@@ -73,6 +73,7 @@ import * as accountsRoute from "../app/api/instagram/accounts/route";
 import * as disconnectRoute from "../app/api/instagram/disconnect/route";
 import * as statsRoute from "../app/api/dashboard/stats/route";
 import * as membersRoute from "../app/api/workspace/members/route";
+import * as acceptInvitationRoute from "../app/api/workspace/invitations/accept/route";
 import * as diagnosticsRoute from "../app/api/admin/diagnostics/route";
 
 const schema = `workspace_isolation_${randomBytes(4).toString("hex")}`;
@@ -421,6 +422,40 @@ describe.skipIf(!DATABASE_URL)("workspace isolation on a real Postgres", () => {
   });
 
   describe("roles inside a workspace", () => {
+    it("an ADMIN cannot demote the OWNER through an invitation", async () => {
+      const admin = await state.db.user.create({ data: { email: "admin-b@test.dev" } });
+      await state.db.workspaceMember.create({ data: { workspaceId: B.workspace, userId: admin.id, role: "ADMIN" } });
+      state.userId = admin.id;
+      try {
+        const response = await membersRoute.POST(request("POST", "http://localhost/api/workspace/members", {
+          email: "b@test.dev", role: "MEMBER",
+        }));
+        expect(response.status).toBe(200);
+        expect(await state.db.workspaceMember.findUnique({ where: { id: B.member } })).toMatchObject({ role: "OWNER" });
+      } finally {
+        await state.db.workspaceMember.deleteMany({ where: { userId: admin.id } });
+        await state.db.user.delete({ where: { id: admin.id } });
+      }
+    });
+
+    it("consumes an invitation once while preserving an existing OWNER", async () => {
+      const invitation = await state.db.workspaceInvitation.create({ data: {
+        workspaceId: B.workspace, email: "b@test.dev", role: "MEMBER",
+        token: "owner-old-invitation", expiresAt: new Date(Date.now() + 60_000),
+      } });
+      try {
+        const responses = await Promise.all([1, 2].map(() => acceptInvitationRoute.POST(
+          request("POST", "http://localhost/api/workspace/invitations/accept", { token: invitation.token })
+        )));
+        expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
+        expect(responses.filter((response) => [404, 409].includes(response.status))).toHaveLength(1);
+        expect(await state.db.workspaceMember.findUnique({ where: { id: B.member } })).toMatchObject({ role: "OWNER" });
+        expect(await state.db.workspaceInvitation.findUnique({ where: { id: invitation.id } })).toMatchObject({ status: "ACCEPTED" });
+      } finally {
+        await state.db.workspaceInvitation.delete({ where: { id: invitation.id } });
+      }
+    });
+
     it("does not let a MEMBER create, edit or delete campaigns", async () => {
       state.userId = A.extraUser;
       const create = await automationsRoute.POST(

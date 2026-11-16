@@ -69,10 +69,16 @@ export function orderBatchItems(items: BatchItem[], mode: CreateBatchInput["orde
   return [...items];
 }
 
+/** Validated HH:mm slots follow wall-clock order, independent of input order. */
+export function chronologicalDailySlots(slots: string[], postsPerDay: number) {
+  return slots.slice(0, postsPerDay).sort();
+}
+
 export function generateBatchSchedule(input: Pick<CreateBatchInput, "startsOn" | "postsPerDay" | "timeSlots" | "timezone">, count: number) {
+  const slots = chronologicalDailySlots(input.timeSlots, input.postsPerDay);
   return Array.from({ length: count }, (_, index) => {
     const day = Math.floor(index / input.postsPerDay);
-    const slot = input.timeSlots[index % input.postsPerDay];
+    const slot = slots[index % input.postsPerDay];
     return zonedDateTimeToUtc(addUtcDays(input.startsOn, day), slot, input.timezone);
   });
 }

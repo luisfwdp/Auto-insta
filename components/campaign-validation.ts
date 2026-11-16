@@ -1,7 +1,10 @@
 import type { StaticMessageKey } from "@/lib/i18n";
+import { storyIdFromPermalink } from "@/lib/automation/story-reply-scoping";
+
+export type TriggerScope = "specific" | "any" | "next" | "story";
 
 export type CampaignDraft = {
-  selectedAccountId: string; triggerScope: "specific" | "any" | "next"; postId: string | null;
+  selectedAccountId: string; triggerScope: TriggerScope; postId: string | null; postUrl?: string | null;
   matchMode: "specific" | "any"; keywords: string[]; name: string; dmMessage: string;
   openingDmEnabled: boolean; openingDmMessage: string; openingDmButtonLabel: string;
   publicReplyEnabled: boolean; publicReplyMessages: string[];
@@ -9,10 +12,26 @@ export type CampaignDraft = {
   requireFollow: boolean; followPromptMessage: string; followPromptButtonLabel: string;
   followUpEnabled: boolean; followUpMessage: string; followUpDelayMinutes: number;
 };
+
+/** Uses the existing Story-reply API contract; no new server trigger enum. */
+export function campaignTriggerFields({ triggerScope, postId, postUrl, dmTriggerEnabled }: {
+  triggerScope: TriggerScope; postId: string | null; postUrl: string | null; dmTriggerEnabled: boolean;
+}) {
+  const specific = triggerScope === "specific" || triggerScope === "story";
+  return {
+    postId: triggerScope === "story" ? storyIdFromPermalink(postUrl?.trim()) : specific ? postId : null,
+    postUrl: specific ? postUrl?.trim() || null : null,
+    matchAnyPost: triggerScope === "any",
+    pendingNextReel: triggerScope === "next",
+    dmTriggerEnabled: triggerScope === "story" || dmTriggerEnabled,
+  };
+}
+
 // UI checks mirror the existing API limits; the server remains authoritative.
 export function validateCampaignDraft(draft: CampaignDraft, step = 2): StaticMessageKey | null {
   if (!draft.selectedAccountId) return "Connect an Instagram account first.";
   if (draft.triggerScope === "specific" && !draft.postId) return "Pick a post or reel to trigger the campaign.";
+  if (draft.triggerScope === "story" && (!storyIdFromPermalink(draft.postUrl?.trim()) || storyIdFromPermalink(draft.postUrl?.trim()) !== draft.postId)) return "Enter the original HTTPS Instagram Story link with its numeric Story ID.";
   if (draft.matchMode === "specific" && !draft.keywords.length) return "Add at least one keyword, or switch to any word.";
   if (draft.name.trim().length > 100 || (draft.matchMode === "specific" && (draft.keywords.length > 10 || draft.keywords.some((k) => k.length > 50)))) return "Use up to 10 keywords of 50 characters and a name of up to 100 characters.";
   if (step === 0) return null;
