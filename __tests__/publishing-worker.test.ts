@@ -95,6 +95,21 @@ beforeEach(() => {
 });
 
 describe("publishing worker idempotency", () => {
+  it("does not publish when cancellation wins the processing claim", async () => {
+    mocks.findFirst.mockResolvedValue({ ...publication, status: "QUEUED" });
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await processor()({ data: { publicationId: publication.id, workspaceId: publication.workspaceId } });
+
+    expect(mocks.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.createInstagramContext).not.toHaveBeenCalled();
+    expect(mocks.assertContentPublishPermission).not.toHaveBeenCalled();
+    expect(mocks.getContentPublishingLimit).not.toHaveBeenCalled();
+    expect(mocks.createPublishContainer).not.toHaveBeenCalled();
+    expect(mocks.waitForContainer).not.toHaveBeenCalled();
+    expect(mocks.publishContainer).not.toHaveBeenCalled();
+  });
+
   it("does not call media_publish again when Meta already reports the container as published", async () => {
     mocks.waitForContainer.mockResolvedValue({ id: "container_1", status_code: "PUBLISHED" });
 

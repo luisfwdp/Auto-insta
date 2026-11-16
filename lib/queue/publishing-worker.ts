@@ -85,10 +85,13 @@ async function processPublication(job: Job<PublishPublicationJob>) {
   }
   if (!(["QUEUED", "PROCESSING"] as string[]).includes(publication.status)) return;
 
-  await prisma.scheduledPublication.updateMany({
+  const claim = await prisma.scheduledPublication.updateMany({
     where: { id: publication.id, workspaceId: publication.workspaceId, status: { in: ["QUEUED", "PROCESSING"] } },
     data: { status: "PROCESSING", attempts: { increment: 1 }, lastError: null },
   });
+  // A batch cancellation can win after the initial read. Only the worker that
+  // still owns a processable publication may make external publishing calls.
+  if (claim.count !== 1) return;
   if (publication.batchId) await prisma.speedPostBatch.updateMany({
     where: { id: publication.batchId, workspaceId: publication.workspaceId, status: "SCHEDULED" },
     data: { status: "RUNNING" },
