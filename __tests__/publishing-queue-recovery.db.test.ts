@@ -79,6 +79,8 @@ describe.skipIf(!DATABASE_URL)("queued publication recovery on disposable Postgr
     await publication("future", "workspace_a", { scheduledFor: new Date("2030-01-02T10:00:00Z") });
     await publication("cancelled", "workspace_a", { status: "CANCELLED" });
     await publication("published", "workspace_a", { status: "PUBLISHED" });
+    await publication("processing", "workspace_a", { status: "PROCESSING", attempts: 1 });
+    await publication("failed", "workspace_a", { status: "FAILED", attempts: 5 });
     for (const status of ["PAUSED", "CANCELLED"] as const) {
       const batch = await state.db.speedPostBatch.create({ data: {
         id: status, workspaceId: "workspace_a", instagramAccountId: "account_a", name: status,
@@ -89,6 +91,45 @@ describe.skipIf(!DATABASE_URL)("queued publication recovery on disposable Postgr
     expect(await recoverQueuedPublications(now)).toBe(0);
     expect(state.getJob).not.toHaveBeenCalled();
     expect(state.add).not.toHaveBeenCalled();
+  });
+
+  it("does not recreate evicted jobs for QUEUED rows with evidence of a previous external attempt", async () => {
+    // Redis reports every job missing, as it would after retention cleanup.
+    for (const [id, evidence] of Object.entries({
+      attempted: { attempts: 1 },
+      container_after_resume: { attempts: 0, metaContainerId: "container" },
+      lost_publish_response: { metaStatus: "PUBLISHING" },
+      confirmed_media: { metaMediaId: "media" },
+      confirmed_publication: { publishedAt: old },
+    })) await publication(id, "workspace_a", evidence);
+    expect(await recoverQueuedPublications(now)).toBe(0);
+    expect(state.getJob).not.toHaveBeenCalled();
+    expect(state.add).not.toHaveBeenCalled();
+    expect(await state.db.scheduledPublication.count({ where: { status: "QUEUED" } })).toBe(5);
+  });
+
+  it("rechecks external-attempt safety when acquiring the lease after a stale scan", async () => {
+    await publication("changed_after_scan");
+    const findMany = state.db.scheduledPublication.findMany.bind(state.db.scheduledPublication);
+    const staleScan = async (args: Parameters<typeof findMany>[0]) => {
+      const rows = await findMany(args);
+      await state.db.scheduledPublication.updateMany({
+        where: { id: "changed_after_scan", workspaceId: "workspace_a" },
+        data: { attempts: 1, metaContainerId: "existing-container", updatedAt: old },
+      });
+      return rows;
+    };
+    // The test barrier returns a native Promise rather than Prisma's branded
+    // thenable, while preserving the actual query result and real DB mutations.
+    const scan = vi.spyOn(state.db.scheduledPublication, "findMany")
+      .mockImplementationOnce(staleScan as unknown as typeof findMany);
+    try {
+      expect(await recoverQueuedPublications(now)).toBe(0);
+      expect(state.getJob).not.toHaveBeenCalled();
+      expect(state.add).not.toHaveBeenCalled();
+    } finally {
+      scan.mockRestore();
+    }
   });
 
   it("rotates existing-job inspections so the scan limit does not hide later orphans", async () => {

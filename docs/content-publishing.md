@@ -33,7 +33,20 @@ antes de disponibilizar a mídia na biblioteca.
   usando a mesma chave determinística. A lease de inspeção usa `updatedAt` e
   impede que réplicas recuperem a mesma linha simultaneamente. Jobs existentes
   (inclusive concluídos ou com falha) nunca são removidos nem reenviados pela
-  recuperação. Lotes pausados/cancelados não são recuperados.
+  recuperação. Como a retenção pode apagar jobs terminais, a ausência no Redis
+  não basta: a recuperação aceita apenas `attempts = 0`, sem `metaContainerId`,
+  `metaMediaId`, `metaStatus` ou `publishedAt`. O worker grava `PROCESSING` e
+  incrementa `attempts` atomicamente antes de chamadas externas. Marcadores Meta
+  também excluem itens cujo contador foi zerado ao retomar um lote. Itens com
+  histórico ambíguo ficam pendentes de inspeção; não são reenviados automaticamente.
+  Lotes pausados/cancelados não são recuperados.
+- Falhas isoladas de inspeção, enqueue ou liberação de lease não interrompem os
+  próximos itens recuperáveis nem a varredura normal de itens agendados. A
+  liberação usa comparação de status e timestamp, sem sobrescrever alterações
+  concorrentes. Falhas são registradas apenas no console, sem detalhes de erro,
+  no máximo uma vez por minuto por processo; não geram logs no banco ou Redis.
+  Se a liberação falhar, a lease pode aguardar os cinco minutos antes de nova
+  inspeção. Uma indisponibilidade geral do banco ainda pode impedir a varredura.
 - Antes de `media_publish`, o worker registra `PUBLISHING`. Se a resposta da
   Meta se perder após a publicação, o retry consulta o mesmo container: quando
   ele já estiver `PUBLISHED`, não publica novamente e conclui como

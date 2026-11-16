@@ -1,10 +1,12 @@
 import { Queue } from "bullmq";
 import { prisma } from "@/lib/db/client";
 import { getRedisConnection } from "./client";
+import { createRepeatedErrorThrottle } from "@/lib/ops/repeated-error-throttle";
 
 export const PUBLISHING_QUEUE_NAME = "instagram-publishing";
 export const PUBLISH_JOB_NAME = "publish-instagram-content";
 const QUEUED_RECOVERY_LEASE_MS = 5 * 60_000;
+const shouldReportRecoveryFailure = createRepeatedErrorThrottle(60_000);
 
 export interface PublishPublicationJob {
   publicationId: string;
@@ -65,6 +67,14 @@ export async function recoverQueuedPublications(now = new Date(), limit = 100): 
   const staleBefore = new Date(now.getTime() - QUEUED_RECOVERY_LEASE_MS);
   const eligible = {
     status: "QUEUED" as const,
+    // A missing retained job is not proof that it never ran. The worker
+    // increments attempts while claiming PROCESSING before any external call.
+    // Also exclude external markers, including rows reset to attempt 0 on resume.
+    attempts: 0,
+    metaContainerId: null,
+    metaMediaId: null,
+    metaStatus: null,
+    publishedAt: null,
     updatedAt: { lte: staleBefore },
     AND: [
       { OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }] },
@@ -80,14 +90,16 @@ export async function recoverQueuedPublications(now = new Date(), limit = 100): 
   const queue = getPublishingQueue();
   let recovered = 0;
   for (const publication of stale) {
-    // Refresh the inspection lease even for existing jobs, so a large backlog
-    // cannot permanently hide later orphaned rows behind the scan limit.
-    const claim = await prisma.scheduledPublication.updateMany({
-      where: { ...eligible, id: publication.id, workspaceId: publication.workspaceId },
-      data: { updatedAt: now },
-    });
-    if (claim.count !== 1) continue;
+    let leased = false;
     try {
+      // Refresh existing-job inspections so the scan limit cannot starve later
+      // orphans. Recheck the safety predicates atomically with this lease.
+      const claim = await prisma.scheduledPublication.updateMany({
+        where: { ...eligible, id: publication.id, workspaceId: publication.workspaceId },
+        data: { updatedAt: now },
+      });
+      if (claim.count !== 1) continue;
+      leased = true;
       const jobId = publishingJobId(publication.idempotencyKey);
       // Never remove or restart an existing job, including completed/failed
       // jobs: their external-call history must remain authoritative.
@@ -97,12 +109,16 @@ export async function recoverQueuedPublications(now = new Date(), limit = 100): 
         workspaceId: publication.workspaceId,
       }, { jobId, attempts: publication.maxAttempts });
       recovered += 1;
-    } catch (error) {
-      await prisma.scheduledPublication.updateMany({
+    } catch {
+      if (leased) await prisma.scheduledPublication.updateMany({
         where: { id: publication.id, workspaceId: publication.workspaceId, status: "QUEUED", updatedAt: now },
         data: { updatedAt: publication.updatedAt },
-      });
-      throw error;
+      }).catch(() => {});
+      // The queue/DB itself may be failing. Report locally with one fixed bucket
+      // per process, never a per-row Redis/DB log or a raw credential-bearing error.
+      if (shouldReportRecoveryFailure("queued_recovery_failed")) {
+        console.error("[Publishing Queue] Queued recovery failed; continuing the sweep. Check queue and database health.");
+      }
     }
   }
   return recovered;
