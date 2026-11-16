@@ -1,0 +1,24 @@
+[
+  {
+    "device": "desktop",
+    "invalidLinksBlocked": true,
+    "noWriteBeforeConfirmation": true,
+    "newStoryPaused": true,
+    "existingStoryEditPreserved": true,
+    "exactPayload": true,
+    "axe": "passed",
+    "pageErrors": [],
+    "evidence": "Temporary local component fixture with intercepted APIs. No auth bypass shipped, real Meta calls, server writes or DMs."
+  },
+  {
+    "device": "mobile",
+    "invalidLinksBlocked": true,
+    "noWriteBeforeConfirmation": true,
+    "newStoryPaused": true,
+    "existingStoryEditPreserved": true,
+    "exactPayload": true,
+    "axe": "passed",
+    "pageErrors": [],
+    "evidence": "Temporary local component fixture with intercepted APIs. No auth bypass shipped, real Meta calls, server writes or DMs."
+  }
+]

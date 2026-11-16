@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { validateCampaignDraft, type CampaignDraft } from "../components/campaign-validation";
+import { campaignTriggerFields, validateCampaignDraft, type CampaignDraft } from "../components/campaign-validation";
+import { matchesStoryReplyScope } from "@/lib/automation/story-reply-scoping";
 
 const draft: CampaignDraft = {
   selectedAccountId: "account-1", triggerScope: "specific", postId: "post-1", matchMode: "specific", keywords: ["link"], name: "Campaign", dmMessage: "Here is your material",
@@ -45,5 +46,40 @@ describe("campaign wizard preflight against existing API limits", () => {
     const original = structuredClone(draft);
     validateCampaignDraft(draft);
     expect(draft).toEqual(original);
+  });
+
+  it("maps a Story selection to the existing API fields and the worker's exact Story scope", () => {
+    const storyDraft = { ...draft, triggerScope: "story" as const, postId: "123456789", postUrl: "https://www.instagram.com/stories/creator_one/123456789/?utm_source=share" };
+    expect(validateCampaignDraft(storyDraft)).toBeNull();
+    const payload = campaignTriggerFields({ ...storyDraft, dmTriggerEnabled: false });
+    expect(payload).toEqual({
+      postId: "123456789", postUrl: storyDraft.postUrl,
+      matchAnyPost: false, pendingNextReel: false, dmTriggerEnabled: true,
+    });
+    expect(matchesStoryReplyScope({ ...payload, incomingStoryId: "123456789" })).toBe(true);
+    expect(matchesStoryReplyScope({ ...payload, incomingStoryId: "987654321" })).toBe(false);
+    expect(matchesStoryReplyScope({ ...payload, incomingStoryId: undefined })).toBe(false);
+  });
+
+  it.each([
+    null, "", "https://example.com/stories/user/123456789/",
+    "https://instagram.com.evil.test/stories/user/123456789/",
+    "http://instagram.com/stories/user/123456789/",
+    "https://www.instagram.com/p/ABC/", "https://www.instagram.com/stories/user/not-an-id/",
+  ])("rejects unsupported Story input before moving past configuration: %s", (postUrl) => {
+    expect(validateCampaignDraft({ ...draft, triggerScope: "story", postUrl, postId: "123456789" }, 0))
+      .toBe("Enter the original HTTPS Instagram Story link with its numeric Story ID.");
+  });
+
+  it("rejects a Story ID that no longer matches the pasted link", () => {
+    expect(validateCampaignDraft({ ...draft, triggerScope: "story", postId: "old-id", postUrl: "https://www.instagram.com/stories/creator/123456789/" }, 0))
+      .toBe("Enter the original HTTPS Instagram Story link with its numeric Story ID.");
+  });
+
+  it("does not retain Story targeting when returning to any-post or next-post campaigns", () => {
+    for (const triggerScope of ["any", "next"] as const) {
+      expect(campaignTriggerFields({ triggerScope, postId: "123456789", postUrl: "https://www.instagram.com/stories/creator/123456789/", dmTriggerEnabled: false }))
+        .toEqual({ postId: null, postUrl: null, matchAnyPost: triggerScope === "any", pendingNextReel: triggerScope === "next", dmTriggerEnabled: false });
+    }
   });
 });
