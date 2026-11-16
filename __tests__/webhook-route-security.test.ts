@@ -14,9 +14,11 @@ vi.mock("@/lib/meta/webhook", () => ({
 vi.mock("@/lib/queue/process-webhook", () => ({ processInstagramWebhook: vi.fn() }));
 
 import { POST } from "@/app/api/webhook/route";
+import { processInstagramWebhook } from "@/lib/queue/process-webhook";
 
 describe("webhook rejection logging", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     createOperationalEvent.mockReset().mockResolvedValue({});
   });
 
@@ -29,6 +31,7 @@ describe("webhook rejection logging", () => {
     }));
 
     expect(response.status).toBe(401);
+    expect(processInstagramWebhook).not.toHaveBeenCalled();
     expect(createOperationalEvent).toHaveBeenCalledOnce();
     const payload = createOperationalEvent.mock.calls[0][0].data.payload;
     expect(payload).toEqual({
