@@ -21,6 +21,12 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : "Unknown publishing error";
 }
 
+async function assertPublishingQuota(instagramId: string, accessToken: string) {
+  const quota = await getContentPublishingLimit(instagramId, accessToken);
+  if (quota.quotaUsage >= quota.quotaTotal)
+    throw new RateLimitError(`Instagram publishing quota exhausted (${quota.quotaUsage}/${quota.quotaTotal})`);
+}
+
 async function refreshBatch(batchId: string | null) {
   if (!batchId) return;
   const [publishedItems, failedItems, batch] = await Promise.all([
@@ -97,12 +103,10 @@ async function processPublication(job: Job<PublishPublicationJob>) {
   const context = await createInstagramContext(publication.instagramAccount, publication.idempotencyKey);
   if (context.provider !== "META") throw new Error("Content publishing requires an official Meta connection");
   await assertContentPublishPermission(context.accessToken);
-  const quota = await getContentPublishingLimit(context.instagramId, context.accessToken);
-  if (quota.quotaUsage >= quota.quotaTotal)
-    throw new RateLimitError(`Instagram publishing quota exhausted (${quota.quotaUsage}/${quota.quotaTotal})`);
 
   let containerId = publication.metaContainerId;
   if (!containerId) {
+    await assertPublishingQuota(context.instagramId, context.accessToken);
     containerId = await createPublishContainer(
       context.instagramId,
       context.accessToken,
@@ -121,6 +125,10 @@ async function processPublication(job: Job<PublishPublicationJob>) {
   const recoveredPublishedContainer = state.status_code === "PUBLISHED";
   let mediaId = publication.metaMediaId;
   if (!recoveredPublishedContainer) {
+    // An existing container may have consumed the last quota slot on an earlier
+    // attempt. Recover PUBLISHED first; quota only gates a new publish request.
+    if (publication.metaContainerId)
+      await assertPublishingQuota(context.instagramId, context.accessToken);
     // Persist the external-call boundary before media_publish. The Graph API
     // returns the final media ID only in the publish response, so a process
     // crash after Meta accepts the request cannot safely reconstruct that ID.

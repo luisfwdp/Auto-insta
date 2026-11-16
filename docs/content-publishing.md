@@ -34,6 +34,10 @@ antes de disponibilizar a mídia na biblioteca.
   ele já estiver `PUBLISHED`, não publica novamente e conclui como
   `PUBLISHED_RECOVERED`. Nesse caso o ID final da mídia pode não estar disponível,
   pois a API o devolve na resposta original de `media_publish`.
+- A recuperação de um container já `PUBLISHED` independe da cota disponível:
+  a publicação anterior pode ter consumido o último espaço. A cota continua
+  obrigatória antes de criar um container novo e antes de publicar um existente
+  ainda não publicado.
 - Trial Reels enviam `trial_params`; se a conta/API não for elegível, a Meta
   rejeita a operação e o erro fica no histórico. Não existe fallback simulado.
 
@@ -49,3 +53,7 @@ Postgres descartável em `TEST_DATABASE_URL` para validar a migração. Em produ
 confirme o bucket privado, aplique a migração com aprovação humana, publique
 Vercel e Fly, verifique `/api/health` e só então faça uma publicação real em uma
 conta autorizada.
+
+Rollback da correção de recuperação por cota: reverta o commit e publique a
+imagem anterior aprovada do worker, após revisão humana. Não há alteração de
+schema, migração ou operação de rollback sobre dados.
