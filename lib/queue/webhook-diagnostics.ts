@@ -48,20 +48,26 @@ export async function recordUnmatchedWebhook(args: {
         if (!event.message && !event.postback && !event.read && !event.reaction) eventCounts.otherMessaging += 1;
       }
     }
-    await prisma.operationalEvent.create({ data: {
-      workspaceId: null,
-      source: "SYSTEM",
-      level: "WARNING",
-      message: "Signed Instagram webhook contained unmatched account entries",
-      payload: {
-        provider: args.provider,
-        receivedEntries: args.incoming.entry.length,
-        matchedEntries: args.incoming.entry.length - args.unmatched.length,
-        unmatchedEntries: args.unmatched.length,
-        entryIdHashes,
-        eventCounts,
-      },
-    } });
+    await prisma.$transaction(async (tx) => {
+      // Server-side limits cancel a blocked INSERT and release its connection;
+      // a JavaScript Promise timeout alone would leave the query running.
+      await tx.$executeRaw`SET LOCAL statement_timeout = '1000ms'`;
+      await tx.$executeRaw`SET LOCAL lock_timeout = '250ms'`;
+      await tx.operationalEvent.create({ data: {
+        workspaceId: null,
+        source: "SYSTEM",
+        level: "WARNING",
+        message: "Signed Instagram webhook contained unmatched account entries",
+        payload: {
+          provider: args.provider,
+          receivedEntries: args.incoming.entry.length,
+          matchedEntries: args.incoming.entry.length - args.unmatched.length,
+          unmatchedEntries: args.unmatched.length,
+          entryIdHashes,
+          eventCounts,
+        },
+      } });
+    }, { maxWait: 250, timeout: 1500 });
   } catch {
     // Observability must not interrupt delivery for the matching accounts.
   }
