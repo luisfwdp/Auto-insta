@@ -4,15 +4,39 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "../app/generated/prisma/client";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const schema = `batch_progress_${randomBytes(4).toString("hex")}`;
 const applicationName = `test_${schema}`;
-const state = vi.hoisted(() => ({ db: undefined as unknown as import("../app/generated/prisma/client").PrismaClient }));
+type TestJob = { id: string; data: { publicationId: string; workspaceId: string }; attemptsMade: number; opts: { attempts: number } };
+const state = vi.hoisted(() => ({
+  db: undefined as unknown as import("../app/generated/prisma/client").PrismaClient,
+  processor: undefined as unknown as (job: TestJob) => Promise<void>,
+  failed: undefined as unknown as (job: TestJob, error: Error) => void,
+  publishContainer: vi.fn(async () => "media_progress_test"),
+}));
 vi.mock("@/lib/db/client", () => ({ get prisma() { return state.db; } }));
+vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: async () => ({ provider: "META", instagramId: "instagram_a", accessToken: "fake-test-token" }) }));
+vi.mock("@/lib/instagram/publish-content", () => ({
+  assertContentPublishPermission: async () => {},
+  getContentPublishingLimit: async () => ({ quotaUsage: 0, quotaTotal: 100 }),
+  createPublishContainer: vi.fn(),
+  waitForContainer: async () => ({ status_code: "FINISHED" }),
+  publishContainer: state.publishContainer,
+}));
+vi.mock("@/lib/queue/client", () => ({ getRedisConnection: vi.fn() }));
+vi.mock("bullmq", () => ({ Worker: class {
+  constructor(_name: string, processor: typeof state.processor) { state.processor = processor; }
+  on(event: string, handler: typeof state.failed) {
+    if (event === "failed") state.failed = handler;
+    return this;
+  }
+} }));
 import { refreshBatchProgress } from "@/lib/queue/publishing-batch-progress";
+import * as progress from "@/lib/queue/publishing-batch-progress";
+import { createPublishingWorker } from "@/lib/queue/publishing-worker";
 
 let sql: Client;
 const date = new Date("2030-01-01T10:00:00Z");
@@ -65,9 +89,11 @@ describe.skipIf(!DATABASE_URL)("Speed Post batch progress on disposable PostgreS
     }
   });
   beforeEach(async () => {
+    state.publishContainer.mockClear();
     await state.db.scheduledPublication.deleteMany();
     await state.db.speedPostBatch.deleteMany();
   });
+  afterEach(() => vi.restoreAllMocks());
 
   it("does not overwrite cancellation committed while refresh waits for the batch row", async () => {
     await batch("cancel_race");
@@ -123,5 +149,48 @@ describe.skipIf(!DATABASE_URL)("Speed Post batch progress on disposable PostgreS
     await refreshBatchProgress("missing", "workspace_a");
     await refreshBatchProgress(null, "workspace_a");
     expect(await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: "tenant_b" } })).toEqual(before);
+  });
+
+  it("excludes cross-workspace publications even when they reference this workspace's batch", async () => {
+    await batch("aggregate_a", "a", 2);
+    await publication("a_published", "aggregate_a");
+    await publication("a_processing", "aggregate_a", "PROCESSING");
+    // The current foreign keys permit this inconsistent legacy/import shape.
+    // The aggregate must still enforce workspace ownership for both statuses.
+    await publication("b_published", "aggregate_a", "PUBLISHED", "b");
+    await publication("b_failed", "aggregate_a", "FAILED", "b");
+    await refreshBatchProgress("aggregate_a", "workspace_a");
+    expect(await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: "aggregate_a" } })).toEqual(expect.objectContaining({
+      publishedItems: 1, failedItems: 0, status: "RUNNING", completedAt: null,
+    }));
+  });
+
+  it("keeps a published row through progress failure, final failed handler, and retry without republishing", async () => {
+    await batch("progress_failure");
+    await publication("already_published", "progress_failure", "PROCESSING");
+    await state.db.scheduledPublication.update({ where: { id: "already_published" }, data: { metaContainerId: "container_progress_test" } });
+    const actualRefresh = progress.refreshBatchProgress;
+    const error = new Error("Progress transaction unavailable");
+    let finishFailedHandler!: () => void;
+    const failedHandlerFinished = new Promise<void>((resolve) => { finishFailedHandler = resolve; });
+    vi.spyOn(progress, "refreshBatchProgress").mockRejectedValueOnce(error).mockImplementationOnce(async (...args) => {
+      try { await actualRefresh(...args); } finally { finishFailedHandler(); }
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    createPublishingWorker();
+    const job: TestJob = { id: "progress_job", data: { publicationId: "already_published", workspaceId: "workspace_a" }, attemptsMade: 5, opts: { attempts: 5 } };
+
+    await expect(state.processor(job)).rejects.toThrow(error.message);
+    const published = await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: job.data.publicationId } });
+    expect(published).toEqual(expect.objectContaining({ status: "PUBLISHED", metaMediaId: "media_progress_test" }));
+    state.failed(job, error);
+    await failedHandlerFinished;
+    await expect(state.processor(job)).resolves.toBeUndefined();
+
+    expect(await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: job.data.publicationId } })).toEqual(published);
+    expect(state.publishContainer).toHaveBeenCalledOnce();
+    expect(await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: "progress_failure" } })).toEqual(expect.objectContaining({
+      publishedItems: 1, failedItems: 0, status: "COMPLETED",
+    }));
   });
 });
