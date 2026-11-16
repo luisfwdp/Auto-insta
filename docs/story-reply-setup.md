@@ -3,7 +3,9 @@
 In the campaign editor, choose **Text reply to a specific Story**, paste the
 original HTTPS Instagram Story link, and enter the keywords and main DM.
 The numeric Story ID is derived from the link. A new Story campaign starts
-paused and can be activated after reviewing and confirming its configuration.
+paused by default. An explicit activation action can activate it at confirmation,
+including **Go Live** in the classic editor. Verify the real Story reply before
+choosing activation.
 
 The editor uses the existing API contract: `postId`, `postUrl`,
 `dmTriggerEnabled: true`, `matchAnyPost: false`, and `pendingNextReel: false`.
