@@ -141,9 +141,10 @@ export async function POST(request: NextRequest) {
         userId: existingUser.id,
         role: parsed.data.role,
       },
-      update: {
-        role: parsed.data.role,
-      },
+      // Inviting an existing member must never change their role. In
+      // particular, an admin cannot bypass PATCH's OWNER protection here.
+      // The upsert preserves this rule even if membership is added concurrently.
+      update: {},
     });
   } else {
     await prisma.workspaceInvitation.upsert({
