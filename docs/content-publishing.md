@@ -29,6 +29,11 @@ antes de disponibilizar a mídia na biblioteca.
 - O worker consulta `content_publishing_limit`, cria e acompanha o container e
   chama `media_publish`. Jobs têm chave determinística e o banco é a fonte de
   verdade para idempotência.
+- A varredura recupera publicações `QUEUED` sem job no Redis após cinco minutos,
+  usando a mesma chave determinística. A lease de inspeção usa `updatedAt` e
+  impede que réplicas recuperem a mesma linha simultaneamente. Jobs existentes
+  (inclusive concluídos ou com falha) nunca são removidos nem reenviados pela
+  recuperação. Lotes pausados/cancelados não são recuperados.
 - Antes de `media_publish`, o worker registra `PUBLISHING`. Se a resposta da
   Meta se perder após a publicação, o retry consulta o mesmo container: quando
   ele já estiver `PUBLISHED`, não publica novamente e conclui como
@@ -49,3 +54,8 @@ Postgres descartável em `TEST_DATABASE_URL` para validar a migração. Em produ
 confirme o bucket privado, aplique a migração com aprovação humana, publique
 Vercel e Fly, verifique `/api/health` e só então faça uma publicação real em uma
 conta autorizada.
+
+Implante a recuperação junto da correção que interrompe o worker quando o claim
+de `PROCESSING` perde para um cancelamento. Ambas exigem revisão humana conforme
+`AGENTS.md`. Rollback: reverta o commit e reimplante a imagem aprovada anterior do
+worker. Não há migração ou rollback de dados.

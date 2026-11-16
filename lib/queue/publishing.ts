@@ -4,6 +4,7 @@ import { getRedisConnection } from "./client";
 
 export const PUBLISHING_QUEUE_NAME = "instagram-publishing";
 export const PUBLISH_JOB_NAME = "publish-instagram-content";
+const QUEUED_RECOVERY_LEASE_MS = 5 * 60_000;
 
 export interface PublishPublicationJob {
   publicationId: string;
@@ -59,8 +60,57 @@ export async function enqueuePublication(args: {
   });
 }
 
-/** Recovery sweep: claims due DB rows before enqueueing, so replicas cannot duplicate jobs. */
+/** Repair a crash between the DB claim and Redis enqueue without restarting existing jobs. */
+export async function recoverQueuedPublications(now = new Date(), limit = 100): Promise<number> {
+  const staleBefore = new Date(now.getTime() - QUEUED_RECOVERY_LEASE_MS);
+  const eligible = {
+    status: "QUEUED" as const,
+    updatedAt: { lte: staleBefore },
+    AND: [
+      { OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }] },
+      { OR: [{ batchId: null }, { batch: { status: { in: ["SCHEDULED" as const, "RUNNING" as const] } } }] },
+    ],
+  };
+  const stale = await prisma.scheduledPublication.findMany({
+    where: eligible,
+    select: { id: true, workspaceId: true, idempotencyKey: true, maxAttempts: true, updatedAt: true },
+    orderBy: { updatedAt: "asc" },
+    take: limit,
+  });
+  const queue = getPublishingQueue();
+  let recovered = 0;
+  for (const publication of stale) {
+    // Refresh the inspection lease even for existing jobs, so a large backlog
+    // cannot permanently hide later orphaned rows behind the scan limit.
+    const claim = await prisma.scheduledPublication.updateMany({
+      where: { ...eligible, id: publication.id, workspaceId: publication.workspaceId },
+      data: { updatedAt: now },
+    });
+    if (claim.count !== 1) continue;
+    try {
+      const jobId = publishingJobId(publication.idempotencyKey);
+      // Never remove or restart an existing job, including completed/failed
+      // jobs: their external-call history must remain authoritative.
+      if (await queue.getJob(jobId)) continue;
+      await queue.add(PUBLISH_JOB_NAME, {
+        publicationId: publication.id,
+        workspaceId: publication.workspaceId,
+      }, { jobId, attempts: publication.maxAttempts });
+      recovered += 1;
+    } catch (error) {
+      await prisma.scheduledPublication.updateMany({
+        where: { id: publication.id, workspaceId: publication.workspaceId, status: "QUEUED", updatedAt: now },
+        data: { updatedAt: publication.updatedAt },
+      });
+      throw error;
+    }
+  }
+  return recovered;
+}
+
+/** Claims due DB rows before enqueueing, so replicas cannot duplicate jobs. */
 export async function enqueueDuePublications(now = new Date(), limit = 100): Promise<number> {
+  const recovered = await recoverQueuedPublications(now, limit);
   const due = await prisma.scheduledPublication.findMany({
     where: {
       status: "SCHEDULED",
@@ -71,7 +121,7 @@ export async function enqueueDuePublications(now = new Date(), limit = 100): Pro
     orderBy: { scheduledFor: "asc" },
     take: limit,
   });
-  let claimed = 0;
+  let claimed = recovered;
   for (const publication of due) {
     const result = await prisma.scheduledPublication.updateMany({
       where: { id: publication.id, workspaceId: publication.workspaceId, status: "SCHEDULED" },
