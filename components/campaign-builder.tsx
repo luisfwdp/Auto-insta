@@ -415,7 +415,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     setError(null);
   }
 
-  const storySettings = <><Input label={t("Story link")} type="url" value={postUrl ?? ""} onChange={(event) => { setPostUrl(event.target.value); setPostId(storyIdFromPermalink(event.target.value.trim())); setError(null); }} placeholder="https://www.instagram.com/stories/username/123456789/" hint={t("Only matching text replies to this Story can receive the DM. Mentions and reactions are not supported here.")} /><p className={wizardStyles.muted}>{t("Confirm the original Story link and the received Story ID in a real test before activating. New Story campaigns start paused.")}</p></>;
+  const storySettings = <><Input label={t("Story link")} type="url" value={postUrl ?? ""} onChange={(event) => { setPostUrl(event.target.value); setPostId(storyIdFromPermalink(event.target.value.trim())); setError(null); }} placeholder="https://www.instagram.com/stories/username/123456789/" hint={t("Only matching text replies to this Story can receive the DM. Mentions and reactions are not supported here.")} /><p className={wizardStyles.muted}>{t("Story campaigns start paused by default. You can explicitly activate them after confirming the original Story link and received Story ID in a real test.")}</p></>;
 
   async function handleSubmit(activeValue: boolean) {
     if (newDesign || isStory) {

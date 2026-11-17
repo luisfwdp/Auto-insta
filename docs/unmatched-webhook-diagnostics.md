@@ -25,6 +25,20 @@ not a complete delivery ledger. Diagnostic failure does not interrupt matched
 delivery and does not immediately retry logging.
 Hashing, event-type counting and persistence are all best-effort: malformed
 unmatched entries cannot interrupt delivery of otherwise valid matched entries.
+Known-account events are persisted, enqueued and marked processed before the
+diagnostic write. The request still awaits diagnostics; no detached promise is
+left behind. The short diagnostic transaction uses acquisition `maxWait` 250 ms,
+transaction timeout 1500 ms, PostgreSQL `statement_timeout` 1000 ms and
+`lock_timeout` 250 ms, scoped locally to that transaction. PostgreSQL cancels a
+blocked diagnostic statement and rolls back the transaction, releasing its
+connection instead of letting a JavaScript timeout abandon an active query.
+The sample is dropped on failure and its per-provider minute budget stays spent.
+The native PostgreSQL regression holds an exclusive diagnostic-table lock until
+after the request finishes, cancels a five-second insert trigger, and exercises
+a busy one-connection pool. It verifies that the connection is reusable afterward,
+transaction-local timeouts are restored, and no diagnostic lock wait or aborted
+transaction remains. Run `unmatched-webhook-timeout.db.test.ts` with a disposable
+`TEST_DATABASE_URL`; mocks do not establish PostgreSQL cancellation behavior.
 
 Compare a known account's locally computed entry-ID hash with the warning to
 investigate routing. Do not substitute sender IGSIDs for connected account IDs
