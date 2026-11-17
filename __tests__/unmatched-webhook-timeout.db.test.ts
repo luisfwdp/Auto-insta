@@ -154,10 +154,13 @@ describe.skipIf(!DATABASE_URL)("bounded unmatched diagnostics on disposable Post
     await locker.query("BEGIN");
     await locker.query(`LOCK TABLE "${schema}"."OperationalEvent" IN ACCESS EXCLUSIVE MODE`);
     const args = { provider: "META" as const, object: "page", entries: [] };
+    const started = Date.now();
     const pending = unsupportedDiagnostic(args);
     void pending.catch(() => {});
     try {
       await within(pending, 2_000);
+      // The held lock must exercise the configured 250 ms lock timeout.
+      expect(Date.now() - started).toBeGreaterThanOrEqual(200);
       await assertPoolUsableAndTimeoutsRestored();
     } finally {
       await locker.query("ROLLBACK");

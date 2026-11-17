@@ -27,9 +27,11 @@ efetiva, ou quando a leitura falha; caso contrário, `INFO`.
 - Não altera nada na Meta: só requisições `GET`. Reassinar uma conta continua
   sendo feito pela reconexão.
 - Não grava token, remetente, texto de mensagem nem payload de webhook.
-- Não prova entrega. `messages` assinado com `messaging: 0` significa que a
-  falha está depois da assinatura (emissão ou entrega pela Meta, ou descarte por
-  conta não reconhecida, que o registro de entradas não reconhecidas mostra).
+- Não prova entrega. `messages` assinado com `messaging: 0` só indica ausência
+  de mensagens persistidas no período. Isso não distingue emissão/entrega pela
+  Meta, rejeição HTTP/HMAC, roteamento nem falha de persistência. Os diagnósticos
+  têm amostragem limitada e podem falhar ao gravar; sua ausência não prova que
+  nenhum callback chegou.
 
 ## Como ler o resultado
 
@@ -39,10 +41,12 @@ efetiva, ou quando a leitura falha; caso contrário, `INFO`.
    Reconecte a conta e rode a auditoria de novo (reinício do worker).
 3. `grantedPermissions` sem `instagram_manage_messages`: o login não concedeu a
    permissão; revise a configuração de login e reconecte.
-4. Tudo presente e `messaging: 0` após uma DM de teste: a causa é externa ao
-   código (nível de acesso do app, modo do app, ou "Permitir acesso às
-   mensagens" na conta). Consulte o evento de entradas não reconhecidas para
-   descartar roteamento.
+4. Tudo presente e `messaging: 0` após uma DM de teste: correlacione o horário
+   com logs HTTP do callback, resultado HMAC, roteamento e persistência. Um
+   diagnóstico presente é evidência positiva do estágio alcançado; sua ausência
+   não descarta esse estágio. Verifique também campos no app, nível de acesso,
+   modo Live, papéis, elegibilidade e "Permitir acesso às mensagens" sem presumir
+   que qualquer um deles seja a causa. Leia `docs/unmatched-webhook-diagnostics.md`.
 
 ## Rollback
 

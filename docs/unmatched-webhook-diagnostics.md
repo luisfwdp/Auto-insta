@@ -36,8 +36,8 @@ The sample is dropped on failure and its per-provider minute budget stays spent.
 The native PostgreSQL regression holds an exclusive diagnostic-table lock until
 after the request finishes, cancels a five-second insert trigger, and exercises
 a busy one-connection pool. It verifies that the connection is reusable afterward,
-transaction-local timeouts are restored, and no diagnostic lock wait or aborted
-transaction remains. Run `unmatched-webhook-timeout.db.test.ts` with a disposable
+transaction-local timeouts are restored, and no diagnostic lock wait, idle transaction or
+aborted transaction remains. Run `unmatched-webhook-timeout.db.test.ts` with a disposable
 `TEST_DATABASE_URL`; mocks do not establish PostgreSQL cancellation behavior.
 
 Compare a known account's locally computed entry-ID hash with the warning to
