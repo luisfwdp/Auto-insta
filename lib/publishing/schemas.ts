@@ -63,6 +63,9 @@ function validatePublicationShape(value: Partial<z.infer<typeof publicationField
 export const publicationInputSchema = publicationFields.superRefine(validatePublicationShape);
 
 export const updatePublicationSchema = publicationFields.partial().extend({
+  // PATCH must preserve omitted values; creation defaults are not edits.
+  reelMode: z.enum(["STANDARD", "TRIAL"]).optional(),
+  publishNow: z.boolean().optional(),
   action: z.enum(["schedule", "publish", "cancel", "reschedule"]).optional(),
 }).superRefine(validatePublicationShape);
 

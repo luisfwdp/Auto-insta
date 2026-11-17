@@ -95,6 +95,55 @@ beforeEach(() => {
 });
 
 describe("publishing worker idempotency", () => {
+  it("does not publish when cancellation wins the processing claim", async () => {
+    mocks.findFirst.mockResolvedValue({ ...publication, status: "QUEUED" });
+    mocks.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await processor()({ data: { publicationId: publication.id, workspaceId: publication.workspaceId } });
+
+    expect(mocks.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.createInstagramContext).not.toHaveBeenCalled();
+    expect(mocks.assertContentPublishPermission).not.toHaveBeenCalled();
+    expect(mocks.getContentPublishingLimit).not.toHaveBeenCalled();
+    expect(mocks.createPublishContainer).not.toHaveBeenCalled();
+    expect(mocks.waitForContainer).not.toHaveBeenCalled();
+    expect(mocks.publishContainer).not.toHaveBeenCalled();
+  });
+
+  it("recovers a published container even when the previous publish exhausted quota", async () => {
+    mocks.getContentPublishingLimit.mockResolvedValue({ quotaUsage: 50, quotaTotal: 50, quotaDurationSeconds: 86_400 });
+    mocks.waitForContainer.mockResolvedValue({ id: "container_1", status_code: "PUBLISHED" });
+
+    await processor()({ data: { publicationId: publication.id, workspaceId: publication.workspaceId } });
+
+    expect(mocks.getContentPublishingLimit).not.toHaveBeenCalled();
+    expect(mocks.publishContainer).not.toHaveBeenCalled();
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "PUBLISHED", metaStatus: "PUBLISHED_RECOVERED" }),
+    }));
+  });
+
+  it("still blocks an unpublished existing container when quota is exhausted", async () => {
+    mocks.getContentPublishingLimit.mockResolvedValue({ quotaUsage: 50, quotaTotal: 50, quotaDurationSeconds: 86_400 });
+    mocks.waitForContainer.mockResolvedValue({ id: "container_1", status_code: "FINISHED" });
+
+    await expect(processor()({ data: { publicationId: publication.id, workspaceId: publication.workspaceId } })).rejects.toThrow("quota exhausted");
+
+    expect(mocks.publishContainer).not.toHaveBeenCalled();
+    expect(mocks.createPublishContainer).not.toHaveBeenCalled();
+  });
+
+  it("does not create a new container when quota is already exhausted", async () => {
+    mocks.findFirst.mockResolvedValue({ ...publication, metaContainerId: null });
+    mocks.getContentPublishingLimit.mockResolvedValue({ quotaUsage: 50, quotaTotal: 50, quotaDurationSeconds: 86_400 });
+
+    await expect(processor()({ data: { publicationId: publication.id, workspaceId: publication.workspaceId } })).rejects.toThrow("quota exhausted");
+
+    expect(mocks.createPublishContainer).not.toHaveBeenCalled();
+    expect(mocks.waitForContainer).not.toHaveBeenCalled();
+    expect(mocks.publishContainer).not.toHaveBeenCalled();
+  });
+
   it("does not call media_publish again when Meta already reports the container as published", async () => {
     mocks.waitForContainer.mockResolvedValue({ id: "container_1", status_code: "PUBLISHED" });
 

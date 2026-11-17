@@ -7,7 +7,7 @@ import styles from "./publishing.module.css";
 import { publishingRequest, usePublishingData } from "./use-publishing";
 import type { PublishingBatch } from "./types";
 import MediaUploader from "./media-uploader";
-import { orderBatchItems } from "@/lib/publishing/schedule";
+import { chronologicalDailySlots, orderBatchItems } from "@/lib/publishing/schedule";
 
 const DEFAULT_SLOTS = ["10:00", "12:00", "15:00", "18:00", "21:00"];
 
@@ -24,7 +24,7 @@ export function fillUniqueTimeSlots(current: string[], count: number) {
     slots.push(candidate);
     used.add(candidate);
   }
-  return slots;
+  return chronologicalDailySlots(slots, count);
 }
 
 export default function SpeedPostWorkspace() {
@@ -55,13 +55,16 @@ export default function SpeedPostWorkspace() {
       filenames
     ).map(item => item.assetId);
   }, [data.media, mediaIds, order, randomSeed]);
-  const schedule = useMemo(() => orderedMediaIds.map((id,index) => {
-    if (scheduleMode === "CUSTOM" && customDates[id]) return { id, date: new Date(customDates[id]) };
-    const dayOffset = Math.floor(index / Math.max(1,postsPerDay));
-    const date = new Date(`${startDate}T${slots[index % Math.max(1,postsPerDay)] || "10:00"}:00`);
-    date.setDate(date.getDate() + dayOffset);
-    return { id, date };
-  }), [orderedMediaIds, postsPerDay, slots, startDate, scheduleMode, customDates]);
+  const schedule = useMemo(() => {
+    const dailySlots = chronologicalDailySlots(slots, Math.max(1,postsPerDay));
+    return orderedMediaIds.map((id,index) => {
+      if (scheduleMode === "CUSTOM" && customDates[id]) return { id, date: new Date(customDates[id]) };
+      const dayOffset = Math.floor(index / Math.max(1,postsPerDay));
+      const date = new Date(`${startDate}T${dailySlots[index % Math.max(1,postsPerDay)] || "10:00"}:00`);
+      date.setDate(date.getDate() + dayOffset);
+      return { id, date };
+    });
+  }, [orderedMediaIds, postsPerDay, slots, startDate, scheduleMode, customDates]);
 
   function moveMedia(index: number, delta: number) {
     setMediaIds(ids => { const next = [...ids]; const target = index + delta; if (target < 0 || target >= next.length) return ids; [next[index],next[target]] = [next[target],next[index]]; return next; });

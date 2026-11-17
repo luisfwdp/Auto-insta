@@ -12,6 +12,7 @@ import {
 import { createSignedDownload } from "@/lib/publishing/storage";
 import { RateLimitError } from "@/lib/meta/client";
 import { getRedisConnection } from "./client";
+import { refreshBatchProgress } from "./publishing-batch-progress";
 import {
   PUBLISHING_QUEUE_NAME,
   type PublishPublicationJob,
@@ -21,23 +22,10 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : "Unknown publishing error";
 }
 
-async function refreshBatch(batchId: string | null) {
-  if (!batchId) return;
-  const [publishedItems, failedItems, batch] = await Promise.all([
-    prisma.scheduledPublication.count({ where: { batchId, status: "PUBLISHED" } }),
-    prisma.scheduledPublication.count({ where: { batchId, status: "FAILED" } }),
-    prisma.speedPostBatch.findUnique({ where: { id: batchId }, select: { totalItems: true, status: true } }),
-  ]);
-  if (!batch || batch.status === "CANCELLED") return;
-  const complete = publishedItems + failedItems >= batch.totalItems;
-  await prisma.speedPostBatch.update({
-    where: { id: batchId },
-    data: {
-      publishedItems,
-      failedItems,
-      ...(complete ? { status: failedItems > 0 ? "FAILED" : "COMPLETED", completedAt: new Date() } : {}),
-    },
-  });
+async function assertPublishingQuota(instagramId: string, accessToken: string) {
+  const quota = await getContentPublishingLimit(instagramId, accessToken);
+  if (quota.quotaUsage >= quota.quotaTotal)
+    throw new RateLimitError(`Instagram publishing quota exhausted (${quota.quotaUsage}/${quota.quotaTotal})`);
 }
 
 async function mediaFor(publication: {
@@ -75,7 +63,12 @@ async function processPublication(job: Job<PublishPublicationJob>) {
       assets: { orderBy: { position: "asc" }, include: { asset: true } },
     },
   });
-  if (!publication || publication.status === "CANCELLED" || publication.status === "PUBLISHED") return;
+  if (!publication || publication.status === "CANCELLED") return;
+  if (publication.status === "PUBLISHED") {
+    // An earlier attempt may have published before its batch refresh failed.
+    await refreshBatchProgress(publication.batchId, publication.workspaceId);
+    return;
+  }
   if (publication.batch && ["PAUSED", "CANCELLED"].includes(publication.batch.status)) {
     await prisma.scheduledPublication.updateMany({
       where: { id: publication.id, workspaceId: publication.workspaceId, status: "QUEUED" },
@@ -85,10 +78,13 @@ async function processPublication(job: Job<PublishPublicationJob>) {
   }
   if (!(["QUEUED", "PROCESSING"] as string[]).includes(publication.status)) return;
 
-  await prisma.scheduledPublication.updateMany({
+  const claim = await prisma.scheduledPublication.updateMany({
     where: { id: publication.id, workspaceId: publication.workspaceId, status: { in: ["QUEUED", "PROCESSING"] } },
     data: { status: "PROCESSING", attempts: { increment: 1 }, lastError: null },
   });
+  // A batch cancellation can win after the initial read. Only the worker that
+  // still owns a processable publication may make external publishing calls.
+  if (claim.count !== 1) return;
   if (publication.batchId) await prisma.speedPostBatch.updateMany({
     where: { id: publication.batchId, workspaceId: publication.workspaceId, status: "SCHEDULED" },
     data: { status: "RUNNING" },
@@ -97,12 +93,10 @@ async function processPublication(job: Job<PublishPublicationJob>) {
   const context = await createInstagramContext(publication.instagramAccount, publication.idempotencyKey);
   if (context.provider !== "META") throw new Error("Content publishing requires an official Meta connection");
   await assertContentPublishPermission(context.accessToken);
-  const quota = await getContentPublishingLimit(context.instagramId, context.accessToken);
-  if (quota.quotaUsage >= quota.quotaTotal)
-    throw new RateLimitError(`Instagram publishing quota exhausted (${quota.quotaUsage}/${quota.quotaTotal})`);
 
   let containerId = publication.metaContainerId;
   if (!containerId) {
+    await assertPublishingQuota(context.instagramId, context.accessToken);
     containerId = await createPublishContainer(
       context.instagramId,
       context.accessToken,
@@ -121,6 +115,10 @@ async function processPublication(job: Job<PublishPublicationJob>) {
   const recoveredPublishedContainer = state.status_code === "PUBLISHED";
   let mediaId = publication.metaMediaId;
   if (!recoveredPublishedContainer) {
+    // An existing container may have consumed the last quota slot on an earlier
+    // attempt. Recover PUBLISHED first; quota only gates a new publish request.
+    if (publication.metaContainerId)
+      await assertPublishingQuota(context.instagramId, context.accessToken);
     // Persist the external-call boundary before media_publish. The Graph API
     // returns the final media ID only in the publish response, so a process
     // crash after Meta accepts the request cannot safely reconstruct that ID.
@@ -144,7 +142,7 @@ async function processPublication(job: Job<PublishPublicationJob>) {
       lastError: null,
     },
   });
-  await refreshBatch(publication.batchId);
+  await refreshBatchProgress(publication.batchId, publication.workspaceId);
 }
 
 export function createPublishingWorker(): Worker<PublishPublicationJob> {
@@ -161,7 +159,7 @@ export function createPublishingWorker(): Worker<PublishPublicationJob> {
       data: { status: "FAILED", lastError: message(error) },
     }).then(() => prisma.scheduledPublication.findFirst({
       where: { id: job.data.publicationId, workspaceId: job.data.workspaceId }, select: { batchId: true },
-    })).then((row) => refreshBatch(row?.batchId ?? null)).catch((recordError) => {
+    })).then((row) => refreshBatchProgress(row?.batchId ?? null, job.data.workspaceId)).catch((recordError) => {
       console.error("[Publishing Worker] Failed to persist terminal failure:", message(recordError));
     });
   });

@@ -22,8 +22,25 @@ export async function acceptPendingInvitationsForUser(
   });
 
   for (const invitation of invitations) {
-    await prisma.$transaction([
-      prisma.workspaceMember.upsert({
+    await prisma.$transaction(async (tx) => {
+      const acceptedAt = new Date();
+      // A pending snapshot can be revoked, expire or be replaced before this
+      // transaction. Claim exactly that invitation before granting membership.
+      const consumed = await tx.workspaceInvitation.updateMany({
+        where: {
+          id: invitation.id,
+          workspaceId: invitation.workspaceId,
+          email: normalizedEmail,
+          token: invitation.token,
+          role: invitation.role,
+          status: "PENDING",
+          expiresAt: { gt: acceptedAt },
+        },
+        data: { status: "ACCEPTED", acceptedAt },
+      });
+      if (consumed.count !== 1) return;
+
+      await tx.workspaceMember.upsert({
         where: {
           workspaceId_userId: {
             workspaceId: invitation.workspaceId,
@@ -35,18 +52,10 @@ export async function acceptPendingInvitationsForUser(
           userId,
           role: invitation.role,
         },
-        update: {
-          role: invitation.role,
-        },
-      }),
-      prisma.workspaceInvitation.update({
-        where: { id: invitation.id },
-        data: {
-          status: "ACCEPTED",
-          acceptedAt: now,
-        },
-      }),
-    ]);
+        // Invitation acceptance cannot overwrite later membership authority.
+        update: {},
+      });
+    });
   }
 }
 

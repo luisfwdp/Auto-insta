@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db/client';
 import { getDMQueue, MESSAGE_JOB_NAME, POSTBACK_JOB_NAME } from '@/lib/queue/client';
 import { parseCommentEvents, parseMessageEvents, parsePostbackEvents, parseReadEvents } from '@/lib/meta/webhook';
 import { Prisma, type InstagramProvider } from '@/app/generated/prisma/client';
+import { recordUnmatchedWebhook } from './webhook-diagnostics';
 
 const OPENING_DM_READ_FALLBACK_DELAY_MS = 5 * 60 * 1000;
 type InstagramPayload = Parameters<typeof parseCommentEvents>[0];
@@ -17,7 +18,15 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
   const accountMap = new Map(accounts.map(a => [a.instagramId, a]));
   const allowed = new Set(accountMap.keys());
   const payload = { ...incoming, entry: incoming.entry.filter(e => allowed.has(e.id)) };
-  if (!payload.entry.length) return;
+  const diagnostic = {
+    provider,
+    incoming,
+    unmatched: incoming.entry.filter(e => !allowed.has(e.id)),
+  };
+  if (!payload.entry.length) {
+    await recordUnmatchedWebhook(diagnostic);
+    return;
+  }
   const entriesByWorkspace = new Map<string, typeof payload.entry>();
   for (const entry of payload.entry) {
     const account = accountMap.get(entry.id);
@@ -192,6 +201,9 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
       },
     });
 
+    // Known-account delivery takes priority over best-effort diagnostics. Await
+    // its database-bounded transaction so the request owns the whole lifecycle.
+    await recordUnmatchedWebhook(diagnostic);
     return;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

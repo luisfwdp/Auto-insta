@@ -50,8 +50,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  await prisma.$transaction([
-    prisma.workspaceMember.upsert({
+  const accepted = await prisma.$transaction(async (tx) => {
+    // Atomically consume a still-valid invitation before creating membership.
+    // A revoked, expired or concurrently accepted invitation grants nothing.
+    const consumed = await tx.workspaceInvitation.updateMany({
+      where: {
+        id: invitation.id,
+        workspaceId: invitation.workspaceId,
+        token,
+        status: "PENDING",
+        expiresAt: { gt: new Date() },
+      },
+      data: { status: "ACCEPTED", acceptedAt: new Date() },
+    });
+    if (consumed.count !== 1) return false;
+
+    await tx.workspaceMember.upsert({
       where: {
         workspaceId_userId: {
           workspaceId: invitation.workspaceId,
@@ -63,13 +77,18 @@ export async function POST(request: NextRequest) {
         userId: session.user.id,
         role: invitation.role,
       },
-      update: { role: invitation.role },
-    }),
-    prisma.workspaceInvitation.update({
-      where: { id: invitation.id },
-      data: { status: "ACCEPTED", acceptedAt: new Date() },
-    }),
-  ]);
+      // Stale invitations must not overwrite a member's current role.
+      update: {},
+    });
+    return true;
+  });
+
+  if (!accepted) {
+    return NextResponse.json(
+      { success: false, error: "Invitation is no longer available" },
+      { status: 409 }
+    );
+  }
 
   return NextResponse.json({
     success: true,

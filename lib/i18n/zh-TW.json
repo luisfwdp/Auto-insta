@@ -655,5 +655,12 @@
   "Individual caption": "個別說明文字",
   "Custom date and time": "自訂日期與時間",
   "Move earlier": "提前",
-  "Move later": "延後"
+  "Move later": "延後",
+  "Campaign trigger": "活動觸發條件",
+  "Text reply to a specific Story": "回覆特定限時動態的文字訊息",
+  "Story link": "限時動態連結",
+  "Only matching text replies to this Story can receive the DM. Mentions and reactions are not supported here.": "只有回覆此限時動態且符合觸發條件的文字訊息才會收到私訊。此處不支援提及或表情回應。",
+  "Story campaigns start paused by default. You can explicitly activate them after confirming the original Story link and received Story ID in a real test.": "限時動態活動預設為暫停。透過實際測試確認原始限時動態連結與收到的限時動態 ID 後，您可以明確選擇啟用活動。",
+  "And this reply has": "且此回覆包含",
+  "Enter the original HTTPS Instagram Story link with its numeric Story ID.": "請輸入原始 Instagram 限時動態的 HTTPS 連結，其中須包含數字格式的限時動態 ID。"
 }

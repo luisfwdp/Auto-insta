@@ -989,6 +989,13 @@ export async function refreshLongLivedToken(
   };
 }
 
+/**
+ * IG User fields for comments, inbound DMs, reveal buttons and read fallback.
+ * https://developers.facebook.com/docs/graph-api/webhooks/reference/instagram/
+ * Official IGUser.SubscribedFields and POST /subscribed_apps schema:
+ * https://github.com/meta/facebook-python-business-sdk/blob/main/facebook_business/adobjects/iguser.py
+ * These are IG User fields, not Facebook Page subscription fields.
+ */
 export async function subscribeInstagramAccountToWebhooks(
   instagramAccountId: string,
   accessToken: string
@@ -1002,7 +1009,7 @@ export async function subscribeInstagramAccountToWebhooks(
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
-        subscribed_fields: ["comments", "messages"],
+        subscribed_fields: ["comments", "messages", "messaging_postbacks", "messaging_seen"],
       }),
     }
   );

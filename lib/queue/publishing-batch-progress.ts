@@ -1,0 +1,40 @@
+import { prisma } from "@/lib/db/client";
+
+/** Serialize progress snapshots with other refreshes and batch pause/cancel updates. */
+export async function refreshBatchProgress(batchId: string | null, workspaceId: string) {
+  if (!batchId) return;
+  await prisma.$transaction(async (tx) => {
+    // Lock before counting. Otherwise a stale writer can overwrite cancellation
+    // or counts produced by a later worker. Template parameters stay bound.
+    // lib/db/client.ts uses the default public schema; disposable tests set
+    // their adapter schema and search_path together for this unqualified table.
+    const [batch] = await tx.$queryRaw<Array<{ totalItems: number; status: string; completedAt: Date | null }>>`
+      SELECT "totalItems", "status", "completedAt" FROM "SpeedPostBatch"
+      WHERE "id" = ${batchId} AND "workspaceId" = ${workspaceId}
+      FOR UPDATE
+    `;
+    if (!batch || batch.status === "CANCELLED") return;
+
+    const counts = await tx.scheduledPublication.groupBy({
+      by: ["status"],
+      where: { batchId, workspaceId, status: { in: ["PUBLISHED", "FAILED"] } },
+      _count: { _all: true },
+    });
+    const publishedItems = counts.find((row) => row.status === "PUBLISHED")?._count._all ?? 0;
+    const failedItems = counts.find((row) => row.status === "FAILED")?._count._all ?? 0;
+    const complete = publishedItems + failedItems >= batch.totalItems;
+    const terminalStatus = failedItems > 0 ? "FAILED" : "COMPLETED";
+    await tx.speedPostBatch.updateMany({
+      where: { id: batchId, workspaceId },
+      data: {
+        publishedItems,
+        failedItems,
+        ...(complete ? {
+          status: terminalStatus,
+          // Duplicate refreshes reconcile counters without moving completion.
+          ...(batch.status !== terminalStatus || !batch.completedAt ? { completedAt: new Date() } : {}),
+        } : {}),
+      },
+    });
+  });
+}
