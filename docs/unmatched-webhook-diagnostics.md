@@ -53,3 +53,16 @@ No new Graph API calls or schema changes. Rollback: revert the code commit and
 redeploy the previously approved web application. No data rollback or migration
 is required. Unit tests demonstrate filtering and sampling; a real signed Meta
 delivery is still required to establish the production cause.
+
+## Webhooks assinados com outro objeto
+
+Um webhook com assinatura válida cujo `object` não é `instagram` (ou sem lista
+`entry`) continua sendo ignorado pelas automações, mas passa a gerar o evento
+operacional `Signed webhook ignored: unsupported object or shape`, no máximo um
+por minuto por provedor e por processo. O evento guarda só o nome do objeto
+(quando é um dos objetos documentados pela Meta; senão `other`), se havia lista
+`entry` e quantas entradas vieram. Nenhum ID, remetente ou texto é gravado.
+
+Com isso, "nenhum registro" depois de um teste real significa que nenhuma
+requisição assinada chegou ao callback: nem para conta conhecida, nem para conta
+desconhecida, nem com outro objeto, nem com assinatura inválida.
