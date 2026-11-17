@@ -46,7 +46,7 @@ OAuth, encrypted token storage and both provider signature verifiers are kept.
    it does not need runtime secrets during build. Do not create/scale services or
    alter credentials as part of this operation.
 5. Compare hashes of package.json, package-lock.json, lib/queue/publishing-worker.ts,
-   lib/queue/publishing.ts, lib/queue/batch-progress.ts, lib/queue/process-webhook.ts,
+   lib/queue/publishing.ts, lib/queue/publishing-batch-progress.ts, lib/queue/process-webhook.ts,
    lib/queue/webhook-diagnostics.ts and lib/meta/client.ts inside the deployed
    worker against the approved checkout. Heartbeat alone does not identify code.
 6. Read /api/health, Fly/Vercel logs, heartbeat/canary and both queue counts.
