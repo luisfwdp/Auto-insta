@@ -32,3 +32,10 @@ media upload, real Meta delivery or execution of a production worker.
 Rollback is a reviewed code revert with no migration. Retain the session DTO
 security fix and dependency patches when reverting unrelated UI behavior.
 Authentication changes require specific human approval under AGENTS.md.
+
+The analytics SDK also accepts the concrete pathname, even when its route is
+normalized. The client beforeSend hook now drops invitation URLs entirely and
+strips all query parameters/fragments on other page views and custom events;
+malformed or credential-bearing URLs are dropped. No external analytics capture
+or prior compromise is claimed. Tests use fake markers only. Official hook:
+https://vercel.com/docs/analytics/package#beforesend
