@@ -7,6 +7,7 @@ import { reconcileComments } from "@/lib/polling/comment-reconciler";
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
 import { createPublishingWorker } from "@/lib/queue/publishing-worker";
 import { enqueueDuePublications } from "@/lib/queue/publishing";
+import { auditMetaWebhookSubscriptions } from "@/lib/ops/meta-webhook-audit";
 import os from "node:os";
 
 const worker = createDMWorker();
@@ -92,11 +93,28 @@ const publishingSweepTimer = setInterval(
   PUBLISHING_SWEEP_INTERVAL_MS
 );
 
+// Read-only daily check of what Meta has subscribed per account, so a missing
+// webhook field shows up in diagnostics instead of as silent non-delivery.
+const WEBHOOK_AUDIT_INTERVAL_MS = 24 * 60 * 60_000;
+async function auditWebhooks() {
+  try {
+    const audited = await auditMetaWebhookSubscriptions();
+    console.log(`[DM Worker] Webhook subscription audit recorded for ${audited} account(s)`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[DM Worker] Webhook subscription audit failed:", message);
+  }
+}
+const webhookAuditBootTimer = setTimeout(() => void auditWebhooks(), 30_000);
+const webhookAuditTimer = setInterval(() => void auditWebhooks(), WEBHOOK_AUDIT_INTERVAL_MS);
+
 async function shutdown(signal: string) {
   console.log(`[DM Worker] ${signal} received, closing worker`);
   clearInterval(heartbeatTimer);
   clearInterval(pollTimer);
   clearInterval(publishingSweepTimer);
+  clearTimeout(webhookAuditBootTimer);
+  clearInterval(webhookAuditTimer);
   await Promise.all([worker.close(), publishingWorker.close()]);
   process.exit(0);
 }
