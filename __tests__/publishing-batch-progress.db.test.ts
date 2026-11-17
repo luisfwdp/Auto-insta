@@ -35,6 +35,13 @@ vi.mock("bullmq", () => ({ Worker: class {
     return this;
   }
 } }));
+vi.mock("@/lib/workspace-access", () => ({
+  getCurrentWorkspaceContext: async () => ({ workspaceId: "workspace_a", role: "OWNER" }),
+  canManageWorkspace: () => true,
+}));
+import { NextRequest } from "next/server";
+import * as batchRoute from "@/app/api/publishing/batches/[id]/route";
+import { createPrismaMcpPublishingService } from "@/lib/mcp/publishing-tools";
 import { refreshBatchProgress } from "@/lib/queue/publishing-batch-progress";
 import * as progress from "@/lib/queue/publishing-batch-progress";
 import { createPublishingWorker } from "@/lib/queue/publishing-worker";
@@ -219,6 +226,23 @@ describe.skipIf(!DATABASE_URL)("Speed Post batch progress on disposable PostgreS
     expect(await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: "retry_progress" } })).toEqual(expect.objectContaining({
       publishedItems: 1, failedItems: 0, status: "COMPLETED",
     }));
+  });
+
+  it.each(["http", "mcp"])("%s resume clears current failures and terminal time in the same transaction", async (transport) => {
+    await batch("resume_progress", "a", 2);
+    await publication("resume_failed", "resume_progress", "FAILED");
+    await publication("resume_published", "resume_progress", "PUBLISHED");
+    await state.db.scheduledPublication.update({ where: { id: "resume_failed" }, data: { attempts: 3, lastError: "fake transient error" } });
+    await refreshBatchProgress("resume_progress", "workspace_a");
+    expect(await state.db.speedPostBatch.findUniqueOrThrow({ where: { id: "resume_progress" } })).toMatchObject({ status: "FAILED", failedItems: 1, publishedItems: 1, completedAt: expect.any(Date) });
+    const published = await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: "resume_published" } });
+    const key = (await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: "resume_failed" } })).idempotencyKey;
+    const result = transport === "http"
+      ? await batchRoute.PATCH(new NextRequest("http://localhost/api/publishing/batches/resume_progress", { method: "PATCH", body: JSON.stringify({ action: "resume" }) }), { params: Promise.resolve({ id: "resume_progress" }) }).then(async (response) => { expect(response.status).toBe(200); return (await response.json()).data; })
+      : await createPrismaMcpPublishingService("workspace_a").manageBatch("resume_progress", "resume");
+    expect(result).toMatchObject({ status: "SCHEDULED", failedItems: 0, publishedItems: 1, completedAt: null });
+    expect(await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: "resume_failed" } })).toMatchObject({ status: "SCHEDULED", attempts: 0, lastError: null, idempotencyKey: key });
+    expect(await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: "resume_published" } })).toEqual(published);
   });
 
   it("preserves the original completion timestamp for duplicate COMPLETED and FAILED refreshes", async () => {

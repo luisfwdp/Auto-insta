@@ -25,10 +25,17 @@ export const authConfig = {
       return isEmailAllowedToSignIn(user?.email);
     },
     async session({ session, user }) {
-      if (session.user) {
-        session.user.id = user.id;
-      }
-      return session;
+      // Database sessions include a bearer token and internal adapter fields.
+      // This callback is also returned by /api/auth/session: expose a DTO only.
+      return {
+        expires: new Date(session.expires).toISOString(),
+        user: {
+          id: user.id,
+          name: user.name ?? null,
+          email: user.email ?? null,
+          image: user.image ?? null,
+        },
+      };
     },
   },
   events: {
