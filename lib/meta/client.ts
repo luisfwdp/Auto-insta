@@ -1017,6 +1017,34 @@ export async function subscribeInstagramAccountToWebhooks(
   return handleResponse(response);
 }
 
+/**
+ * Reads back the webhook fields Meta holds for this IG User, so the effective
+ * subscription can be compared with what the connection requested.
+ * GET /{ig-user-id}/subscribed_apps — official IGUser schema:
+ * https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/iguser.py
+ * https://developers.facebook.com/documentation/instagram-platform/webhooks/setup
+ */
+export async function getInstagramAccountWebhookFields(
+  instagramAccountId: string,
+  accessToken: string
+): Promise<string[]> {
+  const response = await fetch(
+    `${instagramGraphBase()}/${instagramAccountId}/subscribed_apps`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  const data = await handleResponse<{
+    data?: Array<{ subscribed_fields?: unknown }>;
+  }>(response);
+  const fields = new Set<string>();
+  for (const app of data.data ?? []) {
+    if (!Array.isArray(app.subscribed_fields)) continue;
+    for (const field of app.subscribed_fields) {
+      if (typeof field === "string") fields.add(field);
+    }
+  }
+  return [...fields].sort();
+}
+
 export async function debugToken(inputToken: string, accessToken: string) {
   const url = new URL(`${facebookGraphBase()}/debug_token`);
   url.searchParams.set("input_token", inputToken);
