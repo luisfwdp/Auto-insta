@@ -63,6 +63,12 @@ por minuto por provedor e por processo. O evento guarda só o nome do objeto
 (quando é um dos objetos documentados pela Meta; senão `other`), se havia lista
 `entry` e quantas entradas vieram. Nenhum ID, remetente ou texto é gravado.
 
-Com isso, "nenhum registro" depois de um teste real significa que nenhuma
-requisição assinada chegou ao callback: nem para conta conhecida, nem para conta
-desconhecida, nem com outro objeto, nem com assinatura inválida.
+Um diagnóstico persistido é evidência positiva de que uma requisição alcançou
+esse caminho. A ausência de registro não comprova ausência de callback: os
+registros são amostrados, a gravação pode falhar ou expirar, e payloads sem eventos
+podem não produzir registro. Uma assinatura inválida segue o diagnóstico de
+rejeição separado, também limitado; não é uma requisição assinada validada.
+
+Para investigar não chegada, correlacione access logs HTTP da Vercel, request ID,
+janela de tempo e status com os diagnósticos persistidos. Testes unitários e uma
+amostra ausente não estabelecem a causa de uma DM não entregue.

@@ -161,4 +161,20 @@ describe("signed unmatched Instagram webhook diagnostics", () => {
     mocks.transaction.mockRejectedValueOnce(new Error("database unavailable"));
     await expect(processWebhook({ provider: "META", payload: { object: "page", entry: [unknown] } })).resolves.toBeUndefined();
   });
+  it("reserves the unsupported-object budget concurrently and renews after a minute", async () => {
+    await Promise.all(Array.from({ length: 20 }, () => processWebhook({ provider: "META", payload: { object: "page", entry: [] } })));
+    expect(mocks.operationalCreate).toHaveBeenCalledOnce();
+    vi.setSystemTime(Date.now() + 60_000);
+    await processWebhook({ provider: "META", payload: { object: "page", entry: [] } });
+    expect(mocks.operationalCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a failed unsupported-object sample budget spent", async () => {
+    mocks.transaction.mockRejectedValueOnce(new Error("database unavailable"));
+    await processWebhook({ provider: "META", payload: { object: "page", entry: [] } });
+    await processWebhook({ provider: "META", payload: { object: "page", entry: [] } });
+    expect(mocks.transaction).toHaveBeenCalledOnce();
+    expect(mocks.operationalCreate).not.toHaveBeenCalled();
+  });
+
 });
