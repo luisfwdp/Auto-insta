@@ -87,6 +87,24 @@ describe("session configuration", () => {
     expect(config.pages).toEqual({ signIn: "/login", verifyRequest: "/verify-request" });
   });
 
+  it("exposes only public session fields, never database bearer or adapter fields", async () => {
+    const { callbacks } = await loadAuthConfig();
+    const expires = new Date("2030-01-01T00:00:00.000Z");
+    const user = { id: "user_1", name: "Local", email: "local@example.test", image: null, createdAt: new Date(), internalField: "private-user-field" };
+    const session = { id: "session_1", sessionToken: "fake-test-bearer", userId: user.id, expires, user, internalField: "private-session-field" };
+    const result = await callbacks.session({ session, user } as never);
+    expect(result).toEqual({ expires: expires.toISOString(), user: { id: user.id, name: user.name, email: user.email, image: null } });
+    expect(JSON.stringify(result)).not.toContain("fake-test-bearer");
+    expect(session.sessionToken).toBe("fake-test-bearer");
+    expect(user.internalField).toBe("private-user-field");
+  });
+
+  it("preserves the user id for server guards and normalizes nullable public fields", async () => {
+    const { callbacks } = await loadAuthConfig();
+    const result = await callbacks.session({ session: { expires: "2030-01-01T00:00:00.000Z" }, user: { id: "user_2" } } as never);
+    expect(result).toEqual({ expires: "2030-01-01T00:00:00.000Z", user: { id: "user_2", name: null, email: null, image: null } });
+  });
+
   it("does not override the default redirect callback, which only allows same-origin targets", async () => {
     const { callbacks } = await loadAuthConfig();
     expect("redirect" in callbacks).toBe(false);

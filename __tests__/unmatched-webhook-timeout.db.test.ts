@@ -47,7 +47,7 @@ async function assertPoolUsableAndTimeoutsRestored() {
     SELECT 1::int AS value, current_setting('statement_timeout') AS statement, current_setting('lock_timeout') AS lock
   `;
   expect(result).toEqual([{ value: 1, statement: "0", lock: "0" }]);
-  const waiting = await sql.query("SELECT pid FROM pg_stat_activity WHERE application_name = $1 AND (wait_event_type = 'Lock' OR state = 'idle in transaction (aborted)')", [applicationName]);
+  const waiting = await sql.query("SELECT pid FROM pg_stat_activity WHERE application_name = $1 AND (wait_event_type = 'Lock' OR state IN ('idle in transaction', 'idle in transaction (aborted)'))", [applicationName]);
   expect(waiting.rows).toEqual([]);
 }
 

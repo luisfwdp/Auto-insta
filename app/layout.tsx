@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Analytics } from "@vercel/analytics/next";
+import PrivacyAnalytics from "@/components/privacy-analytics";
 import "./globals.css";
 import "./criaping-tokens.css";
 import { isFeatureEnabled } from "@/lib/feature-flags";
@@ -60,7 +60,7 @@ export default async function RootLayout({
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {children}
-        <Analytics />
+        <PrivacyAnalytics />
       </body>
     </html>
   );

@@ -208,7 +208,7 @@ export function createPrismaMcpPublishingService(workspace?: string): McpPublish
             status: nextStatus,
             ...(action === "cancel" ? { cancelledAt: new Date() } : {}),
             ...(action === "pause" ? { pausedAt: new Date() } : {}),
-            ...(action === "resume" ? { pausedAt: null } : {}),
+            ...(action === "resume" ? { pausedAt: null, failedItems: 0, completedAt: null } : {}),
           },
         });
         if (claimed.count === 0) throw new Error("Batch changed while the action was being applied");

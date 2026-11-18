@@ -45,7 +45,7 @@ export async function PATCH(request: NextRequest, routeContext: RouteContext) {
         status: nextStatus,
         ...(parsed.data.action === "cancel" ? { cancelledAt: new Date() } : {}),
         ...(parsed.data.action === "pause" ? { pausedAt: new Date() } : {}),
-        ...(parsed.data.action === "resume" ? { pausedAt: null } : {}),
+        ...(parsed.data.action === "resume" ? { pausedAt: null, failedItems: 0, completedAt: null } : {}),
       },
     });
     if (claimed.count === 0) return null;
