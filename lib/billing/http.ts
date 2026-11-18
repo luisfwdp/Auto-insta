@@ -17,12 +17,26 @@ export function billingFailure(error: unknown) {
     { status: known ? error.httpStatus : 503, headers: { "Cache-Control": "no-store" } });
 }
 
+/** Browser workspace is a precondition, never a tenant authority. Read routes
+ * accept legacy requests without it; writes must pin the workspace displayed. */
+export function assertBillingWorkspaceContext(request: Pick<Request, "headers"> | undefined, workspaceId: string, required = false) {
+  const expected = request?.headers.get("x-cria-workspace-id");
+  if (expected === null || expected === undefined) {
+    if (required) throw new BillingError("WORKSPACE_CONTEXT_REQUIRED", 400);
+    return;
+  }
+  if (!/^[A-Za-z0-9_-]{1,200}$/.test(expected)) throw new BillingError("WORKSPACE_CONTEXT_REQUIRED", 400);
+  if (expected !== workspaceId) throw new BillingError("WORKSPACE_CHANGED", 409);
+}
+
 export async function requireBillingOwner(request: NextRequest, { write = false, cancellation = false }: { write?: boolean; cancellation?: boolean } = {}) {
   if (write && (!request.headers.get("origin") || !isTrustedBrowserOrigin(request))) throw new BillingError("FORBIDDEN", 403);
-  const context = await getCurrentWorkspaceContext();
-  if (!context) throw new BillingError("UNAUTHORIZED", 401);
+  const current = await getCurrentWorkspaceContext();
+  if (!current) throw new BillingError("UNAUTHORIZED", 401);
+  const context = Object.freeze({ ...current });
   if (!canManageBilling(context.role)) throw new BillingError("FORBIDDEN", 403);
   if (!isBillingEnabled() && !(cancellation && hasBillingProviderScope())) throw new BillingError("BILLING_DISABLED", 404);
+  assertBillingWorkspaceContext(request, context.workspaceId, write);
   return context;
 }
 
