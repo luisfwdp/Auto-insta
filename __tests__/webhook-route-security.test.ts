@@ -68,6 +68,12 @@ describe("webhook rejection logging", () => {
     expect(processInstagramWebhook).not.toHaveBeenCalled();
   });
 
+  it("rejects an unsupported object before invoking any signed diagnostic", async () => {
+    const response = await POST(request(JSON.stringify({ object: "page", entry: [] })));
+    expect(response.status).toBe(401);
+    expect(processInstagramWebhook).not.toHaveBeenCalled();
+  });
+
   it("allows a new diagnostic after the reporting window", async () => {
     await POST(request("first"));
     vi.setSystemTime(Date.now() + 59_999);
