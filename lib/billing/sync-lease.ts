@@ -21,6 +21,13 @@ export async function assertBillingSyncLease(tx: Prisma.TransactionClient, works
   return row;
 }
 
+/** Only a live owner may extend work; never resurrect an expired/stolen lease. */
+export async function renewBillingSync(workspaceId: string, token: string) {
+  const now = new Date();
+  const renewed = await prisma.workspaceBilling.updateMany({ where: { workspaceId, syncLeaseToken: token, syncLeaseUntil: { gt: now } }, data: { syncLeaseUntil: new Date(now.getTime() + 180_000) } });
+  if (renewed.count !== 1) throw new BillingError("SYNC_LEASE_LOST", 503);
+}
+
 export async function releaseBillingSync(workspaceId: string, token: string) {
   await prisma.workspaceBilling.updateMany({ where: { workspaceId, syncLeaseToken: token }, data: { syncLeaseToken: null, syncLeaseUntil: null } });
 }

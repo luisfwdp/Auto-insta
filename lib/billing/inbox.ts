@@ -81,6 +81,14 @@ export async function claimBillingEvents(limit = 10, now = new Date()): Promise<
   return claimed;
 }
 
+/** Long canonical reads may extend only their own still-live inbox lease. */
+export async function renewBillingEvent(id: string, token: string, now = new Date()) {
+  validTime(now);
+  if (!z.uuid().safeParse(id).success || !z.uuid().safeParse(token).success) throw new BillingError("INVALID_REQUEST", 400);
+  const updated = await prisma.billingEvent.updateMany({ where: { id, ...getBillingProviderScope(), status: "PROCESSING", leaseToken: token, leaseUntil: { gt: now } }, data: { leaseUntil: new Date(now.getTime() + LEASE_MS) } });
+  return updated.count === 1;
+}
+
 /** A stale worker cannot finish, retry or discard a new owner's claim. */
 export async function finishBillingEvent(id: string, token: string, outcome: "processed" | "retry" | "dead", errorCode?: string, now = new Date()) {
   validTime(now);

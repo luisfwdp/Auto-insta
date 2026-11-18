@@ -37,14 +37,22 @@ provider's full path/query after the September2026 URL changes.
    408/409/invalid success/interrupted persistence means UNKNOWN, never an automatic
    new POST. A lost response without an ID requires operator reconciliation against
    the Asaas dashboard/externalReference; never guess a tenant by email or amount.
+   A known OPEN link may expire after its60-minute validity plus5-minute grace if
+   two complete canonical reads find no invoice and the inbox has no payment/paid
+   evidence. UNKNOWN is never released by a timer. An explicit attempt can refresh
+   an expired OPEN link first; a replacement still requires a separate request.
 2. Inbox IDs are unique per environment/account/event. Duplicate conflicts do not
    overwrite the first event. Recoverable CAS leases, bounded retries and durable
    DEAD states protect crashes. Arrival order/callback URLs are not financial proof.
 3. Resolve checkout→payment→subscription through canonical scoped Asaas GETs.
-   Match customer/value/monthly cycle and the immutable server quote. Complete,
-   coherent pagination is mandatory: totals, offsets, hasMore and IDs must agree.
+   Match customer/value/monthly cycle and the immutable server quote. Two complete
+   passes must agree: totals, offsets, hasMore, IDs and snapshots cannot silently
+   drift. An ACTIVE or currently paid non-current subscription raises a review
+   error instead of silently leaving an uncancellable extra renewal.
 4. Fetch canonical data outside transactions under a workspace lease, then verify
    ownership/expiry again under a row lock before atomic ledger/access changes.
+   Renew only live workspace/inbox leases between requests; an expired or stolen
+   claim must never be revived, even if the provider eventually returns success.
    An expired worker cannot overwrite a newer decision. Foreign keys also enforce
    workspace/environment/account links; SQL snapshots cannot be silently rewritten.
 5. Only canonical CONFIRMED/RECEIVED invoice periods grant paid access. Monthly
@@ -57,7 +65,8 @@ provider's full path/query after the September2026 URL changes.
    CHECKOUT_PAID alone cannot establish settlement.
 7. Cancel renewal by the already bound subscription/customer, including an inactive
    subscription whose pending invoices still need removal. Canonical GET precedes
-   idempotent DELETE retries. Preserve paidThrough. Unknown DELETE outcomes are
+   idempotent DELETE retries. Preserve paidThrough and an unexpired card-free
+   trial. Unknown DELETE outcomes are
    reconciled after backoff, never called a successful cancellation prematurely.
 
 ## Worker and operations
@@ -65,8 +74,13 @@ provider's full path/query after the September2026 URL changes.
 The existing worker starts bounded financial maintenance only with a valid scope;
 unconfigured self-hosted deployments do not query new tables or create timers.
 One tick runs at a time; crash leases recover after180s. It classifies interrupted
-creations, processes cancellation outbox and inbox, and enqueues sparse6h recovery
-GETs. It never creates replacement checkouts. Provider IDs/payloads and error
+creations, processes cancellation outbox and inbox, and enqueues sparse recovery
+GETs no more often than6h per resource. A separate CAS cursor advances atomically
+with the event so failing rows cannot monopolize the sweep. Each tick queues at
+most2 subscriptions plus1 checkout, below the drain budget of5 inbox events.
+Only ACTIVE subscriptions or a current paid period are revisited; closed expired
+records stop polling, and UNKNOWN older than7 days remains operator-gated.
+It never creates replacement checkouts. Provider IDs/payloads and error
 messages are excluded from telemetry; only counters and fixed error codes appear.
 Scoped DEAD event/command counts produce the deduplicated fixed
 `BILLING_DEAD_LETTER` alert while other jobs continue. A backlog of only DEAD work
@@ -85,6 +99,8 @@ After human schema approval, a human applies the additive migration in its appro
 database. An agent never migrates production. Configure the same provider scope on
 Vercel and the worker: ASAAS_ENVIRONMENT, ASAAS_ACCOUNT_SCOPE(stable UUID per account),
 ASAAS_API_KEY and distinct ASAAS_WEBHOOK_TOKEN, through their secret managers.
+The web checkout also needs a canonical NEXTAUTH_URL/AUTH_URL; GET/DELETE worker
+maintenance validates no callback URL and does not require it.
 Rotating an API key must preserve account scope. Never put secret values in chat,
 PRs, logs, build args or screenshots. Production Vercel/the existing production
 Fly app rejects Sandbox scope; Sandbox uses a disposable/local or approved staging DB.
@@ -104,6 +120,9 @@ payment, callback delivery or end-user contracting flow.
 Still required: real Sandbox checkout/payment/refund/cancellation/webhook delivery,
 approval/CI on the final composition, enforcement of all advertised quotas in
 HTTP/MCP/worker side effects, and the UI after the backend contract is human-merged.
+Sandbox must include payment across São Paulo midnight and monthly anchors29,30,31.
+Confirm first dueDate and invoice amount against the immutable quote; no unverified
+one-day tolerance is introduced to hide a provider mismatch.
 Catalog quotas alone do not enforce usage. No production charge or deployment is
 part of these local tests; mocks are not real financial proof.
 

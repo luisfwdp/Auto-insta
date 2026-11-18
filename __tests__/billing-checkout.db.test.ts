@@ -16,8 +16,8 @@ vi.mock("@/lib/db/client", () => ({ get prisma() { return state.db; } }));
 import { requestCheckout, readCheckout, recoverInterruptedCheckouts, type CheckoutRequest } from "../lib/billing/checkout";
 import { requestSubscriptionCancellation, readCancellation, processBillingCancellations } from "../lib/billing/cancellation";
 import { claimBillingSync, assertBillingSyncLease, releaseBillingSync } from "../lib/billing/sync-lease";
-import { startCardFreeTrial } from "../lib/billing/trial";
-import { decryptToken } from "../lib/meta/oauth";
+import { startCardFreeTrial, billingStatusDTO } from "../lib/billing/trial";
+import { decryptToken, encryptToken } from "../lib/meta/oauth";
 import { AsaasError, type createAsaasClient, type AsaasSubscriptionDTO } from "../lib/billing/asaas-client";
 
 type Gateway = ReturnType<typeof createAsaasClient>;
@@ -32,8 +32,8 @@ function gateway() {
     createHostedCheckout: vi.fn<Gateway["createHostedCheckout"]>().mockResolvedValue({ id: providerCheckoutId, url: hostedUrl }),
     getPayment: vi.fn<Gateway["getPayment"]>().mockRejectedValue(new Error("Unexpected payment lookup")),
     getSubscription: vi.fn<Gateway["getSubscription"]>().mockResolvedValue(canonicalSubscription()),
-    listPaymentsByCheckout: vi.fn<Gateway["listPaymentsByCheckout"]>().mockResolvedValue({ data: [], hasMore: false, totalCount: 0, offset: 0, limit: 10 }),
-    listPaymentsBySubscription: vi.fn<Gateway["listPaymentsBySubscription"]>().mockResolvedValue({ data: [], hasMore: false, totalCount: 0, offset: 0, limit: 10 }),
+    listPaymentsByCheckout: vi.fn<Gateway["listPaymentsByCheckout"]>().mockResolvedValue({ data: [], hasMore: false, totalCount: 0, offset: 0, limit: 20 }),
+    listPaymentsBySubscription: vi.fn<Gateway["listPaymentsBySubscription"]>().mockResolvedValue({ data: [], hasMore: false, totalCount: 0, offset: 0, limit: 20 }),
     cancelSubscription: vi.fn<Gateway["cancelSubscription"]>().mockResolvedValue({ id: "sub_authorized", deleted: true }),
   } satisfies Gateway;
 }
@@ -44,6 +44,11 @@ async function seedSubscription(paidThrough: Date | null = new Date(Date.now() +
     providerCustomerId: "cus_authorized", checkoutId: checkout.id, planId: "pro-v1", amountCents: 14900, billingAnchorDay: 31, renewalStatus } });
   await state.db.workspaceBilling.update({ where: { workspaceId: "workspace-a" }, data: { currentSubscriptionId: sub.id, status: "ACTIVE", paidThrough } });
   return { sub, checkout, paidThrough };
+}
+async function seedOldOpenCheckout() {
+  return state.db.billingCheckout.create({ data: { workspaceId: "workspace-a", environment: "sandbox", accountScope: scope,
+    requestId: randomUUID(), planId: "pro-v1", amountCents: 14900, firstChargeDate: "2027-01-31", billingAnchorDay: 31,
+    status: "OPEN", providerCheckoutId, checkoutUrlCiphertext: encryptToken(hostedUrl), createdAt: new Date(Date.now() - 66 * 60_000) } });
 }
 let sql: Client;
 
@@ -125,6 +130,46 @@ describe.skipIf(!url)("durable checkout and cancellation services", () => {
     await expect(requestCheckout("workspace-a", request(), provider)).rejects.toThrow();
     expect(provider.createHostedCheckout).not.toHaveBeenCalled(); expect(await state.db.billingCheckout.count()).toBe(0);
   });
+  it("rejects a missing callback origin before persisting any intent or POSTing, even with an injected provider", async () => {
+    vi.stubEnv("NEXTAUTH_URL", undefined); vi.stubEnv("AUTH_URL", undefined);
+    const provider = gateway();
+    await expect(requestCheckout("workspace-a", request(), provider)).rejects.toMatchObject({ code: "CONFIGURATION" });
+    expect(await state.db.billingCheckout.count()).toBe(0); expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+  it("recovers a known old OPEN checkout on explicit request before allowing one separate newly authorized checkout", async () => {
+    const old = await seedOldOpenCheckout(), provider = gateway(), nextProviderId = randomUUID();
+    provider.createHostedCheckout.mockResolvedValue({ id: nextProviderId, url: `https://sandbox.asaas.com/checkoutSession/show?id=${nextProviderId}` });
+    provider.listPaymentsByCheckout.mockImplementation(async (checkoutId, options) => {
+      expect(checkoutId).toBe(providerCheckoutId); expect(options).toEqual({ offset: 0, limit: 20 });
+      // Canonical reads must happen outside the original checkout transaction.
+      await state.db.$transaction(tx => tx.$queryRaw`SELECT "workspaceId" FROM "WorkspaceBilling" WHERE "workspaceId"='workspace-a' FOR UPDATE NOWAIT`);
+      return { data: [], hasMore: false, totalCount: 0, offset: 0, limit: 20 };
+    });
+    expect(await requestCheckout("workspace-a", request({ requestId: old.requestId }), provider)).toEqual({ id: old.id, status: "EXPIRED", planId: "pro-v1", amountCents: 14900, url: null });
+    expect(provider.listPaymentsByCheckout).toHaveBeenCalledTimes(2); expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect(await state.db.billingCheckout.count()).toBe(1);
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: old.id } })).status).toBe("EXPIRED");
+    const results = await Promise.all(Array.from({ length: 20 }, () => requestCheckout("workspace-a", request(), provider)));
+    expect(new Set(results.map(value => value.id)).size).toBe(1); expect(results[0].id).not.toBe(old.id);
+    expect(provider.createHostedCheckout).toHaveBeenCalledOnce(); expect(provider.listPaymentsByCheckout).toHaveBeenCalledTimes(2);
+    expect(await state.db.billingCheckout.count()).toBe(2);
+    expect(await state.db.billingCheckout.findFirstOrThrow({ where: { workspaceId: "workspace-a", id: results[0].id } })).toMatchObject({ status: "OPEN", providerCheckoutId: nextProviderId });
+    expect(await readCheckout("workspace-a", old.id)).toMatchObject({ status: "EXPIRED", url: null });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+  it("does not expire or re-POST an old OPEN checkout with persisted CHECKOUT_PAID evidence and an empty canonical index", async () => {
+    const old = await seedOldOpenCheckout(), provider = gateway();
+    await state.db.billingEvent.create({ data: { environment: "sandbox", accountScope: scope, eventId: "evt_paid_evidence&opaque", eventType: "CHECKOUT_PAID", checkoutId: providerCheckoutId } });
+    for (const input of [request({ requestId: old.requestId }), request()]) {
+      await expect(requestCheckout("workspace-a", input, provider)).rejects.toMatchObject({ code: "PAYMENT_NOT_VISIBLE", httpStatus: 503 });
+    }
+    expect(provider.listPaymentsByCheckout).toHaveBeenCalledTimes(4);
+    expect(await state.db.billingCheckout.findUniqueOrThrow({ where: { id: old.id } })).toMatchObject({ status: "OPEN", providerCheckoutId });
+    expect(await state.db.billingCheckout.count()).toBe(1); expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect((await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } })).syncLeaseToken).toBeNull();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
   it("keeps unknown POST outcomes durable and never POSTs again for the same or a new request id", async () => {
     const provider = gateway(), input = request(); provider.createHostedCheckout.mockRejectedValueOnce(new AsaasError("UNKNOWN_OUTCOME"));
     await expect(requestCheckout("workspace-a", input, provider)).rejects.toMatchObject({ code: "CHECKOUT_OUTCOME_UNKNOWN", httpStatus: 503 });
@@ -189,6 +234,48 @@ describe.skipIf(!url)("durable checkout and cancellation services", () => {
     expect(await processBillingCancellations(5, provider)).toEqual({ processed: 1 });
     expect(await state.db.billingCommand.findUniqueOrThrow({ where: { id: command.id } })).toMatchObject({ status: "PROCESSED", leaseToken: null, leaseUntil: null });
     expect(await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } })).toMatchObject({ status: "CANCELED", paidThrough, syncLeaseToken: null });
+    expect(billingStatusDTO(await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } })).hasAccess).toBe(true);
+  });
+  it("keeps the original72-hour trial after canceling a bound subscription whose payment is still pending", async () => {
+    const { sub } = await seedSubscription(null), provider = gateway();
+    await state.db.workspaceBilling.update({ where: { workspaceId: "workspace-a" }, data: { status: "TRIALING" } });
+    await state.db.billingPayment.create({ data: { workspaceId: "workspace-a", subscriptionId: sub.id, environment: "sandbox", accountScope: scope,
+      providerPaymentId: "pay_pending", amountCents: 14900, dueDate: "2027-01-31", status: "PENDING", deleted: false } });
+    const before = await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } });
+    expect(before.trialEndsAt.getTime() - before.trialStartedAt.getTime()).toBe(72 * 3600_000);
+    const command = await requestSubscriptionCancellation("workspace-a", randomUUID());
+    expect(await processBillingCancellations(5, provider)).toEqual({ processed: 1 });
+    const after = await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } });
+    expect(after).toMatchObject({ status: "TRIALING", paidThrough: null, trialStartedAt: before.trialStartedAt, trialEndsAt: before.trialEndsAt });
+    expect(billingStatusDTO(after)).toMatchObject({ status: "TRIALING", hasAccess: true, trialEndsAt: before.trialEndsAt.toISOString() });
+    expect((await state.db.billingCommand.findUniqueOrThrow({ where: { id: command.id } })).status).toBe("PROCESSED");
+    expect(provider.cancelSubscription).toHaveBeenCalledOnce();
+  });
+  it.each(["before start", "at expiry", "after expiry"] as const)("does not grant a trial %s after cancellation, or reset its original dates", async boundary => {
+    await seedSubscription(null); const provider = gateway();
+    await state.db.workspaceBilling.update({ where: { workspaceId: "workspace-a" }, data: { status: "TRIALING" } });
+    const before = await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } });
+    const command = await requestSubscriptionCancellation("workspace-a", randomUUID());
+    await state.db.billingCommand.update({ where: { id: command.id }, data: { nextAttemptAt: new Date(0) } });
+    const instant = boundary === "before start" ? before.trialStartedAt.getTime() - 1 : before.trialEndsAt.getTime() + (boundary === "after expiry" ? 1 : 0);
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(instant);
+    try {
+      expect(await processBillingCancellations(5, provider)).toEqual({ processed: 1 });
+      const after = await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } });
+      expect(after).toMatchObject({ status: "CANCELED", paidThrough: null, trialStartedAt: before.trialStartedAt, trialEndsAt: before.trialEndsAt });
+      expect(billingStatusDTO(after)).toMatchObject({ status: "CANCELED", hasAccess: false });
+    } finally { vi.useRealTimers(); }
+  });
+  it("does not lift a suspension while canceling renewal and preserves paid and trial dates", async () => {
+    const { paidThrough } = await seedSubscription(), provider = gateway();
+    await state.db.workspaceBilling.update({ where: { workspaceId: "workspace-a" }, data: { status: "SUSPENDED" } });
+    const before = await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } });
+    await requestSubscriptionCancellation("workspace-a", randomUUID());
+    expect(await processBillingCancellations(5, provider)).toEqual({ processed: 1 });
+    const after = await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } });
+    expect(after).toMatchObject({ status: "SUSPENDED", paidThrough, trialStartedAt: before.trialStartedAt, trialEndsAt: before.trialEndsAt });
+    expect(billingStatusDTO(after).hasAccess).toBe(false);
+    expect(provider.cancelSubscription).toHaveBeenCalledOnce();
   });
   it("can cancel after provider price/cycle changes when customer and checkout linkage remain correct", async () => {
     await seedSubscription(); const provider = gateway();

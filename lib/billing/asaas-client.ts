@@ -66,18 +66,26 @@ export class AsaasError extends Error {
   }
 }
 
+/** Checkout-only configuration; workers doing GET/DELETE need no callback URL.
+ * Call this before persisting a new intent so bad configuration is not recorded
+ * as an uncertain provider mutation. This helper never needs the API key.
+ */
+export function getAsaasCheckoutOrigin(env: Readonly<Record<string, string | undefined>> = process.env) {
+  const mode = env.ASAAS_ENVIRONMENT;
+  if (mode !== "sandbox" && mode !== "production") throw new AsaasError("CONFIGURATION");
+  try {
+    const configured = new URL(env.NEXTAUTH_URL ?? env.AUTH_URL ?? "");
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(configured.hostname);
+    if (configured.username || configured.password || (mode === "production" && local) || (configured.protocol !== "https:" && !(mode === "sandbox" && local && configured.protocol === "http:"))) throw new Error();
+    return configured.origin;
+  } catch { throw new AsaasError("CONFIGURATION"); }
+}
+
 /** Fixed hosts only. Secrets remain in a closure and cannot enter JSON DTOs. */
 export function createAsaasClient(env: Readonly<Record<string, string | undefined>> = process.env, fetcher: typeof fetch = fetch) {
   const mode = env.ASAAS_ENVIRONMENT;
   const key = env.ASAAS_API_KEY;
   if ((mode !== "sandbox" && mode !== "production") || !key || key.length < 32 || /[\r\n]/.test(key)) throw new AsaasError("CONFIGURATION");
-  let origin: string;
-  try {
-    const configured = new URL(env.NEXTAUTH_URL ?? env.AUTH_URL ?? "");
-    const local = ["localhost", "127.0.0.1", "[::1]"].includes(configured.hostname);
-    if (configured.username || configured.password || (mode === "production" && local) || (configured.protocol !== "https:" && !(mode === "sandbox" && local && configured.protocol === "http:"))) throw new Error();
-    origin = configured.origin;
-  } catch { throw new AsaasError("CONFIGURATION"); }
   const api = mode === "production" ? "https://api.asaas.com/v3" : "https://api-sandbox.asaas.com/v3";
   const payerOrigin = mode === "production" ? "https://asaas.com" : "https://sandbox.asaas.com";
   const payerOrigins = mode === "production" ? ["https://asaas.com", "https://www.asaas.com"] : ["https://sandbox.asaas.com"];
@@ -98,6 +106,9 @@ export function createAsaasClient(env: Readonly<Record<string, string | undefine
   async function createHostedCheckout(input: HostedCheckoutInput) {
     const parsed = checkoutInput.safeParse(input);
     if (!parsed.success) throw new AsaasError("INVALID_REQUEST");
+    // Configuration errors occur before fetch, outside UNKNOWN_OUTCOME handling.
+    // Use the factory's environment mode consistently with its fixed API host.
+    const origin = getAsaasCheckoutOrigin({ ASAAS_ENVIRONMENT: mode, NEXTAUTH_URL: env.NEXTAUTH_URL, AUTH_URL: env.AUTH_URL });
     const value = parsed.data;
     const callback = (result: string) => `${origin}/settings/billing?checkout=${encodeURIComponent(value.reference)}&result=${result}`;
     let response: Response;

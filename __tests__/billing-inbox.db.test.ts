@@ -12,7 +12,7 @@ const url = process.env.TEST_DATABASE_URL;
 const schema = `billing_inbox_${randomBytes(4).toString("hex")}`;
 const state = vi.hoisted(() => ({ db: undefined as unknown as import("../app/generated/prisma/client").PrismaClient }));
 vi.mock("@/lib/db/client", () => ({ get prisma() { return state.db; } }));
-import { ingestBillingEvent, claimBillingEvents, finishBillingEvent } from "../lib/billing/inbox";
+import { ingestBillingEvent, claimBillingEvents, finishBillingEvent, renewBillingEvent } from "../lib/billing/inbox";
 import { POST } from "../app/api/billing/webhook/route";
 
 const scopeA = "8caf98c6-6aef-4673-a7fa-42f918e9c07b", scopeB = "d728998a-be8a-48e5-b85e-83b6c7eb034e";
@@ -157,6 +157,16 @@ describe.skipIf(!url)("durable Asaas billing inbox", () => {
   it("does not allow completion at the exact lease boundary", async () => {
     await ingestBillingEvent(event()); const now = new Date(Date.now() + 1000), [claimed] = await claimBillingEvents(1, now);
     expect(await finishBillingEvent(claimed.id, claimed.leaseToken!, "processed", undefined, claimed.leaseUntil!)).toBe(false);
+  });
+  it("renews a live inbox lease for slow canonical reads without reviving a stale owner", async () => {
+    await ingestBillingEvent(event()); const now = new Date(Date.now() + 1000), [claimed] = await claimBillingEvents(1, now);
+    const later = new Date(now.getTime() + 120000);
+    expect(await renewBillingEvent(claimed.id, claimed.leaseToken!, later)).toBe(true);
+    const row = await state.db.billingEvent.findUniqueOrThrow({ where: { id: claimed.id } });
+    expect(row.leaseUntil?.getTime()).toBe(later.getTime() + 180000);
+    expect(await renewBillingEvent(claimed.id, randomUUID(), later)).toBe(false);
+    expect(await renewBillingEvent(claimed.id, claimed.leaseToken!, row.leaseUntil!)).toBe(false);
+    expect(await finishBillingEvent(claimed.id, claimed.leaseToken!, "processed", undefined, new Date(later.getTime() + 1000))).toBe(true);
   });
   it("backs off retryable work, redacts free-form errors and preserves retry state on redelivery", async () => {
     await ingestBillingEvent(event()); const now = new Date(Date.now() + 1000), [claimed] = await claimBillingEvents(1, now);

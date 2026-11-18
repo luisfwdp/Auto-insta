@@ -27,6 +27,7 @@ CREATE TABLE "BillingCheckout" (
     "providerCheckoutId" UUID,
     "checkoutUrlCiphertext" TEXT,
     "lastErrorCode" TEXT,
+    "recoveryEnqueuedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -46,6 +47,7 @@ CREATE TABLE "BillingSubscription" (
     "amountCents" INTEGER NOT NULL,
     "billingAnchorDay" INTEGER NOT NULL,
     "renewalStatus" TEXT NOT NULL,
+    "recoveryEnqueuedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -181,6 +183,7 @@ ALTER TABLE "BillingPayment" ADD CONSTRAINT "BillingPayment_subscriptionId_works
 -- AddForeignKey
 ALTER TABLE "BillingCommand" ADD CONSTRAINT "BillingCommand_subscriptionId_workspaceId_fkey" FOREIGN KEY ("subscriptionId", "workspaceId") REFERENCES "BillingSubscription"("id", "workspaceId") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+
 -- One unresolved remote checkout per tenant/provider binding. UNKNOWN must be
 -- reconciled rather than creating another potentially chargeable checkout.
 CREATE UNIQUE INDEX "BillingCheckout_one_unresolved_per_scope_key"
@@ -228,9 +231,9 @@ END;
 $$;
 
 CREATE TRIGGER "BillingCheckout_snapshot_immutable" BEFORE UPDATE ON "BillingCheckout"
-FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('status,providerCheckoutId,checkoutUrlCiphertext,lastErrorCode,updatedAt');
+FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('status,providerCheckoutId,checkoutUrlCiphertext,lastErrorCode,recoveryEnqueuedAt,updatedAt');
 CREATE TRIGGER "BillingSubscription_snapshot_immutable" BEFORE UPDATE ON "BillingSubscription"
-FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('renewalStatus,updatedAt');
+FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('renewalStatus,recoveryEnqueuedAt,updatedAt');
 CREATE TRIGGER "BillingPayment_snapshot_immutable" BEFORE UPDATE ON "BillingPayment"
 FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('status,deleted,syncedAt');
 CREATE TRIGGER "BillingEvent_snapshot_immutable" BEFORE UPDATE ON "BillingEvent"

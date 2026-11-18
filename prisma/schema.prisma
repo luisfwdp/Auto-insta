@@ -165,6 +165,7 @@ model BillingCheckout {
   providerCheckoutId String? @db.Uuid
   checkoutUrlCiphertext String?
   lastErrorCode String?
+  recoveryEnqueuedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -188,6 +189,7 @@ model BillingSubscription {
   amountCents Int
   billingAnchorDay Int
   renewalStatus String
+  recoveryEnqueuedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

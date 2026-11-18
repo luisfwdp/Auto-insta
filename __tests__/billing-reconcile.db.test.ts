@@ -18,6 +18,7 @@ import { claimBillingSync } from "../lib/billing/sync-lease";
 import { billingStatusDTO } from "../lib/billing/trial";
 import { saoPauloDate } from "../lib/billing/config";
 import { monthlyInvoicePeriod } from "../lib/billing/financial-policy";
+import { requestCheckout } from "../lib/billing/checkout";
 import { AsaasError, type AsaasPaymentDTO, type AsaasPaymentPageDTO, type AsaasSubscriptionDTO, type createAsaasClient } from "../lib/billing/asaas-client";
 
 type Gateway = ReturnType<typeof createAsaasClient>;
@@ -59,6 +60,18 @@ async function event(type: string, source: { checkoutId?: string; paymentId?: st
   return ingestBillingEvent({ id: `evt_${randomUUID()}&123`, event: type, ...(source.checkoutId ? { checkout: { id: source.checkoutId } } : {}), ...(source.paymentId ? { payment: { id: source.paymentId } } : {}), ...(source.subscriptionId ? { subscription: { id: source.subscriptionId } } : {}) });
 }
 async function makeRetryDue(id: string) { await state.db.billingEvent.update({ where: { id }, data: { nextAttemptAt: new Date(0) } }); }
+async function recoverySubscription(index: number, renewalStatus = "ACTIVE", paidThrough: Date | null = null) {
+  const workspaceId = `workspace_recovery_${randomUUID()}`, baseline = await paidState();
+  await state.db.workspace.create({ data: { id: workspaceId, name: workspaceId, ownerId: "billing-owner" } });
+  await state.db.workspaceBilling.create({ data: { workspaceId, trialStartedAt: baseline.trialStartedAt, trialEndsAt: baseline.trialEndsAt } });
+  const old = new Date(Date.now() - 8 * 3600000 + index * 1000);
+  const link = await checkout({ workspaceId, status: "COMPLETED", createdAt: old, updatedAt: old });
+  const sub = await state.db.billingSubscription.create({ data: { workspaceId, environment: "sandbox", accountScope: scopeA,
+    providerSubscriptionId: `sub_recovery_${index}_${randomBytes(4).toString("hex")}`, providerCustomerId: `cus_recovery_${index}`, checkoutId: link.id,
+    planId: link.planId, amountCents: link.amountCents, billingAnchorDay: anchor, renewalStatus, createdAt: old, updatedAt: old } });
+  await state.db.workspaceBilling.update({ where: { workspaceId }, data: { currentSubscriptionId: sub.id, status: "PAST_DUE", paidThrough } });
+  return { link, sub, workspaceId };
+}
 
 describe.skipIf(!url)("canonical billing reconciliation", () => {
   beforeAll(async () => {
@@ -71,12 +84,13 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
   });
   beforeEach(async () => {
     vi.stubEnv("ASAAS_ENVIRONMENT", "sandbox"); vi.stubEnv("ASAAS_ACCOUNT_SCOPE", scopeA); vi.stubEnv("VERCEL_ENV", "preview"); vi.stubEnv("FLY_APP_NAME", "");
+    vi.stubEnv("BILLING_ENABLED", "false");
     await sql.query(`TRUNCATE TABLE "BillingEvent", "BillingCommand", "BillingPayment", "BillingSubscription", "BillingCheckout", "WorkspaceBilling" CASCADE`);
     const start = new Date(Date.now() - 10 * 86400000), end = new Date(start.getTime() + 3 * 86400000);
     await state.db.workspaceBilling.createMany({ data: ["workspace-a", "workspace-b"].map(workspaceId => ({ workspaceId, trialStartedAt: start, trialEndsAt: end })) });
     today = saoPauloDate(new Date()); anchor = Number(today.slice(-2));
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
   afterAll(async () => { vi.unstubAllEnvs(); await state.db?.$disconnect(); if (sql) { await sql.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await sql.end(); } });
 
   it("does not trust CHECKOUT_PAID or ACTIVE metadata until a canonical invoice is settled", async () => {
@@ -105,7 +119,7 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     const link = await checkout(), records = Array.from({ length: 21 }, (_, i) => payment(link, { id: `pay_page_${i}` })), fake = gateway(link, [records[0]]);
     fake.provider.listPaymentsBySubscription.mockImplementation(async (_id, options) => page(records.slice(options?.offset ?? 0, (options?.offset ?? 0) + 20), { totalCount: 21, hasMore: !options?.offset, offset: options?.offset ?? 0 }));
     await reconcileBillingResource({ checkoutId: link.providerCheckoutId! }, fake.provider);
-    expect(fake.provider.listPaymentsBySubscription).toHaveBeenCalledTimes(2);
+    expect(fake.provider.listPaymentsBySubscription).toHaveBeenCalledTimes(4);
     expect(await state.db.billingPayment.count()).toBe(21); expect((await paidState()).paidThrough).toEqual(monthlyInvoicePeriod(today, anchor).endsAt);
   });
   it("rejects a canonical page error before writing bindings or granting access", async () => {
@@ -178,6 +192,24 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     await expect(reconcileBillingResource({ checkoutId: link.providerCheckoutId! }, fake.provider)).rejects.toMatchObject({ code: "SYNC_LEASE_LOST" });
     expect(await state.db.billingSubscription.count()).toBe(0); expect(await state.db.billingPayment.count()).toBe(0);
     expect((await paidState()).syncLeaseToken).toBe(replacement); expect((await paidState()).currentSubscriptionId).toBeNull();
+  });
+  it("renews the sync lease around each timely API read when the full traversal exceeds 180 seconds", async () => {
+    const link = await checkout(), fake = gateway(link), started = Date.now();
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(started);
+    const advance = () => vi.setSystemTime(Date.now() + 120000);
+    fake.provider.listPaymentsByCheckout.mockImplementation(async () => { advance(); return page([payment(link)]); });
+    fake.provider.getSubscription.mockImplementation(async () => { advance(); return clone(fake.sub); });
+    fake.provider.listPaymentsBySubscription.mockImplementation(async () => { advance(); return page([payment(link)]); });
+    await reconcileBillingResource({ checkoutId: link.providerCheckoutId! }, fake.provider);
+    expect(Date.now() - started).toBeGreaterThan(180000); expect(billingStatusDTO(await paidState()).hasAccess).toBe(true);
+    expect((await paidState()).syncLeaseToken).toBeNull();
+  });
+  it("never revives a lease whose single API read reached the 180-second deadline", async () => {
+    const link = await checkout(), fake = gateway(link), started = Date.now();
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(started);
+    fake.provider.listPaymentsByCheckout.mockImplementationOnce(async () => { vi.setSystemTime(Date.now() + 180000); return page([payment(link)]); });
+    await expect(reconcileBillingResource({ checkoutId: link.providerCheckoutId! }, fake.provider)).rejects.toMatchObject({ code: "SYNC_LEASE_LOST" });
+    expect(await state.db.billingPayment.count()).toBe(0); expect((await paidState()).currentSubscriptionId).toBeNull();
   });
   it("does not let a failed canonical API read discard an already persisted event", async () => {
     const link = await checkout(), fake = gateway(link); fake.provider.getSubscription.mockRejectedValueOnce(new AsaasError("UNAVAILABLE"));
@@ -256,6 +288,32 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     await event("PAYMENT_REFUNDED", { paymentId: oldPayment.id }); await processBillingInbox(5, old.provider);
     expect((await paidState()).currentSubscriptionId).toBe(initial.currentSubscriptionId); expect((await paidState()).paidThrough).toEqual(initial.paidThrough); expect(billingStatusDTO(await paidState()).hasAccess).toBe(true);
   });
+  it.each(["renewal-active", "paid-current-period"])("alerts durably instead of silently accepting a noncurrent older subscription with %s", async reason => {
+    const oldLink = await checkout({ createdAt: new Date(Date.now() - 2 * 86400000) }), oldPayment = payment(oldLink, { id: "pay_old_historical", subscription: "sub_old", dueDate: invoiceDate(-1) });
+    const old = gateway(oldLink, [oldPayment], subscription(oldLink, { id: "sub_old", status: "INACTIVE", deleted: true }));
+    await reconcileBillingResource({ checkoutId: oldLink.providerCheckoutId! }, old.provider);
+    const nextLink = await checkout(), current = gateway(nextLink); await reconcileBillingResource({ checkoutId: nextLink.providerCheckoutId! }, current.provider);
+    const initial = await paidState();
+    if (reason === "renewal-active") { old.sub.status = "ACTIVE"; old.sub.deleted = false; }
+    else old.ledger.set("pay_old_late", payment(oldLink, { id: "pay_old_late", subscription: "sub_old" }));
+    const item = await event("SUBSCRIPTION_UPDATED", { subscriptionId: "sub_old" });
+    await state.db.billingEvent.update({ where: { id: item.id }, data: { attempts: 11 } });
+    await processBillingInbox(5, old.provider);
+    expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "DEAD", lastErrorCode: "MULTIPLE_SUBSCRIPTIONS_REVIEW_REQUIRED", attempts: 12 });
+    expect((await paidState()).currentSubscriptionId).toBe(initial.currentSubscriptionId); expect((await paidState()).paidThrough).toEqual(initial.paidThrough);
+    expect(old.provider.createHostedCheckout).not.toHaveBeenCalled(); expect(old.provider.cancelSubscription).not.toHaveBeenCalled();
+  });
+  it("rejects a same-total invoice ID swap between the two canonical validation traversals", async () => {
+    const link = await checkout(), records = Array.from({ length: 21 }, (_, index) => payment(link, { id: `pay_stable_${index}` })), fake = gateway(link, [records[0]]);
+    let pass = 0;
+    fake.provider.listPaymentsBySubscription.mockImplementation(async (_id, options) => {
+      const offset = options?.offset ?? 0; if (!offset) pass++;
+      const current = pass === 1 ? records : [...records.slice(0, 20), payment(link, { id: "pay_swapped_same_total" })];
+      return page(current.slice(offset, offset + 20), { offset, totalCount: 21, hasMore: offset === 0 });
+    });
+    await expect(reconcileBillingResource({ checkoutId: link.providerCheckoutId! }, fake.provider)).rejects.toMatchObject({ code: "PAGINATION_INVALID" });
+    expect(pass).toBe(2); expect(await state.db.billingPayment.count()).toBe(0); expect((await paidState()).currentSubscriptionId).toBeNull();
+  });
   it.each(["CHECKOUT_EXPIRED", "CHECKOUT_CANCELED"])("only releases an old empty checkout after authenticated terminal %s evidence", async type => {
     const link = await checkout({ createdAt: new Date(Date.now() - 70 * 60000) }), fake = gateway(link, []);
     await expect(reconcileBillingResource({ checkoutId: link.providerCheckoutId! }, fake.provider)).rejects.toMatchObject({ code: "PAYMENT_NOT_VISIBLE" });
@@ -270,11 +328,92 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: link.id } })).status).toBe("OPEN");
     expect(await state.db.billingEvent.findFirstOrThrow()).toMatchObject({ status: "RETRY", lastErrorCode: "PAYMENT_NOT_VISIBLE" });
   });
-  it("enqueues sparse recovery idempotently without creating checkouts or inferring empty checkouts are terminal", async () => {
-    const past = new Date(Date.now() - 7 * 3600000), link = await checkout({ createdAt: past, updatedAt: past }), fake = gateway(link, []);
+  it("recovers an expired known OPEN link without a terminal webhook and allows a new explicit checkout", async () => {
+    const past = new Date(Date.now() - 7 * 3600000), link = await checkout({ createdAt: past, updatedAt: past, checkoutUrlCiphertext: "fake-encrypted-known-link" }), fake = gateway(link, []);
     expect(await enqueueBillingRecovery()).toMatchObject({ count: 1 }); expect(await enqueueBillingRecovery()).toMatchObject({ count: 0 });
     expect(await state.db.billingEvent.findFirstOrThrow()).toMatchObject({ eventType: "INTERNAL_CHECKOUT_RECONCILE", checkoutId: link.providerCheckoutId });
     await processBillingInbox(5, fake.provider);
-    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: link.id } })).status).toBe("OPEN"); expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: link.id } })).status).toBe("EXPIRED"); expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+    vi.stubEnv("BILLING_ENABLED", "true"); vi.stubEnv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+    const nextId = randomUUID(); fake.provider.createHostedCheckout.mockResolvedValueOnce({ id: nextId, url: `https://sandbox.asaas.com/checkoutSession/show?id=${nextId}` });
+    expect(await requestCheckout("workspace-a", { requestId: randomUUID(), planId: "pro-v1", expectedAmountCents: 14900, acceptImmediateCharge: true }, fake.provider)).toMatchObject({ status: "OPEN" });
+    expect(fake.provider.createHostedCheckout).toHaveBeenCalledOnce(); expect(await state.db.billingCheckout.count()).toBe(2);
+  });
+  it("leaves an old UNKNOWN creation operator-gated after empty canonical recovery", async () => {
+    const past = new Date(Date.now() - 7 * 3600000), link = await checkout({ status: "UNKNOWN", createdAt: past, updatedAt: past }), fake = gateway(link, []);
+    await enqueueBillingRecovery(); await processBillingInbox(5, fake.provider);
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: link.id } })).status).toBe("UNKNOWN");
+    vi.stubEnv("BILLING_ENABLED", "true"); vi.stubEnv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+    expect(await requestCheckout("workspace-a", { requestId: randomUUID(), planId: "pro-v1", expectedAmountCents: 14900, acceptImmediateCharge: true }, fake.provider)).toMatchObject({ status: "UNKNOWN" });
+    expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled(); expect(await state.db.billingCheckout.count()).toBe(1);
+  });
+  it("does not expire a link with durable CHECKOUT_PAID evidence even when internal recovery sees no canonical invoices", async () => {
+    const past = new Date(Date.now() - 7 * 3600000), link = await checkout({ createdAt: past, updatedAt: past }), fake = gateway(link, []);
+    const paid = await event("CHECKOUT_PAID", { checkoutId: link.providerCheckoutId! }); await processBillingInbox(5, fake.provider);
+    expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: paid.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "PAYMENT_NOT_VISIBLE" });
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: link.id } })).status).toBe("OPEN");
+    await enqueueBillingRecovery(); await processBillingInbox(5, fake.provider);
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: link.id } })).status).toBe("OPEN");
+    expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+  });
+  it("rotates recovery past three older failed subscriptions so a newer healthy one is reconciled", async () => {
+    const cohort = [];
+    for (let index = 0; index < 4; index++) cohort.push(await recoverySubscription(index));
+    const healthy = cohort[3], record = payment(healthy.link, { id: "pay_recovery_healthy", subscription: healthy.sub.providerSubscriptionId, customer: healthy.sub.providerCustomerId });
+    const fake = gateway(healthy.link, [record], subscription(healthy.link, { id: healthy.sub.providerSubscriptionId, customer: healthy.sub.providerCustomerId }));
+    fake.provider.getSubscription.mockImplementation(async id => {
+      if (id !== healthy.sub.providerSubscriptionId) throw new AsaasError("UNAVAILABLE");
+      return clone(fake.sub);
+    });
+    expect(await enqueueBillingRecovery()).toMatchObject({ count: 2 }); await processBillingInbox(5, fake.provider);
+    const first = await state.db.billingSubscription.findMany({ where: { id: { in: cohort.map(row => row.sub.id) } } });
+    expect(first.filter(row => row.recoveryEnqueuedAt !== null)).toHaveLength(2);
+    expect(await enqueueBillingRecovery()).toMatchObject({ count: 2 }); await processBillingInbox(5, fake.provider);
+    const healthyBilling = await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: healthy.workspaceId } });
+    expect(billingStatusDTO(healthyBilling).hasAccess).toBe(true);
+    expect(await state.db.billingEvent.findFirstOrThrow({ where: { subscriptionId: healthy.sub.providerSubscriptionId } })).toMatchObject({ status: "PROCESSED" });
+    expect(await state.db.billingEvent.count({ where: { status: "RETRY", lastErrorCode: "UNAVAILABLE" } })).toBe(3);
+    expect(await enqueueBillingRecovery()).toMatchObject({ count: 0 });
+    expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+  });
+  it("enqueues one checkout and two subscriptions at most per recovery tick", async () => {
+    await recoverySubscription(0); await recoverySubscription(1); await recoverySubscription(2);
+    const past = new Date(Date.now() - 8 * 3600000);
+    await checkout({ createdAt: past, updatedAt: past });
+    await checkout({ workspaceId: "workspace-b", createdAt: past, updatedAt: past });
+    expect(await enqueueBillingRecovery()).toMatchObject({ count: 3 });
+    expect(await state.db.billingEvent.count({ where: { eventType: "INTERNAL_SUBSCRIPTION_RECONCILE" } })).toBe(2);
+    expect(await state.db.billingEvent.count({ where: { eventType: "INTERNAL_CHECKOUT_RECONCILE" } })).toBe(1);
+  });
+  it("does not poll closed unpaid subscriptions forever, while retaining recovery for a paid remaining period", async () => {
+    const closed = await recoverySubscription(0, "CANCELED", new Date(Date.now() - 86400000));
+    const paid = await recoverySubscription(1, "INACTIVE", new Date(Date.now() + 86400000));
+    expect(await enqueueBillingRecovery()).toMatchObject({ count: 1 });
+    expect(await state.db.billingEvent.findFirstOrThrow()).toMatchObject({ subscriptionId: paid.sub.providerSubscriptionId });
+    expect((await state.db.billingSubscription.findUniqueOrThrow({ where: { id: closed.sub.id } })).recoveryEnqueuedAt).toBeNull();
+  });
+  it("leaves old UNKNOWN creations in the operator queue rather than polling indefinitely", async () => {
+    const past = new Date(Date.now() - 8 * 86400000), link = await checkout({ status: "UNKNOWN", createdAt: past, updatedAt: past });
+    expect(await enqueueBillingRecovery()).toMatchObject({ count: 0 });
+    expect(await state.db.billingEvent.count()).toBe(0); expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: link.id } })).status).toBe("UNKNOWN");
+  });
+  it("commits each recovery cursor and durable event only once across competing sweeps", async () => {
+    const current = await recoverySubscription(0), past = new Date(Date.now() - 8 * 3600000), link = await checkout({ createdAt: past, updatedAt: past });
+    const results = await Promise.all(Array.from({ length: 5 }, () => enqueueBillingRecovery()));
+    expect(results.reduce((sum, result) => sum + result.count, 0)).toBe(2);
+    expect(await state.db.billingEvent.count()).toBe(2);
+    expect((await state.db.billingSubscription.findUniqueOrThrow({ where: { id: current.sub.id } })).recoveryEnqueuedAt).not.toBeNull();
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: link.id } })).recoveryEnqueuedAt).not.toBeNull();
+    expect(await enqueueBillingRecovery()).toMatchObject({ count: 0 });
+  });
+  it("rolls back recovery cursors when the durable event insert fails", async () => {
+    const current = await recoverySubscription(0), past = new Date(Date.now() - 8 * 3600000), link = await checkout({ createdAt: past, updatedAt: past });
+    await sql.query(`CREATE FUNCTION recovery_event_test_failure() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test-only inbox failure'; END $$`);
+    await sql.query(`CREATE TRIGGER recovery_event_test_failure BEFORE INSERT ON "BillingEvent" FOR EACH ROW EXECUTE FUNCTION recovery_event_test_failure()`);
+    try { await expect(enqueueBillingRecovery()).rejects.toBeDefined(); } finally { await sql.query(`DROP TRIGGER recovery_event_test_failure ON "BillingEvent"`); await sql.query(`DROP FUNCTION recovery_event_test_failure()`); }
+    expect(await state.db.billingEvent.count()).toBe(0);
+    expect((await state.db.billingSubscription.findUniqueOrThrow({ where: { id: current.sub.id } })).recoveryEnqueuedAt).toBeNull();
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: link.id } })).recoveryEnqueuedAt).toBeNull();
+    expect(await enqueueBillingRecovery()).toMatchObject({ count: 2 });
   });
 });

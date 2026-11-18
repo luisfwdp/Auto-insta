@@ -63,8 +63,14 @@ export async function processBillingCancellations(limit = 5, provider?: ReturnTy
         const finished = await tx.billingCommand.updateMany({ where: { id: candidate.id, workspaceId: candidate.workspaceId, status: "PROCESSING", leaseToken, leaseUntil: { gt: new Date() } }, data: { status: "PROCESSED", leaseToken: null, leaseUntil: null, lastErrorCode: null } });
         if (finished.count !== 1) throw new BillingError("COMMAND_LEASE_LOST", 503);
         await tx.billingSubscription.updateMany({ where: { id: sub.id, workspaceId: sub.workspaceId, ...scope }, data: { renewalStatus } });
-        if (billing.currentSubscriptionId === sub.id && billing.status !== "SUSPENDED") await tx.workspaceBilling.update({ where: { workspaceId: sub.workspaceId }, data: { status: "CANCELED" } });
-        // paidThrough is preserved; stopping renewal never discards paid time.
+        if (billing.currentSubscriptionId === sub.id && billing.status !== "SUSPENDED") {
+          const accessNow = new Date();
+          const paid = billing.paidThrough !== null && billing.paidThrough > accessNow;
+          const trial = billing.trialStartedAt <= accessNow && accessNow < billing.trialEndsAt;
+          await tx.workspaceBilling.update({ where: { workspaceId: sub.workspaceId }, data: { status: !paid && trial ? "TRIALING" : "CANCELED" } });
+        }
+        // Preserve both original trial deadlines and paidThrough. Canceling an
+        // unpaid subscription must not revoke the remainder of a card-free trial.
       });
       processed++;
     } catch (error) {

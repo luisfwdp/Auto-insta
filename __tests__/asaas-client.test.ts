@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAsaasClient, AsaasError } from "../lib/billing/asaas-client";
+import { createAsaasClient, AsaasError, getAsaasCheckoutOrigin } from "../lib/billing/asaas-client";
 import { verifyAsaasWebhookToken } from "../lib/billing/asaas-webhook-auth";
 
 const env = { ASAAS_ENVIRONMENT: "sandbox", ASAAS_API_KEY: "fake-api-credential-for-local-test-only", NEXTAUTH_URL: "https://app.example.test" };
@@ -20,12 +20,19 @@ describe("Asaas hosted checkout boundary", () => {
       items: [{ name: "Pro", quantity: 1, value: 149 }], subscription: { cycle: "MONTHLY", nextDueDate: "2027-01-31" } });
     expect(JSON.stringify(client)).not.toContain(env.ASAAS_API_KEY);
   });
-  it.each([{}, { ...env, ASAAS_ENVIRONMENT: "live" }, { ...env, NEXTAUTH_URL: "http://public.example" }, { ...env, NEXTAUTH_URL: "https://user:password@app.example" }, { ...env, ASAAS_API_KEY: "fake\r\nleak" }])("fails closed for incomplete or unsafe configuration", config => {
+  it.each([{}, { ...env, ASAAS_ENVIRONMENT: "live" }, { ...env, ASAAS_API_KEY: "fake\r\nleak" }])("fails closed for incomplete or unsafe provider configuration", config => {
     expect(() => createAsaasClient(config)).toThrow(AsaasError);
   });
+  it.each(["http://public.example", "https://user:password@app.example"])("rejects unsafe checkout origin %s lazily before fetch", async origin => {
+    const fetcher = vi.fn();
+    const client = createAsaasClient({ ...env, NEXTAUTH_URL: origin }, fetcher);
+    await expect(client.createHostedCheckout(input)).rejects.toMatchObject({ code: "CONFIGURATION" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("uses a distinct production host and refuses a loopback production URL", async () => {
-    expect(() => createAsaasClient({ ...env, ASAAS_ENVIRONMENT: "production", NEXTAUTH_URL: "http://localhost:3000" })).toThrow(AsaasError);
-    expect(() => createAsaasClient({ ...env, ASAAS_ENVIRONMENT: "production", NEXTAUTH_URL: "https://localhost:3000" })).toThrow(AsaasError);
+    const blockedFetch = vi.fn();
+    for (const origin of ["http://localhost:3000", "https://localhost:3000"]) await expect(createAsaasClient({ ...env, ASAAS_ENVIRONMENT: "production", NEXTAUTH_URL: origin }, blockedFetch).createHostedCheckout(input)).rejects.toMatchObject({ code: "CONFIGURATION" });
+    expect(blockedFetch).not.toHaveBeenCalled();
     const fetcher = vi.fn().mockResolvedValue(Response.json({ id: checkoutId }));
     await createAsaasClient({ ...env, ASAAS_ENVIRONMENT: "production" }, fetcher).createHostedCheckout(input);
     expect(fetcher.mock.calls[0][0]).toBe("https://api.asaas.com/v3/checkouts");
@@ -53,6 +60,52 @@ describe("Asaas hosted checkout boundary", () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ id: checkoutId, extra: "x".repeat(65 * 1024) }));
     await expect(createAsaasClient(env, fetcher).createHostedCheckout(input)).rejects.toMatchObject({ code: "UNKNOWN_OUTCOME" });
     expect(fetcher).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Asaas checkout-only origin configuration", () => {
+  it.each([
+    ["sandbox", undefined], ["production", undefined], ["sandbox", "http://public.example"], ["sandbox", "https://user:password@app.example"],
+  ] as const)("allows worker GET/DELETE in %s without a valid callback origin", async (mode, origin) => {
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json(payment)).mockResolvedValueOnce(Response.json(subscription))
+      .mockResolvedValueOnce(Response.json(page([payment]))).mockResolvedValueOnce(Response.json(page([{ ...payment, checkoutSession: null }])))
+      .mockResolvedValueOnce(Response.json({ id: subscription.id, deleted: true }));
+    const client = createAsaasClient({ ...env, ASAAS_ENVIRONMENT: mode, NEXTAUTH_URL: origin, AUTH_URL: undefined }, fetcher);
+    expect((await client.getPayment(payment.id)).id).toBe(payment.id);
+    expect((await client.getSubscription(subscription.id)).id).toBe(subscription.id);
+    expect((await client.listPaymentsByCheckout(checkoutId)).data).toHaveLength(1);
+    expect((await client.listPaymentsBySubscription(subscription.id)).data[0].checkoutSession).toBeNull();
+    expect(await client.cancelSubscription(subscription.id)).toEqual({ id: subscription.id, deleted: true });
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    const api = mode === "production" ? "https://api.asaas.com/v3" : "https://api-sandbox.asaas.com/v3";
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([`${api}/payments/${payment.id}`, `${api}/subscriptions/${subscription.id}`,
+      `${api}/payments?checkoutSession=${checkoutId}&offset=0&limit=10`, `${api}/payments?subscription=${subscription.id}&offset=0&limit=10`, `${api}/subscriptions/${subscription.id}`]);
+    await expect(client.createHostedCheckout(input)).rejects.toMatchObject({ code: "CONFIGURATION" });
+    expect(fetcher).toHaveBeenCalledTimes(5);
+  });
+  it("exports readiness validation independently of an API key, canonicalizing origin and preserving AUTH_URL fallback", async () => {
+    expect(getAsaasCheckoutOrigin({ ASAAS_ENVIRONMENT: "production", NEXTAUTH_URL: "https://app.example.test/settings?result=fake#billing" })).toBe("https://app.example.test");
+    const config = { ASAAS_ENVIRONMENT: "sandbox", ASAAS_API_KEY: env.ASAAS_API_KEY, AUTH_URL: "https://fallback.example.test/path" };
+    expect(getAsaasCheckoutOrigin(config)).toBe("https://fallback.example.test");
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ id: checkoutId }));
+    await createAsaasClient(config, fetcher).createHostedCheckout(input);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).callback.successUrl).toBe(`https://fallback.example.test/settings/billing?checkout=${input.reference}&result=success`);
+  });
+  it.each(["http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"])("retains sandbox local HTTP callback support: %s", origin => {
+    expect(getAsaasCheckoutOrigin({ ASAAS_ENVIRONMENT: "sandbox", NEXTAUTH_URL: origin })).toBe(origin);
+  });
+  it.each([
+    {}, { ASAAS_ENVIRONMENT: "live", NEXTAUTH_URL: "https://app.example.test" }, { ASAAS_ENVIRONMENT: "sandbox" },
+    { ASAAS_ENVIRONMENT: "sandbox", NEXTAUTH_URL: "http://public.example" },
+    { ASAAS_ENVIRONMENT: "sandbox", NEXTAUTH_URL: "https://user:password@app.example" },
+    { ASAAS_ENVIRONMENT: "production", NEXTAUTH_URL: "https://localhost:3000" },
+    { ASAAS_ENVIRONMENT: "production", NEXTAUTH_URL: "https://127.0.0.1:3000" },
+    { ASAAS_ENVIRONMENT: "production", NEXTAUTH_URL: "https://[::1]:3000" },
+    { ASAAS_ENVIRONMENT: "production", NEXTAUTH_URL: "http://localhost:3000" },
+    { ASAAS_ENVIRONMENT: "sandbox", NEXTAUTH_URL: "http://public.example", AUTH_URL: "https://fallback.example.test" },
+  ])("fails readiness closed for missing/unsafe checkout configuration %#", config => {
+    expect(() => getAsaasCheckoutOrigin(config)).toThrow(AsaasError);
+    try { getAsaasCheckoutOrigin(config); } catch (error) { expect(error).toMatchObject({ code: "CONFIGURATION" }); }
   });
 });
 

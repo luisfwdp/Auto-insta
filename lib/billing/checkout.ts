@@ -2,10 +2,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/db/client";
 import { encryptToken, decryptToken } from "@/lib/meta/oauth";
 import type { BillingCheckout } from "@/app/generated/prisma/client";
-import { createAsaasClient, AsaasError } from "./asaas-client";
+import { createAsaasClient, AsaasError, getAsaasCheckoutOrigin } from "./asaas-client";
 import { BILLING_PLANS, BILLING_PLAN_IDS } from "./catalog";
 import { BillingError, getBillingProviderScope, saoPauloDate } from "./config";
 import { isBillingEnabled } from "./trial";
+import { reconcileBillingResource } from "./reconcile";
 
 export const checkoutRequest = z.object({
   requestId: z.uuid(), planId: z.enum(BILLING_PLAN_IDS),
@@ -28,6 +29,7 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
   const input = parsed.data, plan = BILLING_PLANS[input.planId], scope = getBillingProviderScope();
   if (input.expectedAmountCents !== plan.amountCents) throw new BillingError("OFFER_CHANGED");
   const gateway = provider ?? createAsaasClient();
+  getAsaasCheckoutOrigin();
   // Validate encryption configuration before any financial mutation could happen.
   encryptToken("billing-readiness");
   const now = new Date();
@@ -55,7 +57,13 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
     const row = await tx.billingCheckout.create({ data: { workspaceId, ...scope, requestId: input.requestId, planId: input.planId, amountCents: plan.amountCents, firstChargeDate: date, billingAnchorDay: Number(date.slice(-2)) } });
     return { row, created: true };
   });
-  if (!reservation.created) return checkoutDTO(reservation.row);
+  if (!reservation.created) {
+    if (reservation.row.status === "OPEN" && reservation.row.providerCheckoutId && Date.now() - reservation.row.createdAt.getTime() > 65 * 60_000) {
+      await reconcileBillingResource({ checkoutId: reservation.row.providerCheckoutId, recoverExpiredOpen: true }, gateway);
+      return readCheckout(workspaceId, reservation.row.id);
+    }
+    return checkoutDTO(reservation.row);
+  }
 
   const row = reservation.row;
   let result: Awaited<ReturnType<typeof gateway.createHostedCheckout>> | undefined;
