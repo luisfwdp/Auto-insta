@@ -101,7 +101,7 @@ describe.skipIf(!url)("card-free three-day trial", () => {
     expect(billingStatusDTO({ ...row, status: "SUSPENDED", paidThrough }, now).hasAccess).toBe(false);
   });
   it("uses the server workspace instead of a supplied tenant id", async () => {
-    const request = new NextRequest("https://app.example.test/api/billing/trial", { method: "POST", headers: { Origin: "https://app.example.test", "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: "workspace-b" }) });
+    const request = new NextRequest("https://app.example.test/api/billing/trial", { method: "POST", headers: { Origin: "https://app.example.test", "x-cria-workspace-id": "workspace-a", "Content-Type": "application/json" }, body: JSON.stringify({ workspaceId: "workspace-b" }) });
     expect((await POST(request)).status).toBe(200);
     expect(await state.db.workspaceBilling.findUnique({ where: { workspaceId: "workspace-b" } })).toBeNull();
     expect(await state.db.workspaceBilling.count({ where: { workspaceId: "workspace-a" } })).toBe(1);

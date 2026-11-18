@@ -83,7 +83,7 @@ describe("new sales are isolated from existing commercial access", () => {
   it("preserves paid status and the cancellation route while sales are paused", async () => {
     vi.stubEnv("BILLING_SALES_ENABLED", "false");
     const status = await statusGET(); expect(status.status).toBe(200); expect((await status.json()).data).toMatchObject({ enabled: true, status: "ACTIVE", hasAccess: true, planId: "pro-v1" });
-    const canceled = await cancelPOST(new NextRequest("https://app.example.test/api/billing/cancel", { method: "POST", headers: { Origin: "https://app.example.test" }, body: JSON.stringify({ requestId: id }) }));
+    const canceled = await cancelPOST(new NextRequest("https://app.example.test/api/billing/cancel", { method: "POST", headers: { Origin: "https://app.example.test", "x-cria-workspace-id": "workspace-a" }, body: JSON.stringify({ requestId: id }) }));
     expect(canceled.status).toBe(202); expect(await canceled.json()).toEqual({ success: true, data: { id, status: "PENDING" } });
     expect(state.cancel).toHaveBeenCalledExactlyOnceWith("workspace-a", id); expect(globalThis.fetch).not.toHaveBeenCalled();
   });
