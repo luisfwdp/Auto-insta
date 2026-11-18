@@ -66,7 +66,10 @@ describe.skipIf(!url)("financial database contracts", () => {
   });
   it("restricts deleting a current subscription even when it has no payment or command children", async () => {
     await sql.query(`UPDATE "WorkspaceBilling" SET "currentSubscriptionId"=$1 WHERE "workspaceId"='workspace-a'`, [subA]);
-    await expect(sql.query(`DELETE FROM "BillingSubscription" WHERE id=$1`, [subA])).rejects.toMatchObject({ code: "23001", constraint: "WorkspaceBilling_currentSubscriptionId_workspaceId_fkey" });
+    // PostgreSQL 16/18 report different integrity SQLSTATEs for this RESTRICT
+    // deletion. The exact composite constraint and preserved rows are authority.
+    await expect(sql.query(`DELETE FROM "BillingSubscription" WHERE id=$1`, [subA])).rejects.toMatchObject({ code: expect.stringMatching(/^(23001|23503)$/), constraint: "WorkspaceBilling_currentSubscriptionId_workspaceId_fkey" });
+    expect((await sql.query(`SELECT id, "workspaceId" FROM "BillingSubscription" WHERE id=$1`, [subA])).rows).toEqual([{ id: subA, workspaceId: "workspace-a" }]);
     expect((await sql.query(`SELECT "currentSubscriptionId" FROM "WorkspaceBilling" WHERE "workspaceId"='workspace-a'`)).rows[0].currentSubscriptionId).toBe(subA);
   });
   it.each([{ workspaceId: "workspace-b" }, { environment: "production" }, { accountScope: scopeB }])("rejects subscription→checkout cross-tenant/provider linkage %#", async patch => {
