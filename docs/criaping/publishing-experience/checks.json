@@ -120,7 +120,13 @@
     "components/criaping-onboarding.tsx": "bce8a7b6f5c4682c3de9d6b6e44894c19e6ebb2a288d87b2ce2123a238b4996d",
     "components/campaigns.module.css": "87f3dbf57d13a6aab914aa8c58701541ca25e0104b93fda0ee0f02e88c20552b",
     "components/publishing/publishing.module.css": "b8a3e80cfaa94e4bbb1af4e5ef395d9851c0a1185b4dcdb9b7d8365fd508da77",
-    "lib/i18n/pt-BR.json": "3e0c1462f1e885b1665f3b23441f0146bed08af59cf7d7ffee5ea18b7e7180d4",
-    "lib/i18n/zh-TW.json": "fc5332fdb807c15064dc791c6e5b9d2f8af5cdd43e6e97ecf9a6e81539167df6"
+    "lib/i18n/pt-BR.json": "6ba2a2208ab63e4e00678e99957b1f70b13e46376dd1a59845fba5abfd91ef1a",
+    "lib/i18n/zh-TW.json": "0d818d74d1862bf0f470341e1e58d8a60fd9923efbb18c05aaa98971ba98a526"
+  },
+  "composedMain": "557c60c0c4e10d13d66ebf888d80ae3e38107438",
+  "nativeTests": {
+    "passed": 1945,
+    "suites": 120,
+    "skipped": 0
   }
 }

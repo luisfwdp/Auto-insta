@@ -39,12 +39,12 @@ não fazem parte deste PR de revisão.
 
 ## Evidências de revisão
 
-- 1.938 testes /119 suítes, sem skips, com PostgreSQL descartável.
+- 1.945 testes /120 suítes, sem skips, com PostgreSQL descartável.
 - Typecheck, lint e build passaram; lint tem somente o aviso anterior em invitation-accept-card.
 - [53 verificações de navegador](criaping/publishing-experience/checks.json),
-  incluindo lote de100arquivos, teclado, drop válido/ocupado/inválido, confirmação,
+  incluindo lote de 100 arquivos, teclado, drop válido/ocupado/inválido, confirmação,
   falha parcial, limites, progresso honesto, fuso, edição e cancelamento.
-- Seis auditorias axeWCAG A/AA nos componentes dentro de main: zero violações.
+- Seis auditorias axe WCAG A/AA nos componentes dentro de main: zero violações.
 - [Upload desktop](criaping/publishing-experience/speed-upload-desktop.png)
   e [mobile](criaping/publishing-experience/speed-upload-mobile.png).
 - [Onboarding desktop](criaping/publishing-experience/onboarding-desktop.png)
@@ -52,7 +52,7 @@ não fazem parte deste PR de revisão.
 - [Calendário desktop](criaping/publishing-experience/calendar-desktop.png)
   e [mobile](criaping/publishing-experience/calendar-mobile.png).
 
-Graphify local:485fontes,3.169nós/8.474arestas, sem LLM; confirmou os dois
+Graphify local: 485 fontes, 3.169 nós/8.474 arestas, sem LLM; confirmou os dois
 consumidores do uploader e o mesmo publishingRequest. SQL não foi mapeado por
 falta do parser opcional; não há SQL alterado. O arquivo criaping-tokens.css foi
 ignorado pela heurística do extrator, mas sua identidade foi preservada no diff.
