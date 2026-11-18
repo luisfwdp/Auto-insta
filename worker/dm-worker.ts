@@ -8,12 +8,14 @@ import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
 import { createPublishingWorker } from "@/lib/queue/publishing-worker";
 import { enqueueDuePublications } from "@/lib/queue/publishing";
 import { auditMetaWebhookSubscriptions } from "@/lib/ops/meta-webhook-audit";
+import { startBillingMaintenance } from "@/lib/billing/worker";
 import os from "node:os";
 
 const worker = createDMWorker();
 const publishingWorker = createPublishingWorker();
 const readiness = trackConsumerReadiness(worker);
 const publishingReadiness = trackConsumerReadiness(publishingWorker);
+const billingMaintenance = startBillingMaintenance();
 const startedAt = new Date().toISOString();
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // Polling safety net for comments that webhooks miss. Runs in the worker because
@@ -115,7 +117,7 @@ async function shutdown(signal: string) {
   clearInterval(publishingSweepTimer);
   clearTimeout(webhookAuditBootTimer);
   clearInterval(webhookAuditTimer);
-  await Promise.all([worker.close(), publishingWorker.close()]);
+  await Promise.all([worker.close(), publishingWorker.close(), billingMaintenance.stop()]);
   process.exit(0);
 }
 
