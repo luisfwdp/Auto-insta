@@ -447,7 +447,11 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
   it("preserves unknown dispatch evidence when an accidental workspace deletion is attempted", async () => {
     const id = await reservation(), claim = await beginCommercialDispatch("workspace-a", id);
     await finishCommercialDispatch("workspace-a", id, claim!.dispatchToken, "UNKNOWN");
-    await expect(sql.query(`DELETE FROM "Workspace" WHERE "id"='workspace-a'`)).rejects.toMatchObject({ code: "23001" });
+    // PostgreSQL16 reports foreign_key_violation;18 can report restrict_violation.
+    // Both must name the restrictive evidence FK and leave all rows intact.
+    await expect(sql.query(`DELETE FROM "Workspace" WHERE "id"='workspace-a'`)).rejects.toMatchObject({
+      code: expect.stringMatching(/^(23001|23503)$/), constraint: "CommercialUsageReservation_workspaceId_fkey",
+    });
     expect(await state.db.workspace.count({ where: { id: "workspace-a" } })).toBe(1);
     expect(await usage(id)).toMatchObject({ status: "DISPATCHING", dispatchToken: claim!.dispatchToken, bucket: { reserved: BigInt(1), consumed: BigInt(0) } });
   });
