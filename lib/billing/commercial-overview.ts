@@ -9,12 +9,20 @@ function safeCounter(value: bigint): number {
 }
 
 /** Read only projection of the trusted financial entitlement and its exact
- * allocation period. No legacy counters, provider calls, receipts or IDs. */
-export async function readCommercialOverview(workspaceId: string) {
+ * allocation period. Owner-trial usage is shared across workspaces and is
+ * visible only to the actual owner, regardless of the viewer's workspace role.
+ * No legacy counters, provider calls, receipts or IDs. */
+export async function readCommercialUsageOverview(workspaceId: string, viewerUserId: string) {
   if (!isBillingEnabled()) throw new BillingError("BILLING_DISABLED", 404);
   return prisma.$transaction(async tx => {
     const access = await loadCommercialEntitlement(tx, workspaceId, new Date());
     if (!access || access.status === "denied") return { hasAccess: false as const, code: access?.code ?? "BILLING_NOT_STARTED", limits: null, counters: null };
+    const limits = access.limits;
+    const view = { hasAccess: true as const, kind: access.status, periodStart: access.periodStart.toISOString(), periodEnd: access.periodEnd.toISOString(),
+      limits: { accounts: limits.accounts, members: limits.members, dms: limits.dms, publications: limits.publications, storageBytes: limits.storageBytes, transferBytes: limits.transferBytes },
+      metering: { storage: "NOT_REPORTED" as const, transfer: "NOT_METERED" as const } };
+    if (access.subjectKind === "OWNER_TRIAL" && viewerUserId !== access.subjectId)
+      return { ...view, counters: null, usageVisibility: "OWNER_ONLY" as const };
     const scopeKey = access.subjectKind === "OWNER_TRIAL" ? "owner-trial-v1" : (() => {
       const scope = getBillingProviderScope(); return `${scope.environment}:${scope.accountScope}`;
     })();
@@ -25,10 +33,8 @@ export async function readCommercialOverview(workspaceId: string) {
       const row = buckets.find(bucket => bucket.resource === resource);
       return { consumed: safeCounter(row?.consumed ?? BigInt("0")), reserved: safeCounter(row?.reserved ?? BigInt("0")), limit };
     };
-    const limits = access.limits;
-    return { hasAccess: true as const, kind: access.status, periodStart: access.periodStart.toISOString(), periodEnd: access.periodEnd.toISOString(),
-      limits: { accounts: limits.accounts, members: limits.members, dms: limits.dms, publications: limits.publications, storageBytes: limits.storageBytes, transferBytes: limits.transferBytes },
+    return { ...view, usageVisibility: "AVAILABLE" as const,
       counters: { dms: counter("DM", limits.dms), publications: counter("PUBLICATION", limits.publications), storage: null, transfer: null },
-      metering: { storage: "NOT_REPORTED" as const, transfer: "NOT_METERED" as const } };
+    };
   });
 }

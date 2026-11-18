@@ -119,6 +119,48 @@ describe.skipIf(!url)("commercial publication dispatch on isolated PostgreSQL", 
     expect(await state.db.commercialUsageReservation.count()).toBe(1);
   });
 
+  it("fills a real late media ID when canonical PUBLISHED recovery finished before the original response", async () => {
+    await publication("late_media_id");
+    state.wait.mockResolvedValueOnce({ status_code: "FINISHED" }).mockResolvedValueOnce({ status_code: "PUBLISHED" });
+    let accepted!: (mediaId: string) => void, entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    state.publish.mockImplementationOnce(() => { entered(); return new Promise<string>(resolve => { accepted = resolve; }); });
+    const first = state.processor(job("late_media_id")); await started;
+    let recovered: { publishedAt: Date | null; cancelledAt: Date | null } | undefined;
+    try {
+      await state.processor(job("late_media_id"));
+      recovered = await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: "late_media_id" } });
+      expect(recovered).toMatchObject({ status: "PUBLISHED", metaStatus: "PUBLISHED_RECOVERED", metaMediaId: null });
+    } finally { accepted("real_original_response_media"); await first; }
+    const final = await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: "late_media_id" } });
+    expect(final).toMatchObject({ status: "PUBLISHED", metaStatus: "PUBLISHED", metaMediaId: "real_original_response_media" });
+    expect(final.publishedAt).toEqual(recovered!.publishedAt); expect(final.cancelledAt).toEqual(recovered!.cancelledAt);
+    expect(state.publish).toHaveBeenCalledOnce();
+    expect(await state.db.commercialUsageBucket.findFirstOrThrow()).toMatchObject({ consumed: BigInt(1), reserved: BigInt(0) });
+    expect(await state.db.commercialUsageReservation.count()).toBe(1);
+  });
+
+  it.each(["existing_id", "other_container", "other_tenant"])("never overwrites %s with the late response metadata", async guard => {
+    await publication("late_guard");
+    state.wait.mockResolvedValueOnce({ status_code: "FINISHED" }).mockResolvedValueOnce({ status_code: "PUBLISHED" });
+    let accepted!: (mediaId: string) => void, entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    state.publish.mockImplementationOnce(() => { entered(); return new Promise<string>(resolve => { accepted = resolve; }); });
+    const first = state.processor(job("late_guard")); await started;
+    let before: unknown;
+    try {
+      await state.processor(job("late_guard"));
+      if (guard === "other_tenant") await state.db.workspace.create({ data: { id: "late_guard_other_workspace", name: "Other", ownerId: "owner" } });
+      before = await state.db.scheduledPublication.update({ where: { id: "late_guard" }, data: {
+        ...(guard === "existing_id" ? { metaMediaId: "already_saved_media" } : {}),
+        ...(guard === "other_container" ? { metaContainerId: "different_container" } : {}),
+        ...(guard === "other_tenant" ? { workspaceId: "late_guard_other_workspace" } : {}),
+      } });
+    } finally { accepted("late_response_must_not_override"); await first; }
+    expect(await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: "late_guard" } })).toEqual(before);
+    expect(state.publish).toHaveBeenCalledOnce();
+  });
+
   it("preserves real publication truth and cancellation intent when a reviewed duplicate is canceled in flight", async () => {
     await state.db.speedPostBatch.create({ data: { id: "inflight_cancel", workspaceId: "workspace", instagramAccountId: "account", name: "Cancel", status: "RUNNING",
       postsPerDay: 1, scheduleMode: "FIXED", orderMode: "SEQUENTIAL", timezone: "UTC", timeSlots: ["10:00"], startsOn: new Date(), totalItems: 1 } });

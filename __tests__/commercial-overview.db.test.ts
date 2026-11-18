@@ -10,7 +10,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 const url = process.env.TEST_DATABASE_URL, schema = `overview_${randomBytes(5).toString("hex")}`;
 const state = vi.hoisted(() => ({ db: undefined as unknown as import("../app/generated/prisma/client").PrismaClient }));
 vi.mock("@/lib/db/client", () => ({ get prisma() { return state.db; } }));
-import { readCommercialOverview } from "../lib/billing/commercial-overview";
+import { readCommercialUsageOverview } from "../lib/billing/commercial-overview";
 import { startCardFreeTrial } from "../lib/billing/trial";
 import { reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch } from "../lib/billing/commercial-usage";
 import { monthlyInvoicePeriod } from "../lib/billing/financial-policy";
@@ -41,13 +41,14 @@ describe.skipIf(!url)("commercial overview native projections", () => {
     const root = path.join(__dirname, "..", "prisma", "migrations");
     for (const name of readdirSync(root, { withFileTypes: true }).filter(item => item.isDirectory()).map(item => item.name).sort()) await sql.query(readFileSync(path.join(root, name, "migration.sql"), "utf8"));
     state.db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, max: 5, options: `-c search_path=${schema}` }, { schema }) });
-    for (const owner of ["owner-a", "owner-b"]) await state.db.user.create({ data: { id: owner, email: `${owner}@example.test` } });
+    for (const owner of ["owner-a", "owner-b", "admin-a", "member-a"]) await state.db.user.create({ data: { id: owner, email: `${owner}@example.test` } });
     for (const id of ["workspace-a", "workspace-a2", "workspace-b"]) await state.db.workspace.create({ data: { id, name: id, ownerId: id === "workspace-b" ? "owner-b" : "owner-a" } });
   });
   beforeEach(async () => {
     vi.stubEnv("BILLING_ENABLED", "true"); vi.stubEnv("ASAAS_ENVIRONMENT", "sandbox"); vi.stubEnv("ASAAS_ACCOUNT_SCOPE", scope); vi.stubEnv("VERCEL_ENV", "test"); vi.stubEnv("FLY_APP_NAME", "local-overview-test");
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Real HTTP forbidden"));
     await state.db.commercialUsageReservation.deleteMany(); await state.db.commercialUsageBucket.deleteMany();
+    await state.db.workspaceMember.deleteMany();
     await state.db.workspaceBilling.updateMany({ data: { currentSubscriptionId: null } });
     await state.db.billingPayment.deleteMany(); await state.db.billingCommand.deleteMany(); await state.db.billingEvent.deleteMany(); await state.db.billingSubscription.deleteMany(); await state.db.billingCheckout.deleteMany();
     await state.db.workspaceBilling.deleteMany(); await state.db.trialRedemption.deleteMany();
@@ -58,7 +59,7 @@ describe.skipIf(!url)("commercial overview native projections", () => {
     await allocate("workspace-a", "DM", "CONFIRMED"); await allocate("workspace-a2", "DM");
     await allocate("workspace-a", "DM", "DEFINITELY_REJECTED"); await allocate("workspace-a2", "PUBLICATION", "CONFIRMED");
     await allocate("workspace-b", "DM", "CONFIRMED"); await allocate("workspace-b", "DM", "CONFIRMED");
-    const first = await readCommercialOverview("workspace-a"), second = await readCommercialOverview("workspace-a2"), other = await readCommercialOverview("workspace-b");
+    const first = await readCommercialUsageOverview("workspace-a", "owner-a"), second = await readCommercialUsageOverview("workspace-a2", "owner-a"), other = await readCommercialUsageOverview("workspace-b", "owner-b");
     expect(first).toEqual(second); expect(first.counters).toMatchObject({ dms: { consumed: 1, reserved: 1, limit: 100 }, publications: { consumed: 1, reserved: 0, limit: 10 } });
     expect(other.counters?.dms).toEqual({ consumed: 2, reserved: 0, limit: 100 });
     const text = JSON.stringify(first); for (const forbidden of ["owner-a", "workspace-a", "provider", "operation_", "dispatchToken", "receipt", "cus_private", scope]) expect(text).not.toContain(forbidden);
@@ -70,23 +71,41 @@ describe.skipIf(!url)("commercial overview native projections", () => {
     for (const [scopeKey, periodStart, periodEnd] of [[`production:${scope}`, period.startsAt, period.endsAt], [`sandbox:${otherScope}`, period.startsAt, period.endsAt], [`sandbox:${scope}`, period.endsAt, monthlyInvoicePeriod(saoPauloDate(period.endsAt), 1).endsAt]] as const) {
       await state.db.commercialUsageBucket.create({ data: { subjectKind: "WORKSPACE_PAID", subjectId: "workspace-a", resource: "DM", scopeKey, periodStart, periodEnd, limitSnapshot: BigInt("10000"), consumed: BigInt("999"), reserved: BigInt("999") } });
     }
-    const current = await readCommercialOverview("workspace-a"), sibling = await readCommercialOverview("workspace-a2");
+    const current = await readCommercialUsageOverview("workspace-a", "owner-a"), sibling = await readCommercialUsageOverview("workspace-a2", "owner-a");
     expect(current).toMatchObject({ hasAccess: true, kind: "paid", periodStart: period.startsAt.toISOString(), periodEnd: period.endsAt.toISOString(), counters: { dms: { consumed: 1, reserved: 0, limit: 10000 }, publications: { consumed: 0, reserved: 1, limit: 300 } } });
     expect(sibling).toMatchObject({ kind: "trial", counters: { dms: { consumed: 1, reserved: 0, limit: 100 } } });
+  });
+  it("withholds aggregate trial activity from grandfathered ADMIN/MEMBER while its real owner can read across workspaces", async () => {
+    await state.db.workspaceMember.createMany({ data: [{ workspaceId: "workspace-a", userId: "admin-a", role: "ADMIN" }, { workspaceId: "workspace-a", userId: "member-a", role: "MEMBER" }] });
+    await allocate("workspace-a2", "DM", "CONFIRMED"); await allocate("workspace-a2", "PUBLICATION");
+    const owner = await readCommercialUsageOverview("workspace-a", "owner-a");
+    expect(owner).toMatchObject({ usageVisibility: "AVAILABLE", counters: { dms: { consumed: 1, reserved: 0 }, publications: { consumed: 0, reserved: 1 } } });
+    for (const viewer of ["admin-a", "member-a"]) {
+      const restricted = await readCommercialUsageOverview("workspace-a", viewer);
+      expect(restricted).toMatchObject({ hasAccess: true, kind: "trial", usageVisibility: "OWNER_ONLY", limits: owner.limits, counters: null });
+      expect(Object.keys(restricted).sort()).toEqual(Object.keys(owner).sort());
+      for (const privateValue of ["owner-a", "workspace-a2", "operation_", "reserved", "consumed"]) expect(JSON.stringify(restricted)).not.toContain(privateValue);
+    }
+  });
+  it("allows paid workspace ADMIN/MEMBER to read only that workspace's counters", async () => {
+    await paid("workspace-a");
+    await state.db.workspaceMember.createMany({ data: [{ workspaceId: "workspace-a", userId: "admin-a", role: "ADMIN" }, { workspaceId: "workspace-a", userId: "member-a", role: "MEMBER" }] });
+    await allocate("workspace-a", "DM", "CONFIRMED"); await allocate("workspace-a2", "DM");
+    for (const viewer of ["admin-a", "member-a"]) expect(await readCommercialUsageOverview("workspace-a", viewer)).toMatchObject({ hasAccess: true, kind: "paid", usageVisibility: "AVAILABLE", counters: { dms: { consumed: 1, reserved: 0, limit: 10000 } } });
   });
   it("does not grant current access or expose future usage from a future-only payment", async () => {
     const period = await paid("workspace-a", true);
     await state.db.commercialUsageBucket.create({ data: { subjectKind: "WORKSPACE_PAID", subjectId: "workspace-a", resource: "DM", scopeKey: `sandbox:${scope}`, periodStart: period.startsAt, periodEnd: period.endsAt, limitSnapshot: BigInt("10000"), consumed: BigInt("500") } });
-    expect(await readCommercialOverview("workspace-a")).toEqual({ hasAccess: false, code: "PAYMENT_NOT_CURRENT", limits: null, counters: null });
+    expect(await readCommercialUsageOverview("workspace-a", "owner-a")).toEqual({ hasAccess: false, code: "PAYMENT_NOT_CURRENT", limits: null, counters: null });
   });
   it("does not expose historical counters after exact trial expiry", async () => {
     await allocate("workspace-a", "DM", "CONFIRMED"); const billing = await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } });
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(billing.trialEndsAt);
-    try { expect(await readCommercialOverview("workspace-a")).toEqual({ hasAccess: false, code: "TRIAL_NOT_ACTIVE", limits: null, counters: null }); }
+    try { expect(await readCommercialUsageOverview("workspace-a", "owner-a")).toEqual({ hasAccess: false, code: "TRIAL_NOT_ACTIVE", limits: null, counters: null }); }
     finally { vi.useRealTimers(); }
   });
   it("fails503 when persisted BIGINT cannot be represented safely", async () => {
     await allocate("workspace-a", "DM"); await state.db.commercialUsageBucket.updateMany({ data: { consumed: BigInt(Number.MAX_SAFE_INTEGER) + BigInt("1") } });
-    await expect(readCommercialOverview("workspace-a")).rejects.toMatchObject({ code: "BILLING_UNAVAILABLE", httpStatus: 503 });
+    await expect(readCommercialUsageOverview("workspace-a", "owner-a")).rejects.toMatchObject({ code: "BILLING_UNAVAILABLE", httpStatus: 503 });
   });
 });

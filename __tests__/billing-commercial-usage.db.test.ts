@@ -12,7 +12,8 @@ import { beforeAll, beforeEach, afterAll, afterEach, describe, expect, it, vi } 
 const url = process.env.TEST_DATABASE_URL, schema = `commercial_usage_${randomBytes(5).toString("hex")}`;
 const state = vi.hoisted(() => ({ db: undefined as unknown as import("../app/generated/prisma/client").PrismaClient }));
 vi.mock("@/lib/db/client", () => ({ get prisma() { return state.db; } }));
-import { findCommercialUsageOperation, reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch, releaseCommercialUsage, readCommercialUsageReceipt } from "../lib/billing/commercial-usage";
+import * as usageAPI from "../lib/billing/commercial-usage";
+import { rejectUnstartedCommercialUsage, findCommercialUsageOperation, reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch, releaseCommercialUsage, readCommercialUsageReceipt } from "../lib/billing/commercial-usage";
 import { BILLING_PLANS, type BillingPlanId } from "../lib/billing/catalog";
 import { monthlyInvoicePeriod } from "../lib/billing/financial-policy";
 import { saoPauloDate } from "../lib/billing/config";
@@ -140,6 +141,48 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
     const id = await reservation("workspace-a", "DM", "immutable-amount", 1);
     await expect(reservation("workspace-a", "DM", "immutable-amount", 2)).rejects.toMatchObject({ code: "USAGE_OPERATION_CONFLICT" });
     expect((await usage(id)).amount).toBe(BigInt(1)); expect((await usage(id)).bucket.reserved).toBe(BigInt(1));
+  });
+  it("returns an unstarted hold after expiry-before-begin and rearms the SAME operation after paid upgrade for one actual send", async () => {
+    await state.db.instagramAccount.create({ data: { workspaceId: "workspace-a", instagramId: "ig_preflight", username: "fixture_preflight", accessToken: "fixture" } });
+    const input = { context: { provider: "META" as const, workspaceId: "workspace-a", instagramId: "ig_preflight", operationId: "preflight-expiry", accessToken: "fixture" },
+      instagramAccountId: "ig_preflight", kind: "direct_plain" as const, targetId: "fixture-recipient", payload: { text: "fixture" } };
+    const send = vi.fn().mockResolvedValue({ message_id: "fixture-real-provider-receipt" });
+    const realBegin = usageAPI.beginCommercialDispatch;
+    const failAtExpiry = vi.spyOn(usageAPI, "beginCommercialDispatch").mockImplementationOnce(async (workspaceId, reservationId) => {
+      vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(trialEndsAt);
+      return realBegin(workspaceId, reservationId);
+    });
+    await expect(executeCommercialMessage(input, send)).rejects.toMatchObject({ code: "COMMERCIAL_ACCESS_REQUIRED", httpStatus: 402 });
+    expect(send).not.toHaveBeenCalled();
+    const rejected = await state.db.commercialUsageReservation.findFirstOrThrow();
+    expect(await usage(rejected.id)).toMatchObject({ status: "REJECTED", dispatchToken: null, receiptCiphertext: null, bucket: { reserved: BigInt("0"), consumed: BigInt("0") } });
+    failAtExpiry.mockRestore(); await makePaid("workspace-a", "pro-v1");
+    expect(await executeCommercialMessage(input, send)).toEqual({ message_id: "fixture-real-provider-receipt" });
+    expect(send).toHaveBeenCalledOnce(); expect(await state.db.commercialUsageReservation.count()).toBe(1);
+    const completed = await usage(rejected.id);
+    expect(completed).toMatchObject({ status: "COMMITTED", bucket: { subjectKind: "WORKSPACE_PAID", reserved: BigInt("0"), consumed: BigInt("1") } });
+    expect(completed.bucketId).not.toBe(rejected.bucketId);
+    expect(await state.db.commercialUsageBucket.findUniqueOrThrow({ where: { id: rejected.bucketId } })).toMatchObject({ reserved: BigInt("0"), consumed: BigInt("0") });
+    expect(await readCommercialUsageReceipt("workspace-a", rejected.id)).toEqual({ messageId: "fixture-real-provider-receipt" });
+  });
+  it("rejects an unstarted hold once under concurrent cleanup and never makes cancellation terminal", async () => {
+    const key = "preflight-cleanup", id = await reservation("workspace-a", "DM", key);
+    const cleaned = await Promise.all(Array.from({ length: 20 }, () => rejectUnstartedCommercialUsage("workspace-a", id)));
+    expect(cleaned.filter(Boolean)).toHaveLength(1);
+    expect(await usage(id)).toMatchObject({ status: "REJECTED", bucket: { reserved: BigInt("0"), consumed: BigInt("0") } });
+    expect(await reservation("workspace-a", "DM", key)).toBe(id);
+    expect(await usage(id)).toMatchObject({ status: "RESERVED", bucket: { reserved: BigInt("1"), consumed: BigInt("0") } });
+  });
+  it("cannot free a concurrent dispatch winner or a committed receipt with stale preflight cleanup", async () => {
+    const id = await reservation(), winner = await beginCommercialDispatch("workspace-a", id);
+    const dispatching = await usage(id);
+    expect(await rejectUnstartedCommercialUsage("workspace-b", id)).toBe(false);
+    const attempts = await Promise.all(Array.from({ length: 20 }, () => rejectUnstartedCommercialUsage("workspace-a", id)));
+    expect(attempts.every(result => !result)).toBe(true); expect(await usage(id)).toEqual(dispatching);
+    expect(dispatching).toMatchObject({ status: "DISPATCHING", dispatchToken: winner!.dispatchToken, bucket: { reserved: BigInt("1"), consumed: BigInt("0") } });
+    await finishCommercialDispatch("workspace-a", id, winner!.dispatchToken, "CONFIRMED", { messageId: "fixture-winning-receipt" });
+    const committed = await usage(id);
+    expect(await rejectUnstartedCommercialUsage("workspace-a", id)).toBe(false); expect(await usage(id)).toEqual(committed);
   });
   it("allows only one dispatch claim and commits a confirmed external effect once", async () => {
     const id = await reservation(), claims = await Promise.all(Array.from({ length: 20 }, () => beginCommercialDispatch("workspace-a", id)));

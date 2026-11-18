@@ -196,7 +196,7 @@ async function publishPublication(job: Job<PublishPublicationJob>) {
     if (reservation.mode === "commercial")
       await finishCommercialDispatch(publication.workspaceId, reservation.reservationId, dispatch!.dispatchToken, "CONFIRMED");
   }
-  await prisma.scheduledPublication.updateMany({
+  const finalized = await prisma.scheduledPublication.updateMany({
     // A stalled duplicate may have raised REVIEW while the real dispatch was
     // in flight. Its valid receipt/canonical PUBLISHED proof takes precedence,
     // bound to this same tenant and container; other failures stay untouched.
@@ -216,6 +216,15 @@ async function publishPublication(job: Job<PublishPublicationJob>) {
       lastError: null,
     },
   });
+  if (finalized.count === 0 && !recoveredPublishedContainer && mediaId) {
+    // Canonical recovery may win before the original publish response returns.
+    // Enrich only its missing receipt; preserve timestamps and cancellation.
+    await prisma.scheduledPublication.updateMany({
+      where: { id: publication.id, workspaceId: publication.workspaceId, metaContainerId: containerId,
+        status: "PUBLISHED", metaStatus: "PUBLISHED_RECOVERED", metaMediaId: null },
+      data: { metaMediaId: mediaId, metaStatus: "PUBLISHED" },
+    });
+  }
   await refreshBatchProgress(publication.batchId, publication.workspaceId);
 }
 

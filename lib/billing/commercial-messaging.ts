@@ -4,7 +4,7 @@ import type { InstagramContext } from "@/lib/instagram/context";
 import { DeliveryUnconfirmedError, isConfirmedSendRejection } from "@/lib/instagram/delivery-errors";
 import { ZernioApiError } from "@/lib/zernio/client";
 import { assertCommercialAccountUsable } from "./commercial-capacity";
-import { findCommercialUsageOperation, reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch, readCommercialUsageReceipt } from "./commercial-usage";
+import { findCommercialUsageOperation, reserveCommercialUsage, beginCommercialDispatch, rejectUnstartedCommercialUsage, finishCommercialDispatch, readCommercialUsageReceipt } from "./commercial-usage";
 import { BillingError } from "./config";
 import { isBillingEnabled } from "./trial";
 
@@ -74,7 +74,14 @@ export async function executeCommercialMessage(input: {
   // Another worker may have committed between the lookup and reservation CAS.
   if (reservation.status === "COMMITTED") return replay(reservation.reservationId);
   if (reservation.status !== "RESERVED") throw uncertain();
-  const claim = await beginCommercialDispatch(workspaceId, reservation.reservationId);
+  let claim: Awaited<ReturnType<typeof beginCommercialDispatch>>;
+  try { claim = await beginCommercialDispatch(workspaceId, reservation.reservationId); }
+  catch (error) {
+    // This call has not entered send(). A known preflight BillingError can
+    // return only an unclaimed hold; the helper CAS preserves any other owner.
+    if (error instanceof BillingError) await rejectUnstartedCommercialUsage(workspaceId, reservation.reservationId).catch(() => false);
+    throw error;
+  }
   if (!claim) throw uncertain();
   let result: MessageResult;
   try {

@@ -1,9 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ enabled: true }));
-const ledger = vi.hoisted(() => ({ find: vi.fn(), reserve: vi.fn(), begin: vi.fn(), finish: vi.fn(), receipt: vi.fn(), gate: vi.fn(), connection: vi.fn() }));
+const ledger = vi.hoisted(() => ({ find: vi.fn(), reserve: vi.fn(), begin: vi.fn(), reject: vi.fn(), finish: vi.fn(), receipt: vi.fn(), gate: vi.fn(), connection: vi.fn() }));
 vi.mock("@/lib/billing/trial", () => ({ isBillingEnabled: () => state.enabled }));
 vi.mock("@/lib/billing/commercial-usage", () => ({ findCommercialUsageOperation: ledger.find, reserveCommercialUsage: ledger.reserve, beginCommercialDispatch: ledger.begin,
-  finishCommercialDispatch: ledger.finish, readCommercialUsageReceipt: ledger.receipt }));
+  rejectUnstartedCommercialUsage: ledger.reject, finishCommercialDispatch: ledger.finish, readCommercialUsageReceipt: ledger.receipt }));
 vi.mock("@/lib/billing/commercial-capacity", () => ({ assertCommercialAccountUsable: ledger.gate }));
 vi.mock("@/lib/db/client", () => ({ prisma: { zernioConnection: { findUnique: ledger.connection } } }));
 vi.mock("@/lib/meta/oauth", () => ({ decryptToken: (value: string) => `decrypted:${value}` }));
@@ -35,7 +35,7 @@ beforeEach(() => {
   state.enabled = true; vi.clearAllMocks(); fetcher.mockReset(); vi.stubGlobal("fetch", fetcher);
   ledger.find.mockReset().mockResolvedValue(null);
   ledger.reserve.mockResolvedValue({ mode: "commercial", reservationId, status: "RESERVED" });
-  ledger.begin.mockResolvedValue({ dispatchToken: token }); ledger.finish.mockResolvedValue(true); ledger.receipt.mockResolvedValue(null); ledger.gate.mockResolvedValue(undefined);
+  ledger.begin.mockResolvedValue({ dispatchToken: token }); ledger.reject.mockResolvedValue(true); ledger.finish.mockResolvedValue(true); ledger.receipt.mockResolvedValue(null); ledger.gate.mockResolvedValue(undefined);
 });
 afterAll(() => vi.unstubAllGlobals());
 
@@ -242,4 +242,32 @@ it("returns the actual receipt on a retry after a successful commit without anot
   });
   respond("META"); const first = await paths[3].send(context("META"));
   expect(await paths[3].send(context("META"))).toEqual(first); expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it("rejects and frees an unstarted hold when begin throws a BillingError before provider I/O", async () => {
+  let held = 1;
+  ledger.begin.mockRejectedValueOnce(new BillingError("COMMERCIAL_ACCESS_REQUIRED", 402));
+  ledger.reject.mockImplementationOnce(async () => { held = 0; return true; });
+  await expect(paths[3].send(context("META"))).rejects.toMatchObject({ code: "COMMERCIAL_ACCESS_REQUIRED", httpStatus: 402 });
+  expect(ledger.reject).toHaveBeenCalledWith("workspace_a", reservationId);
+  expect(held).toBe(0); expect(fetcher).not.toHaveBeenCalled(); expect(ledger.finish).not.toHaveBeenCalled();
+});
+it("does not reject or free a concurrent dispatch winner when begin loses its CAS", async () => {
+  ledger.begin.mockResolvedValueOnce(null);
+  await expect(paths[3].send(context("META"))).rejects.toBeInstanceOf(DeliveryUnconfirmedError);
+  expect(ledger.reject).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
+});
+it("does not treat non-Billing begin errors or post-send BillingErrors as proof of an unstarted dispatch", async () => {
+  ledger.begin.mockRejectedValueOnce(new Error("database outcome unavailable"));
+  await expect(paths[3].send(context("META"))).rejects.toThrow("database outcome unavailable");
+  expect(ledger.reject).not.toHaveBeenCalled();
+  fetcher.mockRejectedValueOnce(new BillingError("PROVIDER_OUTCOME_UNKNOWN", 503));
+  await expect(paths[3].send(context("META"))).rejects.toBeInstanceOf(DeliveryUnconfirmedError);
+  expect(ledger.reject).not.toHaveBeenCalled(); expect(ledger.finish).toHaveBeenCalledWith("workspace_a", reservationId, token, "UNKNOWN");
+});
+
+it("preserves the known preflight error and leaves cleanup failures conservative", async () => {
+  ledger.begin.mockRejectedValueOnce(new BillingError("USAGE_RESERVATION_STALE", 409)); ledger.reject.mockRejectedValueOnce(new Error("database unavailable"));
+  await expect(paths[3].send(context("META"))).rejects.toMatchObject({ code: "USAGE_RESERVATION_STALE", httpStatus: 409 });
+  expect(fetcher).not.toHaveBeenCalled(); expect(ledger.finish).not.toHaveBeenCalled();
 });

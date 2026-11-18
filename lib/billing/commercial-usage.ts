@@ -123,6 +123,22 @@ export async function beginCommercialDispatch(workspaceId: string, reservationId
   });
 }
 
+/** Only after a known preflight rejection before provider I/O. No entitlement
+ * is required to return this unspent hold. A concurrent dispatch/commit wins;
+ * never reset its token or release its allocation. Retry must reserve again. */
+export async function rejectUnstartedCommercialUsage(workspaceId: string, reservationId: string) {
+  if (!z.uuid().safeParse(reservationId).success) throw new BillingError("INVALID_USAGE_RESERVATION", 400);
+  return prisma.$transaction(async tx => {
+    const where = { id: reservationId, workspaceId, status: "RESERVED" as const, dispatchToken: null, receiptCiphertext: null };
+    const row = await tx.commercialUsageReservation.findFirst({ where });
+    if (!row) return false;
+    const claim = await tx.commercialUsageReservation.updateMany({ where: { ...where, bucketId: row.bucketId }, data: { status: "REJECTED" } });
+    if (claim.count !== 1) return false;
+    await tx.commercialUsageBucket.update({ where: { id: row.bucketId }, data: { reserved: { decrement: row.amount } } });
+    return true;
+  });
+}
+
 /** Call only with authoritative proof of the external outcome. UNKNOWN keeps
  * the reservation held. A proven rejection frees cost and permits reserve again.
  * Finalizing already-made effects remains available after trial expiry. */

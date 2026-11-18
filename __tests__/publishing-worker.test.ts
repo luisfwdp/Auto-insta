@@ -247,6 +247,18 @@ describe("commercial publishing dispatch", () => {
     expect(mocks.begin.mock.invocationCallOrder[0]).toBeLessThan(mocks.publishContainer.mock.invocationCallOrder[0]);
   });
 
+  it("limits late response enrichment to the missing ID on the same recovered publication", async () => {
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+    await processor()(job);
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: "publication_1", workspaceId: "workspace_1", metaContainerId: "container_1",
+        status: "PUBLISHED", metaStatus: "PUBLISHED_RECOVERED", metaMediaId: null },
+      data: { metaMediaId: "media_1", metaStatus: "PUBLISHED" },
+    });
+    expect(mocks.publishContainer).toHaveBeenCalledOnce();
+  });
+
   it("does not publish a second operation when its allowance is exhausted", async () => {
     const run = processor();
     await run(job);
