@@ -83,6 +83,7 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     await state.db.workspace.createMany({ data: ["workspace-a", "workspace-b"].map(id => ({ id, name: id, ownerId: "billing-owner" })) });
   });
   beforeEach(async () => {
+    vi.stubEnv("NEXTAUTH_URL", "https://billing-reconcile.example.test"); vi.stubEnv("AUTH_URL", undefined);
     vi.stubEnv("ASAAS_ENVIRONMENT", "sandbox"); vi.stubEnv("ASAAS_ACCOUNT_SCOPE", scopeA); vi.stubEnv("VERCEL_ENV", "preview"); vi.stubEnv("FLY_APP_NAME", "");
     vi.stubEnv("BILLING_ENABLED", "false");
     await sql.query(`TRUNCATE TABLE "BillingEvent", "BillingCommand", "BillingPayment", "BillingSubscription", "BillingCheckout", "WorkspaceBilling" CASCADE`);
@@ -90,7 +91,7 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     await state.db.workspaceBilling.createMany({ data: ["workspace-a", "workspace-b"].map(workspaceId => ({ workspaceId, trialStartedAt: start, trialEndsAt: end })) });
     today = saoPauloDate(new Date()); anchor = Number(today.slice(-2));
   });
-  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllEnvs(); });
   afterAll(async () => { vi.unstubAllEnvs(); await state.db?.$disconnect(); if (sql) { await sql.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await sql.end(); } });
 
   it("does not trust CHECKOUT_PAID or ACTIVE metadata until a canonical invoice is settled", async () => {
