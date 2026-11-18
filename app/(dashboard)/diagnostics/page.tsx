@@ -3,6 +3,7 @@
 import { useI18n } from "@/lib/i18n/provider";
 import { useEffect, useState } from "react";
 import StatusBadge from "@/components/status-badge";
+import OperatorBroadcast from "@/components/operator-broadcast";
 
 interface DiagnosticsData {
   queueCounts: Record<string, number>;
@@ -161,6 +162,8 @@ export default function DiagnosticsPage() {
           {t("Refresh")}
         </button>
       </div>
+
+      <OperatorBroadcast />
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3">
         <div className="panel rounded p-4 sm:p-5">

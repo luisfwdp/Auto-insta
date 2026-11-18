@@ -771,5 +771,15 @@
   "Another checkout is already in progress. Review the existing checkout before starting a new purchase.": "已有結帳正在處理，請先查看現有請求，勿開始另一筆購買。",
   "Billing is temporarily unavailable. No new checkout was created.": "訂閱目前暫時無法使用，未建立新的結帳。",
   "Retry the same cancellation request. No new request will be created.": "重新提交同一個取消請求，不會建立新請求。",
-  "Retry cancellation request": "重新提交取消請求"
+  "Retry cancellation request": "重新提交取消請求",
+  "Email all accounts": "寄送電子郵件給所有帳號",
+  "Sends one individual email to each verified account holder.": "向每位已驗證的帳號持有人個別寄送一封電子郵件。",
+  "Email sending is not configured for this environment.": "此環境尚未設定電子郵件寄送。",
+  "Email subject": "電子郵件主旨",
+  "Email message": "電子郵件內容",
+  "Send to all accounts": "寄送給所有帳號",
+  "Send this email to every account holder? This cannot be undone.": "要將此電子郵件寄給所有帳號持有人嗎？此操作無法復原。",
+  "Email sent to all accounts.": "電子郵件已寄送給所有帳號。",
+  "A broadcast was sent less than 10 minutes ago. Wait before sending another.": "不到 10 分鐘前已寄送過一次群發郵件，請稍後再寄。",
+  "The email could not be sent to everyone. Check the email provider settings.": "無法將電子郵件寄給所有人，請檢查郵件服務設定。"
 }
