@@ -147,6 +147,7 @@ import { createDMWorker } from "../lib/queue/dm-worker";
 import { getRedisConnection } from "@/lib/queue/client";
 import { hashRecipientId } from "@/lib/tracking/server";
 import { processInstagramWebhook } from "@/lib/queue/process-webhook";
+import { classifySendError } from "@/lib/instagram/delivery-errors";
 
 const usagePeriodStart = new Date("2026-05-01T00:00:00.000Z");
 
@@ -1170,13 +1171,12 @@ describe("DM Worker — DM keyword trigger", () => {
     );
   });
 
-  it("should release the usage reservation and rethrow when the send fails", async () => {
-    mockSendDirectMessage.mockRejectedValue(new Error("Meta is down"));
+  it("should release the usage reservation and rethrow an explicit send rejection", async () => {
+    const rejection = new MetaApiError(551, undefined, undefined, "Recipient unavailable");
+    mockSendDirectMessage.mockRejectedValue(rejection);
 
     const processor = getProcessor();
-    await expect(processor(createMockMessageJob())).rejects.toThrow(
-      "Meta is down"
-    );
+    await expect(processor(createMockMessageJob())).rejects.toBe(rejection);
 
     expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalledWith(
       "workspace_123",
@@ -1184,9 +1184,23 @@ describe("DM Worker — DM keyword trigger", () => {
     );
     expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: expect.objectContaining({ status: "FAILED" }),
+        create: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: false }),
       })
     );
+  });
+  it("retains the usage reservation and deduplicates a DM trigger after an unconfirmed transport outcome", async () => {
+    mockSendDirectMessage.mockRejectedValueOnce(classifySendError(new Error("Connection reset after send")));
+    const processor = getProcessor();
+    await expect(processor(createMockMessageJob())).rejects.toMatchObject({ name: "UnrecoverableError", message: expect.stringContaining("Connection reset after send") });
+    expect(mockReleaseWorkspaceDMReservation).not.toHaveBeenCalled();
+    expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: true }),
+      update: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: true }),
+    }));
+    mockPrisma.dmLog.findUnique.mockResolvedValue({ status: "FAILED", dmDeliveryUnconfirmed: true });
+    await processor({ ...createMockMessageJob(), id: "redelivered_message_job", attemptsMade: 1 });
+    expect(mockSendDirectMessage).toHaveBeenCalledOnce(); expect(mockReserveWorkspaceDMSend).toHaveBeenCalledOnce();
+    expect(mockReleaseWorkspaceDMReservation).not.toHaveBeenCalled();
   });
 });
 
@@ -1266,6 +1280,26 @@ describe("Story reply webhook pipeline", () => {
         create: expect.objectContaining({ status: "SENT" }),
       })
     );
+  });
+  it("retains usage and does not resend a Story reply with an unconfirmed transport outcome", async () => {
+    mockSendDirectMessage.mockRejectedValueOnce(classifySendError(new Error("Connection reset after Story reply send")));
+    await expect(deliverStoryReply(configuredStoryId)).rejects.toMatchObject({ name: "UnrecoverableError" });
+    expect(mockReleaseWorkspaceDMReservation).not.toHaveBeenCalled();
+    expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: true }),
+      update: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: true }),
+    }));
+    mockPrisma.dmLog.findUnique.mockResolvedValue({ status: "FAILED", dmDeliveryUnconfirmed: true });
+    await deliverStoryReply(configuredStoryId);
+    expect(mockSendDirectMessage).toHaveBeenCalledOnce(); expect(mockReserveWorkspaceDMSend).toHaveBeenCalledOnce();
+    expect(mockReleaseWorkspaceDMReservation).not.toHaveBeenCalled();
+  });
+  it("still releases Story usage when Meta definitively rejects the reply", async () => {
+    const rejection = new MetaApiError(551, undefined, undefined, "Story recipient unavailable");
+    mockSendDirectMessage.mockRejectedValueOnce(rejection);
+    await expect(deliverStoryReply(configuredStoryId)).rejects.toBe(rejection);
+    expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalledExactlyOnceWith("workspace_123", usagePeriodStart);
+    expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: false }) }));
   });
 
   it.each([

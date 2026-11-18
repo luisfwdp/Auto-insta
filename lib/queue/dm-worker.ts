@@ -1511,7 +1511,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         },
       });
     } catch (error) {
-      await releaseWorkspaceDMReservation(
+      if (isConfirmedSendRejection(error)) await releaseWorkspaceDMReservation(
         automation.workspaceId,
         usage.periodStart
       );
