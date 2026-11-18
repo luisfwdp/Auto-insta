@@ -41,6 +41,8 @@ const paymentPageResponse = z.object({
 export type AsaasPaymentDTO = z.infer<typeof paymentResponse>;
 export type AsaasSubscriptionDTO = z.infer<typeof subscriptionResponse>;
 export type AsaasPaymentPageDTO = z.infer<typeof paymentPageResponse>;
+const cancellationResponse = z.object({ id: subscriptionId, deleted: z.literal(true) });
+export type AsaasSubscriptionCancellationDTO = z.infer<typeof cancellationResponse>;
 
 async function readBoundedJson(response: Response): Promise<unknown> {
   const reader = response.body?.getReader();
@@ -64,24 +66,49 @@ export class AsaasError extends Error {
   }
 }
 
+/** Checkout-only configuration; workers doing GET/DELETE need no callback URL.
+ * Call this before persisting a new intent so bad configuration is not recorded
+ * as an uncertain provider mutation. This helper never needs the API key.
+ */
+export function getAsaasCheckoutOrigin(env: Readonly<Record<string, string | undefined>> = process.env) {
+  const mode = env.ASAAS_ENVIRONMENT;
+  if (mode !== "sandbox" && mode !== "production") throw new AsaasError("CONFIGURATION");
+  try {
+    const configured = new URL(env.NEXTAUTH_URL ?? env.AUTH_URL ?? "");
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(configured.hostname);
+    if (configured.username || configured.password || (mode === "production" && local) || (configured.protocol !== "https:" && !(mode === "sandbox" && local && configured.protocol === "http:"))) throw new Error();
+    return configured.origin;
+  } catch { throw new AsaasError("CONFIGURATION"); }
+}
+
 /** Fixed hosts only. Secrets remain in a closure and cannot enter JSON DTOs. */
 export function createAsaasClient(env: Readonly<Record<string, string | undefined>> = process.env, fetcher: typeof fetch = fetch) {
   const mode = env.ASAAS_ENVIRONMENT;
   const key = env.ASAAS_API_KEY;
   if ((mode !== "sandbox" && mode !== "production") || !key || key.length < 32 || /[\r\n]/.test(key)) throw new AsaasError("CONFIGURATION");
-  let origin: string;
-  try {
-    const configured = new URL(env.NEXTAUTH_URL ?? env.AUTH_URL ?? "");
-    const local = ["localhost", "127.0.0.1", "[::1]"].includes(configured.hostname);
-    if (configured.username || configured.password || (mode === "production" && local) || (configured.protocol !== "https:" && !(mode === "sandbox" && local && configured.protocol === "http:"))) throw new Error();
-    origin = configured.origin;
-  } catch { throw new AsaasError("CONFIGURATION"); }
   const api = mode === "production" ? "https://api.asaas.com/v3" : "https://api-sandbox.asaas.com/v3";
   const payerOrigin = mode === "production" ? "https://asaas.com" : "https://sandbox.asaas.com";
+  const payerOrigins = mode === "production" ? ["https://asaas.com", "https://www.asaas.com"] : ["https://sandbox.asaas.com"];
+
+  // Asaas's 2026-09-25 public-URL change includes Checkout 2.0. Preserve the
+  // returned path/query verbatim, while accepting only exact environment origins.
+  // docs.asaas.com/changelog/alteração-na-estrutura-de-urls-públicas-do-asaas
+  function checkedCheckoutLink(link: string) {
+    if (link.length > 2048 || [...link].some(char => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127)
+      || link.includes("\\") || link.includes("#")) throw new Error();
+    const parsed = new URL(link);
+    const authority = /^https:\/\/([^/?#]+)/i.exec(link)?.[1];
+    if (parsed.protocol !== "https:" || !authority || authority.includes("@") || parsed.username || parsed.password
+      || parsed.hash || parsed.port || !payerOrigins.includes(parsed.origin)) throw new Error();
+    return link;
+  }
 
   async function createHostedCheckout(input: HostedCheckoutInput) {
     const parsed = checkoutInput.safeParse(input);
     if (!parsed.success) throw new AsaasError("INVALID_REQUEST");
+    // Configuration errors occur before fetch, outside UNKNOWN_OUTCOME handling.
+    // Use the factory's environment mode consistently with its fixed API host.
+    const origin = getAsaasCheckoutOrigin({ ASAAS_ENVIRONMENT: mode, NEXTAUTH_URL: env.NEXTAUTH_URL, AUTH_URL: env.AUTH_URL });
     const value = parsed.data;
     const callback = (result: string) => `${origin}/settings/billing?checkout=${encodeURIComponent(value.reference)}&result=${result}`;
     let response: Response;
@@ -103,10 +130,13 @@ export function createAsaasClient(env: Readonly<Record<string, string | undefine
     }
     try {
       const body = await readBoundedJson(response);
-      const result = z.object({ id: z.uuid() }).safeParse(body);
+      const result = z.object({ id: z.uuid(), link: z.string().min(1).max(2048).optional() }).safeParse(body);
       if (!result.success) throw new Error();
-      // Never trust a provider-supplied redirect URL, or treat it as paid access.
-      return { id: result.data.id, url: `${payerOrigin}/checkoutSession/show?id=${encodeURIComponent(result.data.id)}` };
+      // An invalid present link is an uncertain POST outcome, not a reason to
+      // reconstruct/retry. The documented id-only canonical URL is a fallback
+      // exclusively for responses that omit link. Neither URL grants paid access.
+      const url = result.data.link === undefined ? `${payerOrigin}/checkoutSession/show?id=${encodeURIComponent(result.data.id)}` : checkedCheckoutLink(result.data.link);
+      return { id: result.data.id, url };
     } catch { throw new AsaasError("UNKNOWN_OUTCOME"); }
   }
   // GET failures never imply an uncertain financial mutation. No implicit retries.
@@ -152,5 +182,40 @@ export function createAsaasClient(env: Readonly<Record<string, string | undefine
       || result.data.some(payment => payment.checkoutSession !== id)) throw new AsaasError("INVALID_RESPONSE");
     return result;
   }
-  return { createHostedCheckout, getPayment, getSubscription, listPaymentsByCheckout };
+
+  // Official GET /v3/payments?subscription=... (reference/listar-cobrancas).
+  // Renewals may have no checkoutSession; require the subscription link instead.
+  async function listPaymentsBySubscription(id: string, options: { offset?: number; limit?: number } = {}): Promise<AsaasPaymentPageDTO> {
+    const page = pagination.safeParse(options);
+    if (!subscriptionId.safeParse(id).success || !page.success) throw new AsaasError("INVALID_REQUEST");
+    const query = new URLSearchParams({ subscription: id, offset: String(page.data.offset), limit: String(page.data.limit) });
+    const result = await read(`/payments?${query}`, paymentPageResponse);
+    if (result.offset !== page.data.offset || result.limit !== page.data.limit || result.data.length > page.data.limit
+      || result.data.some(payment => payment.subscription !== id)) throw new AsaasError("INVALID_RESPONSE");
+    return result;
+  }
+
+  // Official DELETE /v3/subscriptions/{id} (reference/remover-assinatura).
+  // Ends renewal and removes pending/overdue invoices; settled invoices remain.
+  // The caller must authorize the persisted binding and preserve paid periods.
+  async function cancelSubscription(id: string): Promise<AsaasSubscriptionCancellationDTO> {
+    if (!subscriptionId.safeParse(id).success) throw new AsaasError("INVALID_REQUEST");
+    let response: Response;
+    try {
+      response = await fetcher(`${api}/subscriptions/${encodeURIComponent(id)}`, {
+        method: "DELETE", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000),
+        headers: { access_token: key!, Accept: "application/json", "User-Agent": "CRIA-PING/1.0" },
+      });
+    } catch { throw new AsaasError("UNKNOWN_OUTCOME"); }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw new AsaasError(response.status >= 500 || response.status === 408 || response.status === 409 ? "UNKNOWN_OUTCOME" : "REJECTED", response.status);
+    }
+    try {
+      const result = cancellationResponse.safeParse(await readBoundedJson(response));
+      if (!result.success || result.data.id !== id) throw new Error();
+      return result.data;
+    } catch { throw new AsaasError("UNKNOWN_OUTCOME"); }
+  }
+  return { createHostedCheckout, getPayment, getSubscription, listPaymentsByCheckout, listPaymentsBySubscription, cancelSubscription };
 }

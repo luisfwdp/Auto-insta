@@ -115,10 +115,154 @@ model WorkspaceBilling {
   planId                  String?
   providerCustomerId      String?
   providerSubscriptionId  String?  @unique
+  currentSubscriptionId   String? @unique @db.Uuid
+  syncLeaseToken          String? @db.Uuid
+  syncLeaseUntil          DateTime?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  checkouts BillingCheckout[]
+  subscriptions BillingSubscription[] @relation("WorkspaceSubscriptions")
+  currentSubscription BillingSubscription? @relation("CurrentSubscription", fields: [currentSubscriptionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  @@unique([currentSubscriptionId, workspaceId])
+}
+
+enum BillingEnvironment {
+  sandbox
+  production
+}
+
+enum BillingCheckoutStatus {
+  CREATING
+  OPEN
+  UNKNOWN
+  COMPLETED
+  CANCELED
+  EXPIRED
+  REJECTED
+}
+
+enum BillingWorkStatus {
+  PENDING
+  PROCESSING
+  RETRY
+  PROCESSED
+  DEAD
+}
+
+model BillingCheckout {
+  id String @id @default(uuid()) @db.Uuid
+  workspaceId String
+  environment BillingEnvironment
+  accountScope String @db.Uuid
+  requestId String @db.Uuid
+  planId String
+  amountCents Int
+  firstChargeDate String @db.VarChar(10)
+  billingAnchorDay Int
+  status BillingCheckoutStatus @default(CREATING)
+  providerCheckoutId String? @db.Uuid
+  checkoutUrlCiphertext String?
+  lastErrorCode String?
+  recoveryEnqueuedAt DateTime?
+  lastOwnerRefreshAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  billing WorkspaceBilling @relation(fields: [workspaceId], references: [workspaceId], onDelete: Restrict)
+  subscription BillingSubscription?
+  @@unique([workspaceId, requestId])
+  @@unique([id, workspaceId, environment, accountScope])
+  @@unique([environment, accountScope, providerCheckoutId])
+  @@index([workspaceId, createdAt])
+}
+
+model BillingSubscription {
+  id String @id @default(uuid()) @db.Uuid
+  workspaceId String
+  environment BillingEnvironment
+  accountScope String @db.Uuid
+  providerSubscriptionId String
+  providerCustomerId String
+  checkoutId String @unique @db.Uuid
+  planId String
+  amountCents Int
+  billingAnchorDay Int
+  renewalStatus String
+  recoveryEnqueuedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  billing WorkspaceBilling @relation("WorkspaceSubscriptions", fields: [workspaceId], references: [workspaceId], onDelete: Restrict)
+  currentFor WorkspaceBilling? @relation("CurrentSubscription")
+  checkout BillingCheckout @relation(fields: [checkoutId, workspaceId, environment, accountScope], references: [id, workspaceId, environment, accountScope], onDelete: Restrict)
+  payments BillingPayment[]
+  commands BillingCommand[]
+  @@unique([id, workspaceId])
+  @@unique([id, workspaceId, environment, accountScope])
+  @@unique([checkoutId, workspaceId, environment, accountScope])
+  @@unique([environment, accountScope, providerSubscriptionId])
+  @@index([workspaceId])
+}
+
+model BillingPayment {
+  id String @id @default(uuid()) @db.Uuid
+  workspaceId String
+  subscriptionId String @db.Uuid
+  environment BillingEnvironment
+  accountScope String @db.Uuid
+  providerPaymentId String
+  amountCents Int
+  dueDate String @db.VarChar(10)
+  status String
+  deleted Boolean
+  syncedAt DateTime @default(now())
+
+  subscription BillingSubscription @relation(fields: [subscriptionId, workspaceId, environment, accountScope], references: [id, workspaceId, environment, accountScope], onDelete: Restrict)
+  @@unique([environment, accountScope, providerPaymentId])
+  @@index([workspaceId, subscriptionId])
+}
+
+/// Authenticated inbox stores resource IDs only, never raw payer/card payloads.
+model BillingEvent {
+  id String @id @default(uuid()) @db.Uuid
+  environment BillingEnvironment
+  accountScope String @db.Uuid
+  eventId String @db.VarChar(200)
+  eventType String @db.VarChar(64)
+  paymentId String?
+  subscriptionId String?
+  checkoutId String? @db.Uuid
+  status BillingWorkStatus @default(PENDING)
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  leaseToken String? @db.Uuid
+  leaseUntil DateTime?
+  lastErrorCode String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([environment, accountScope, eventId])
+  @@index([status, nextAttemptAt])
+}
+
+/// Durable cancellation request; no provider mutation happens before this exists.
+model BillingCommand {
+  id String @id @default(uuid()) @db.Uuid
+  workspaceId String
+  subscriptionId String @db.Uuid
+  requestId String @db.Uuid
+  status BillingWorkStatus @default(PENDING)
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  leaseToken String? @db.Uuid
+  leaseUntil DateTime?
+  lastErrorCode String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  subscription BillingSubscription @relation(fields: [subscriptionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  @@unique([workspaceId, requestId])
+  @@index([status, nextAttemptAt])
 }
 
 enum BillingStatus {
