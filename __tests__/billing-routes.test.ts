@@ -27,7 +27,7 @@ const checkoutBody = { requestId: id, planId: "pro-v1", expectedAmountCents: 149
 const routes = [["checkout", checkoutPOST, checkoutGET], ["cancel", cancelPOST, cancelGET]] as const;
 const bodyFor = (kind: string) => kind === "checkout" ? checkoutBody : { requestId: id };
 function post(kind: string, body: unknown = bodyFor(kind), headers: Record<string, string> = {}) {
-  return new NextRequest(`${origin}/api/billing/${kind}`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+  return new NextRequest(`${origin}/api/billing/${kind}`, { method: "POST", headers: { Origin: origin, "x-cria-workspace-id": "workspace-a", "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
 }
 function get(kind: string, query = `id=${id}`) { return new NextRequest(`${origin}/api/billing/${kind}?${query}`); }
 async function expectFailure(response: Response, status: number, error: string) {
@@ -79,7 +79,7 @@ describe.each(routes)("billing %s route boundaries", (kind, POST, GET) => {
   });
   it("bounds actual streamed bytes before JSON parsing even with a false Content-Length", async () => {
     const chunks = [new TextEncoder().encode("{"), new TextEncoder().encode("é".repeat(2048))];
-    const request = new NextRequest(`${origin}/api/billing/${kind}`, { method: "POST", headers: { Origin: origin, "Content-Length": "1" }, body: new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(chunk); controller.close(); } }) });
+    const request = new NextRequest(`${origin}/api/billing/${kind}`, { method: "POST", headers: { Origin: origin, "x-cria-workspace-id": "workspace-a", "Content-Length": "1" }, body: new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(chunk); controller.close(); } }) });
     await expectFailure(await POST(request), 413, "BODY_TOO_LARGE");
     expect(state.create).not.toHaveBeenCalled(); expect(state.cancel).not.toHaveBeenCalled();
   });
@@ -89,11 +89,11 @@ describe.each(routes)("billing %s route boundaries", (kind, POST, GET) => {
   });
   it("accepts a valid request at the exact 4KiB boundary", async () => {
     const body = JSON.stringify(bodyFor(kind));
-    const request = new NextRequest(`${origin}/api/billing/${kind}`, { method: "POST", headers: { Origin: origin }, body: body.padEnd(4096, " ") });
+    const request = new NextRequest(`${origin}/api/billing/${kind}`, { method: "POST", headers: { Origin: origin, "x-cria-workspace-id": "workspace-a" }, body: body.padEnd(4096, " ") });
     expect((await POST(request)).status).toBe(kind === "checkout" ? 200 : 202);
   });
   it.each(["{", "null", "[]"])("rejects malformed or structurally invalid JSON %s", async body => {
-    const request = new NextRequest(`${origin}/api/billing/${kind}`, { method: "POST", headers: { Origin: origin }, body });
+    const request = new NextRequest(`${origin}/api/billing/${kind}`, { method: "POST", headers: { Origin: origin, "x-cria-workspace-id": "workspace-a" }, body });
     await expectFailure(await POST(request), 400, "INVALID_REQUEST");
     expect(state.create).not.toHaveBeenCalled(); expect(state.cancel).not.toHaveBeenCalled();
   });

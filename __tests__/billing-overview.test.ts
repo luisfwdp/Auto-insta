@@ -3,7 +3,7 @@ const state = vi.hoisted(() => ({ row: null as unknown, enabled: false, configur
   find: vi.fn(), count: vi.fn(), legacy: vi.fn() }));
 vi.mock("@/lib/db/client", () => ({ prisma: { workspaceBilling: { findUnique: state.find }, billingCommand: { count: state.count } } }));
 vi.mock("@/lib/workspace-access", () => ({ getCurrentWorkspaceContext: async () => state.context }));
-vi.mock("@/lib/billing/config", () => ({ getBillingProviderScope: () => ({ environment: "sandbox", accountScope: "scope-a" }), hasBillingProviderScope: () => state.configured }));
+vi.mock("@/lib/billing/config", async original => ({ ...await original<typeof import("../lib/billing/config")>(), getBillingProviderScope: () => ({ environment: "sandbox", accountScope: "scope-a" }), hasBillingProviderScope: () => state.configured }));
 vi.mock("@/lib/billing/trial", async original => ({ ...await original(), isBillingEnabled: () => state.enabled, getWorkspaceBillingStatus: state.legacy }));
 import { readBillingOverview } from "../lib/billing/overview";
 import { GET } from "../app/api/billing/status/route";

@@ -24,6 +24,32 @@ the new tables. Existing self-hosted behavior remains unchanged.
 - Both tables are server-only, have RLS enabled and revoke anonymous/browser grants.
   The additive migration must be reviewed and applied by a human, never an agent.
 
+### Workspace precondition for financial requests
+
+The selected workspace is a user preference shared across browser tabs. Financial
+writes (`POST /api/billing/trial`, `/checkout`, `/cancel`) must therefore include
+`x-cria-workspace-id` with the workspace displayed when the user confirmed the
+action. This is a precondition compared against the authenticated server context,
+never authority to choose a tenant. Missing, empty, duplicated/comma-separated or
+malformed values return400 `WORKSPACE_CONTEXT_REQUIRED`; a different valid ID
+returns409 `WORKSPACE_CHANGED`. No financial service, body parsing or provider
+operation occurs on either failure. Responses are no-store and never echo IDs.
+
+Origin, authentication, owner RBAC and deployment flags retain their precedence;
+rollback cancellation remains available with a valid configured provider scope.
+The captured context is copied and frozen. A later selection cannot redirect
+an already accepted request to another workspace. Cancellation/checkout services
+still receive only that server workspace and validated intent/resource IDs.
+
+`GET /api/billing/checkout`, `/cancel`, `/status` and `/usage` compare the same
+header when present. Requests without a header remain compatible with older read
+clients. Status/usage remain readable by authenticated workspace members. Clients
+should pin reads too, stop displaying stale financial data on a mismatch, refresh
+selection and require a new explicit decision; never replay a financial mutation
+automatically in the newly selected workspace. A precondition failure proves no
+effect in that attempt, not that an earlier timed-out intent never persisted:
+preserve the original requestId until its outcome is known.
+
 The status DTO is **not yet enforcement of access or quotas**. Before enabling
 commercial signup, integrate entitlement checks at HTTP, MCP and actual worker
 side effects, with rate limits and trial quotas. Without explicit subscription,
