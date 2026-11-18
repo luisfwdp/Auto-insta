@@ -4,6 +4,7 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/db/client";
 import { ensureWorkspaceForUser, getPrimaryWorkspace } from "@/lib/workspace";
 import { isEmailAllowedToSignIn } from "@/lib/env";
+import { sendWelcomeEmail } from "@/lib/email/welcome";
 
 type AdapterPrismaClient = Parameters<typeof PrismaAdapter>[0];
 
@@ -43,6 +44,7 @@ export const authConfig = {
       if (user.id) {
         await ensureWorkspaceForUser(user.id, user.email);
       }
+      await sendWelcomeEmail(user.email);
     },
   },
   pages: {
