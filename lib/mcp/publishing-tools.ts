@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { assertCommercialAccess } from "@/lib/billing/commercial-access";
 import { BillingError } from "@/lib/billing/config";
+import { isBillingEnabled } from "@/lib/billing/trial";
+import { releaseCommercialUsage } from "@/lib/billing/commercial-usage";
 import { z } from "zod";
 
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -222,6 +224,16 @@ export function createPrismaMcpPublishingService(workspace?: string): McpPublish
             where: { batchId: id, workspaceId, status: { in: ["DRAFT", "SCHEDULED", "QUEUED", "FAILED"] } },
             data: { status: "CANCELLED", cancelledAt: new Date() },
           });
+          if (isBillingEnabled()) {
+            const publications = await tx.scheduledPublication.findMany({
+              where: { batchId: id, workspaceId, status: "CANCELLED" }, select: { idempotencyKey: true },
+            });
+            const reservations = await tx.commercialUsageReservation.findMany({
+              where: { workspaceId, resource: "PUBLICATION", operationKey: { in: publications.map(publication => publication.idempotencyKey) },
+                status: { in: ["RESERVED", "REJECTED"] } }, select: { id: true },
+            });
+            for (const reservation of reservations) await releaseCommercialUsage(workspaceId, reservation.id, tx);
+          }
         } else if (action === "resume") {
           await tx.scheduledPublication.updateMany({
             where: { batchId: id, workspaceId, status: "FAILED" },

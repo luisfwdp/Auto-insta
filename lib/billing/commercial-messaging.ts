@@ -4,7 +4,7 @@ import type { InstagramContext } from "@/lib/instagram/context";
 import { DeliveryUnconfirmedError, isConfirmedSendRejection } from "@/lib/instagram/delivery-errors";
 import { ZernioApiError } from "@/lib/zernio/client";
 import { assertCommercialAccountUsable } from "./commercial-capacity";
-import { reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch, readCommercialUsageReceipt } from "./commercial-usage";
+import { findCommercialUsageOperation, reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch, readCommercialUsageReceipt } from "./commercial-usage";
 import { BillingError } from "./config";
 import { isBillingEnabled } from "./trial";
 
@@ -53,19 +53,27 @@ export async function executeCommercialMessage(input: {
   const intent = createHash("sha256").update(JSON.stringify({ version: 1, instagramId: input.instagramAccountId,
     operationId, kind: input.kind, target: input.targetId, payload: input.payload })).digest("hex");
   const key = manual ? createHash("sha256").update(JSON.stringify({ version: 1, operationId })).digest("hex") : intent;
+  const replay = async (reservationId: string): Promise<MessageResult> => {
+    try {
+      const receipt = savedReceipt.safeParse(await readCommercialUsageReceipt(workspaceId, reservationId));
+      if (!receipt.success) throw uncertain();
+      return { message_id: receipt.data.messageId, ...(receipt.data.recipientId ? { recipient_id: receipt.data.recipientId } : {}) };
+    } catch { throw uncertain(); }
+  };
+  const previous = manual
+    ? await findCommercialUsageOperation(workspaceId, "DM", `message:${key}`, 1, intent)
+    : await findCommercialUsageOperation(workspaceId, "DM", `message:${key}`, 1);
+  if (previous?.status === "COMMITTED") return replay(previous.reservationId);
+  if (previous && !["RESERVED", "REJECTED"].includes(previous.status)) throw uncertain();
+  // Reject unusable/expired accounts before creating or rearming any hold.
+  await assertCommercialAccountUsable(workspaceId, context.instagramId);
   const reservation = manual
     ? await reserveCommercialUsage(workspaceId, "DM", `message:${key}`, 1, intent)
     : await reserveCommercialUsage(workspaceId, "DM", `message:${key}`, 1);
   if (reservation.mode === "legacy") return send();
-  if (reservation.status === "COMMITTED") {
-    try {
-      const receipt = savedReceipt.safeParse(await readCommercialUsageReceipt(workspaceId, reservation.reservationId));
-      if (!receipt.success) throw uncertain();
-      return { message_id: receipt.data.messageId, ...(receipt.data.recipientId ? { recipient_id: receipt.data.recipientId } : {}) };
-    } catch { throw uncertain(); }
-  }
+  // Another worker may have committed between the lookup and reservation CAS.
+  if (reservation.status === "COMMITTED") return replay(reservation.reservationId);
   if (reservation.status !== "RESERVED") throw uncertain();
-  await assertCommercialAccountUsable(workspaceId, context.instagramId);
   const claim = await beginCommercialDispatch(workspaceId, reservation.reservationId);
   if (!claim) throw uncertain();
   let result: MessageResult;

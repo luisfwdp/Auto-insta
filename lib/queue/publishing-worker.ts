@@ -175,6 +175,10 @@ async function publishPublication(job: Job<PublishPublicationJob>) {
     }
     try {
       mediaId = await publishContainer(context.instagramId, context.accessToken, containerId);
+      // A successful HTTP response without the provider's media ID cannot
+      // prove publication. Keep the dispatch held until canonical recovery.
+      if (typeof mediaId !== "string" || !/^[!-~]{1,2048}$/.test(mediaId))
+        throw new BillingError("PUBLICATION_OUTCOME_REVIEW_REQUIRED", 409);
     } catch (error) {
       if (reservation.mode !== "commercial") throw error;
       // Only an explicit provider rejection proves no publication occurred.
@@ -193,7 +197,15 @@ async function publishPublication(job: Job<PublishPublicationJob>) {
       await finishCommercialDispatch(publication.workspaceId, reservation.reservationId, dispatch!.dispatchToken, "CONFIRMED");
   }
   await prisma.scheduledPublication.updateMany({
-    where: { id: publication.id, workspaceId: publication.workspaceId, status: "PROCESSING" },
+    // A stalled duplicate may have raised REVIEW while the real dispatch was
+    // in flight. Its valid receipt/canonical PUBLISHED proof takes precedence,
+    // bound to this same tenant and container; other failures stay untouched.
+    where: { id: publication.id, workspaceId: publication.workspaceId, metaContainerId: containerId,
+      OR: [{ status: "PROCESSING" }, { status: "FAILED", lastError: "PUBLICATION_OUTCOME_REVIEW_REQUIRED" },
+        // Cancellation cannot retract a Graph call already accepted in flight.
+        // Record only that proven effect, retaining the cancellation timestamp
+        // and batch intent; this branch never dispatches a canceled job.
+        { status: "CANCELLED", lastError: "PUBLICATION_OUTCOME_REVIEW_REQUIRED", metaStatus: "PUBLISHING", cancelledAt: { not: null } }] },
     data: {
       status: "PUBLISHED",
       // Preserve an explicit recovery marker when Meta confirms publication

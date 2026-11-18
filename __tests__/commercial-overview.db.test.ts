@@ -68,7 +68,7 @@ describe.skipIf(!url)("commercial overview native projections", () => {
     const period = await paid("workspace-a");
     await allocate("workspace-a", "DM", "CONFIRMED"); await allocate("workspace-a", "PUBLICATION"); await allocate("workspace-a2", "DM", "CONFIRMED");
     for (const [scopeKey, periodStart, periodEnd] of [[`production:${scope}`, period.startsAt, period.endsAt], [`sandbox:${otherScope}`, period.startsAt, period.endsAt], [`sandbox:${scope}`, period.endsAt, monthlyInvoicePeriod(saoPauloDate(period.endsAt), 1).endsAt]] as const) {
-      await state.db.commercialUsageBucket.create({ data: { subjectKind: "WORKSPACE_PAID", subjectId: "workspace-a", resource: "DM", scopeKey, periodStart, periodEnd, limitSnapshot: 10000n, consumed: 999n, reserved: 999n } });
+      await state.db.commercialUsageBucket.create({ data: { subjectKind: "WORKSPACE_PAID", subjectId: "workspace-a", resource: "DM", scopeKey, periodStart, periodEnd, limitSnapshot: BigInt("10000"), consumed: BigInt("999"), reserved: BigInt("999") } });
     }
     const current = await readCommercialOverview("workspace-a"), sibling = await readCommercialOverview("workspace-a2");
     expect(current).toMatchObject({ hasAccess: true, kind: "paid", periodStart: period.startsAt.toISOString(), periodEnd: period.endsAt.toISOString(), counters: { dms: { consumed: 1, reserved: 0, limit: 10000 }, publications: { consumed: 0, reserved: 1, limit: 300 } } });
@@ -76,7 +76,7 @@ describe.skipIf(!url)("commercial overview native projections", () => {
   });
   it("does not grant current access or expose future usage from a future-only payment", async () => {
     const period = await paid("workspace-a", true);
-    await state.db.commercialUsageBucket.create({ data: { subjectKind: "WORKSPACE_PAID", subjectId: "workspace-a", resource: "DM", scopeKey: `sandbox:${scope}`, periodStart: period.startsAt, periodEnd: period.endsAt, limitSnapshot: 10000n, consumed: 500n } });
+    await state.db.commercialUsageBucket.create({ data: { subjectKind: "WORKSPACE_PAID", subjectId: "workspace-a", resource: "DM", scopeKey: `sandbox:${scope}`, periodStart: period.startsAt, periodEnd: period.endsAt, limitSnapshot: BigInt("10000"), consumed: BigInt("500") } });
     expect(await readCommercialOverview("workspace-a")).toEqual({ hasAccess: false, code: "PAYMENT_NOT_CURRENT", limits: null, counters: null });
   });
   it("does not expose historical counters after exact trial expiry", async () => {
@@ -86,7 +86,7 @@ describe.skipIf(!url)("commercial overview native projections", () => {
     finally { vi.useRealTimers(); }
   });
   it("fails503 when persisted BIGINT cannot be represented safely", async () => {
-    await allocate("workspace-a", "DM"); await state.db.commercialUsageBucket.updateMany({ data: { consumed: BigInt(Number.MAX_SAFE_INTEGER) + 1n } });
+    await allocate("workspace-a", "DM"); await state.db.commercialUsageBucket.updateMany({ data: { consumed: BigInt(Number.MAX_SAFE_INTEGER) + BigInt("1") } });
     await expect(readCommercialOverview("workspace-a")).rejects.toMatchObject({ code: "BILLING_UNAVAILABLE", httpStatus: 503 });
   });
 });

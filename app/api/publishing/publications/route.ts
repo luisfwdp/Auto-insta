@@ -5,6 +5,8 @@ import { publicationInputSchema, updatePublicationSchema } from "@/lib/publishin
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 import { assertCommercialAccess } from "@/lib/billing/commercial-access";
 import { BillingError } from "@/lib/billing/config";
+import { isBillingEnabled } from "@/lib/billing/trial";
+import { releaseCommercialUsage } from "@/lib/billing/commercial-usage";
 
 async function commercialGate(workspaceId: string) {
   try {
@@ -111,6 +113,14 @@ export async function PATCH(request: NextRequest) {
         data: { status: "CANCELLED", cancelledAt: new Date() },
       });
       if (claimed.count === 0) return null;
+      if (isBillingEnabled()) {
+        const reservation = await tx.commercialUsageReservation.findUnique({
+          where: { workspaceId_resource_operationKey: { workspaceId, resource: "PUBLICATION", operationKey: existing.idempotencyKey } },
+          select: { id: true, status: true },
+        });
+        if (reservation && ["RESERVED", "REJECTED"].includes(reservation.status))
+          await releaseCommercialUsage(workspaceId, reservation.id, tx);
+      }
       return tx.scheduledPublication.findUnique({ where: { id: existing.id }, include: includePublication });
     });
     if (!cancelled) return NextResponse.json({ success: false, error: "Publication was already claimed for processing" }, { status: 409 });

@@ -12,10 +12,11 @@ import { beforeAll, beforeEach, afterAll, afterEach, describe, expect, it, vi } 
 const url = process.env.TEST_DATABASE_URL, schema = `commercial_usage_${randomBytes(5).toString("hex")}`;
 const state = vi.hoisted(() => ({ db: undefined as unknown as import("../app/generated/prisma/client").PrismaClient }));
 vi.mock("@/lib/db/client", () => ({ get prisma() { return state.db; } }));
-import { reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch, releaseCommercialUsage, readCommercialUsageReceipt } from "../lib/billing/commercial-usage";
+import { findCommercialUsageOperation, reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch, releaseCommercialUsage, readCommercialUsageReceipt } from "../lib/billing/commercial-usage";
 import { BILLING_PLANS, type BillingPlanId } from "../lib/billing/catalog";
 import { monthlyInvoicePeriod } from "../lib/billing/financial-policy";
 import { saoPauloDate } from "../lib/billing/config";
+import { executeCommercialMessage } from "../lib/billing/commercial-messaging";
 
 const scope = "1eb34a1e-82b8-4a6f-a67a-202654136d47";
 let sql: Client, trialStartedAt: Date, trialEndsAt: Date;
@@ -50,6 +51,7 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
   });
   beforeEach(async () => {
     vi.stubEnv("BILLING_ENABLED", "true"); vi.stubEnv("ASAAS_ENVIRONMENT", "sandbox"); vi.stubEnv("ASAAS_ACCOUNT_SCOPE", scope); vi.stubEnv("VERCEL_ENV", "preview"); vi.stubEnv("FLY_APP_NAME", ""); vi.stubEnv("ENCRYPTION_KEY", "11".repeat(32));
+    await state.db.instagramAccount.deleteMany();
     await sql.query(`TRUNCATE TABLE "CommercialUsageReservation", "CommercialUsageBucket", "BillingEvent", "BillingCommand", "BillingPayment", "BillingSubscription", "BillingCheckout", "WorkspaceBilling", "TrialRedemption" CASCADE`);
     await state.db.workspace.updateMany({ where: { id: { in: ["workspace-a", "workspace-b"] } }, data: { ownerId: "owner-a" } });
     trialStartedAt = new Date(Date.now() - 600000); trialEndsAt = new Date(trialStartedAt.getTime() + 72 * 3600000);
@@ -63,6 +65,44 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
     const ids = await Promise.all(Array.from({ length: 20 }, () => reservation("workspace-a", "DM", "same-operation")));
     expect(new Set(ids).size).toBe(1); expect(await state.db.commercialUsageReservation.count()).toBe(1);
     expect((await usage(ids[0])).bucket).toMatchObject({ subjectKind: "OWNER_TRIAL", subjectId: "owner-a", reserved: BigInt(1), consumed: BigInt(0), limitSnapshot: BigInt(100) });
+  });
+  it("does not allocate any DM hold for one hundred blocked surplus-account events after downgrade", async () => {
+    await makePaid("workspace-a", "pro-v1");
+    await state.db.instagramAccount.createMany({ data: [
+      { workspaceId: "workspace-a", instagramId: "ig_allowed", username: "fixture_allowed", accessToken: "fixture", connectedAt: new Date("2020-01-01T00:00:00Z") },
+      { workspaceId: "workspace-a", instagramId: "ig_surplus", username: "fixture_surplus", accessToken: "fixture", connectedAt: new Date("2020-01-02T00:00:00Z") },
+    ] });
+    const paid = await makePaid("workspace-a", "essential-v1");
+    const send = vi.fn().mockResolvedValue({ message_id: "fixture-real-provider-receipt" });
+    const input = (instagramId: string, operationId: string) => ({ context: { provider: "META" as const, workspaceId: "workspace-a", instagramId, operationId, accessToken: "fixture" }, instagramAccountId: instagramId, kind: "direct_plain" as const, targetId: "fixture-recipient", payload: { text: "fixture" } });
+    const outcomes = await Promise.allSettled(Array.from({ length: 100 }, (_, index) => executeCommercialMessage(input("ig_surplus", `blocked:${index}`), send)));
+    expect(outcomes.every(result => result.status === "rejected" && result.reason.code === "COMMERCIAL_ACCOUNT_LIMIT")).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+    expect(await state.db.commercialUsageBucket.count()).toBe(0); expect(await state.db.commercialUsageReservation.count()).toBe(0);
+    const manualId = `manual:${randomUUID()}`, allowedInput = input("ig_allowed", manualId);
+    expect(await executeCommercialMessage(allowedInput, send)).toEqual({ message_id: "fixture-real-provider-receipt" });
+    expect(send).toHaveBeenCalledOnce();
+    expect(await state.db.commercialUsageBucket.findFirstOrThrow()).toMatchObject({ consumed: BigInt("1"), reserved: BigInt("0") });
+    expect(await state.db.commercialUsageReservation.findFirstOrThrow()).toMatchObject({ status: "COMMITTED" });
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(paid.period.endsAt);
+    expect(await executeCommercialMessage(allowedInput, send)).toEqual({ message_id: "fixture-real-provider-receipt" });
+    await expect(executeCommercialMessage({ ...allowedInput, payload: { text: "changed" } }, send)).rejects.toMatchObject({ code: "USAGE_OPERATION_CONFLICT" });
+    await expect(executeCommercialMessage(input("ig_surplus", manualId), send)).rejects.toMatchObject({ code: "USAGE_OPERATION_CONFLICT" });
+    expect(send).toHaveBeenCalledOnce(); expect(await state.db.commercialUsageReservation.count()).toBe(1);
+  });
+  it("looks up immutable usage intents read-only, preserving terminal replay while rejecting changed amount or fingerprint", async () => {
+    const key = "readonly-committed", fingerprint = "a".repeat(64);
+    expect(await findCommercialUsageOperation("workspace-a", "DM", key, 1, fingerprint)).toBeNull();
+    expect(await state.db.commercialUsageBucket.count()).toBe(0);
+    const row = await reserveCommercialUsage("workspace-a", "DM", key, 1, fingerprint), claim = await beginCommercialDispatch("workspace-a", row.reservationId!);
+    await finishCommercialDispatch("workspace-a", row.reservationId!, claim!.dispatchToken, "CONFIRMED", { messageId: "fixture-known-receipt" });
+    const before = await usage(row.reservationId!);
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(trialEndsAt);
+    expect(await findCommercialUsageOperation("workspace-a", "DM", key, 1, fingerprint)).toEqual({ reservationId: row.reservationId, status: "COMMITTED" });
+    for (const [amount, intent] of [[2, fingerprint], [1, "b".repeat(64)], [1, undefined]] as const)
+      await expect(findCommercialUsageOperation("workspace-a", "DM", key, amount, intent)).rejects.toMatchObject({ code: "USAGE_OPERATION_CONFLICT" });
+    expect(await findCommercialUsageOperation("workspace-b", "DM", key, 1, fingerprint)).toBeNull();
+    expect(await usage(row.reservationId!)).toEqual(before); expect(await state.db.commercialUsageReservation.count()).toBe(1);
   });
   it("creates a cold owner-trial bucket safely from two different workspaces at once", async () => {
     const results = await Promise.allSettled([reservation("workspace-a", "DM", "cold-a"), reservation("workspace-b", "DM", "cold-b")]);
@@ -215,6 +255,8 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
   });
   it("does not read or write billing tables in the disabled legacy reservation path", async () => {
     vi.stubEnv("BILLING_ENABLED", "false"); const tx = vi.spyOn(state.db, "$transaction");
+    const lookup = vi.spyOn(state.db.commercialUsageReservation, "findUnique");
+    expect(await findCommercialUsageOperation("nonexistent-workspace", "DM", "legacy-op")).toBeNull(); expect(lookup).not.toHaveBeenCalled();
     expect(await reserveCommercialUsage("nonexistent-workspace", "DM", "legacy-op")).toEqual({ mode: "legacy", reservationId: null, status: null });
     expect(tx).not.toHaveBeenCalled(); expect(await state.db.commercialUsageReservation.count()).toBe(0);
   });
@@ -244,6 +286,7 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
     expect(await usage(id)).toMatchObject({ status: "DISPATCHING", bucket: { reserved: BigInt(1), consumed: BigInt(0) } });
   });
   it.each([0, -1, 0.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])("rejects invalid usage amount%s before mutating counters", async amount => {
+    await expect(findCommercialUsageOperation("workspace-a", "DM", "invalid-amount", amount)).rejects.toMatchObject({ code: "INVALID_USAGE_RESERVATION", httpStatus: 400 });
     await expect(reservation("workspace-a", "DM", "invalid-amount", amount)).rejects.toMatchObject({ code: "INVALID_USAGE_RESERVATION", httpStatus: 400 });
     expect(await state.db.commercialUsageBucket.count()).toBe(0);
   });

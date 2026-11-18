@@ -120,7 +120,11 @@ export async function confirmCommercialMediaUpload(workspaceId: string, input: C
 export async function deleteCommercialMedia(workspaceId: string, id: string) {
   const decision = await prisma.$transaction(async tx => {
     await lockOwner(tx, workspaceId);
-    const asset = await tx.publishingAsset.findFirst({ where: { id, workspaceId }, include: { _count: { select: { publications: true } } } });
+    const asset = await tx.publishingAsset.findFirst({ where: { id, workspaceId }, include: { _count: { select: {
+      // Preserve every reference for history. Only retryable/in-progress
+      // publications still need the private source object to remain present.
+      publications: { where: { publication: { status: { notIn: ["PUBLISHED", "CANCELLED"] } } } },
+    } } } });
     if (!asset) throw new CommercialStorageError("MEDIA_NOT_FOUND", 404);
     if (asset._count.publications) throw new CommercialStorageError("MEDIA_IN_USE", 409);
     if (asset.storageDeletedAt) return { kind: "DONE" as const };

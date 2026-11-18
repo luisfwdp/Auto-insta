@@ -148,6 +148,7 @@ import { getRedisConnection } from "@/lib/queue/client";
 import { hashRecipientId } from "@/lib/tracking/server";
 import { processInstagramWebhook } from "@/lib/queue/process-webhook";
 import { classifySendError } from "@/lib/instagram/delivery-errors";
+import { BillingError } from "@/lib/billing/config";
 
 const usagePeriodStart = new Date("2026-05-01T00:00:00.000Z");
 
@@ -1908,6 +1909,82 @@ describe("DM Worker — diagnostic canary job", () => {
 
     expect(set).toHaveBeenCalledWith("health:worker:canary", expect.any(String), "EX", 600);
     expect(mockPrisma.automation.findMany).not.toHaveBeenCalled();
+    expect(mockSendPrivateReply).not.toHaveBeenCalled();
+  });
+});
+
+describe("commercial denial before a DM send", () => {
+  const code = "COMMERCIAL_ACCESS_REQUIRED";
+  it("keeps the no-send classification instead of fabricating unknown delivery", () => {
+    const denial = new BillingError(code, 402);
+    expect(classifySendError(denial)).toBe(denial);
+  });
+
+  it("releases both legacy holds for a blocked comment and leaves it human-retryable", async () => {
+    mockSendPrivateReply.mockRejectedValueOnce(new BillingError(code, 402));
+    const processor = getProcessor();
+    await expect(processor(createMockJob())).rejects.toMatchObject({ name: "UnrecoverableError", message: code });
+    expect(mockReleaseDMSlot).toHaveBeenCalledExactlyOnceWith("ig_456");
+    expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalledExactlyOnceWith("workspace_123", usagePeriodStart);
+    expect(mockPrisma.dmLog.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+      status: "FAILED", dmDeliveryUnconfirmed: false, errorMessage: code, attempts: { decrement: 1 },
+    }) }));
+    mockPrisma.dmLog.findUnique.mockResolvedValue({ status: "FAILED", attempts: 0, dmDeliveryUnconfirmed: false, errorMessage: code });
+    await processor({ ...createMockJob(), id: "human-retry-after-upgrade" });
+    expect(mockSendPrivateReply).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.dmLog.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "SENT" }) }));
+  });
+
+  it.each([false, true])("releases the legacy workspace hold and records a blocked %s Story trigger correctly", async story => {
+    const storyId = "4028147829863364233";
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true,
+      ...(story ? { postId: storyId, postUrl: `https://www.instagram.com/stories/test/${storyId}` } : {}) }]);
+    mockSendDirectMessage.mockRejectedValueOnce(new BillingError(code, 402));
+    const processor = getProcessor();
+    const job = { name: "process-message", id: "message_billing_denied", attemptsMade: 0,
+      data: { instagramAccountId: "ig_456", messageId: "mid_billing_denied", senderId: "commenter_999", messageText: "LINK", ...(story ? { storyId } : {}) } };
+    await expect(processor(job)).rejects.toMatchObject({ name: "UnrecoverableError", message: code });
+    expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalledExactlyOnceWith("workspace_123", usagePeriodStart);
+    expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: false, errorMessage: code, attempts: 0 }),
+      update: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: false, errorMessage: code, attempts: 0 }),
+    }));
+    mockPrisma.dmLog.findUnique.mockResolvedValue({ status: "FAILED", dmDeliveryUnconfirmed: false, attempts: 0 });
+    await processor({ ...job, id: "human-retry-message-after-upgrade" });
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])("removes only a no-send postback claim and releases its legacy hold (read fallback=%s)", async fallback => {
+    const claims = new Set<string>();
+    mockPrisma.postbackDelivery.create.mockImplementation(async ({ data }: { data: { id: string } }) => {
+      if (claims.has(data.id)) throw { code: "P2002" };
+      claims.add(data.id); return data;
+    });
+    mockPrisma.postbackDelivery.delete.mockImplementation(async ({ where }: { where: { id: string } }) => { claims.delete(where.id); });
+    mockPrisma.automation.findFirst.mockResolvedValue(mockAutomation);
+    mockSendDirectMessage.mockRejectedValueOnce(new BillingError(code, 402));
+    const processor = getProcessor();
+    const job = createMockPostbackJob({ instagramAccountId: "ig_456", userId: "commenter_999", payload: "reveal:auto_789", mid: "blocked-tap", ...(fallback ? { fallback: true } : {}) });
+    await expect(processor(job)).rejects.toMatchObject({ name: "UnrecoverableError", message: code });
+    expect(mockPrisma.postbackDelivery.delete).toHaveBeenCalledOnce();
+    expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalledExactlyOnceWith("workspace_123", usagePeriodStart);
+    expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ status: "FAILED", errorMessage: code, dmDeliveryUnconfirmed: false }),
+      update: expect.objectContaining({ status: "FAILED", errorMessage: code, dmDeliveryUnconfirmed: false }),
+    }));
+    expect(claims.size).toBe(0);
+    await processor({ ...job, id: "human-retry-postback-after-upgrade" });
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(2);
+    expect(claims.size).toBe(1);
+  });
+
+  it("records a public reply denied before send without a permanent uncertainty flag", async () => {
+    const { sendCommentReply } = await import("@/lib/meta/client");
+    vi.mocked(sendCommentReply).mockRejectedValueOnce(new BillingError(code, 402));
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, publicReplyEnabled: true, publicReplyMessages: ["Reply"] }]);
+    mockPrisma.dmLog.findUnique.mockResolvedValue({ status: "SENT", publicReplySentAt: null, publicReplyDeliveryUnconfirmed: false });
+    await getProcessor()(createMockJob());
+    expect(mockPrisma.dmLog.update).toHaveBeenCalledWith(expect.objectContaining({ data: { publicReplyError: code, publicReplyDeliveryUnconfirmed: false } }));
     expect(mockSendPrivateReply).not.toHaveBeenCalled();
   });
 });

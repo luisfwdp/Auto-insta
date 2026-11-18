@@ -57,6 +57,7 @@ import { TRACKED_LINK_ORDER } from "@/lib/tracking/link-order";
 import { hashRecipientId } from "@/lib/tracking/server";
 
 import { ZernioApiError } from "@/lib/zernio/client";
+import { BillingError } from "@/lib/billing/config";
 
 const BACKOFF_DELAYS = [5 * 60 * 1000, 15 * 60 * 1000, 45 * 60 * 1000];
 
@@ -104,6 +105,8 @@ const FOLLOW_RECHECK_TOTAL_MS = FOLLOW_RECHECK_DELAYS_MS.reduce(
  */
 
 function formatError(error: unknown): string {
+  if (error instanceof BillingError)
+    return /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code) ? error.code : "COMMERCIAL_SEND_BLOCKED";
   if (error instanceof MetaApiError) {
     return `${error.name} ${error.code}: ${error.message}`;
   }
@@ -111,6 +114,10 @@ function formatError(error: unknown): string {
     return error.message;
   }
   return "Unknown error";
+}
+
+function isConfirmedNoSend(error: unknown) {
+  return error instanceof BillingError || isConfirmedSendRejection(error);
 }
 
 // Meta rejections that a plain-text retry cannot fix: the send was refused for
@@ -484,6 +491,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           data: { publicReplySentAt: new Date(), publicReplyError: null, publicReplyDeliveryUnconfirmed: false },
         });
       } catch (error) {
+        const sendError = classifySendError(error);
         console.error(
           "[DM Worker] Public comment reply failed:",
           formatError(error)
@@ -496,7 +504,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
                 commentId,
               },
             },
-            data: { publicReplyError: formatError(classifySendError(error)), publicReplyDeliveryUnconfirmed: !isConfirmedSendRejection(error) },
+            data: { publicReplyError: formatError(sendError), publicReplyDeliveryUnconfirmed: isDeliveryUnconfirmed(sendError) },
           })
           .catch(() => {});
       }
@@ -787,7 +795,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
     } catch (error) {
       const sendError = classifySendError(error);
       // Retain reservations if the provider may have delivered the message.
-      if (isConfirmedSendRejection(sendError)) {
+      if (!delivered && isConfirmedNoSend(sendError)) {
         if (rateLimit?.reserved) await releaseDMSlot(instagramAccountId);
         await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
       }
@@ -798,6 +806,9 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           ...(delivered ? { dmSentAt: new Date() } : {}),
           errorMessage: formatError(sendError),
           dmDeliveryUnconfirmed: isDeliveryUnconfirmed(sendError),
+          // The claim counts actual send attempts. A gateway denial made no
+          // external attempt and must remain retryable after an upgrade.
+          ...(!delivered && sendError instanceof BillingError ? { attempts: { decrement: 1 } } : {}),
         },
       });
       throw sendError;
@@ -830,7 +841,7 @@ async function sendPostbackOnce({
   } catch (error) {
     // A durable claim survives queue eviction, concurrent redelivery, and a
     // process crash during delivery. Only confirmed rejections permit retry.
-    if (isConfirmedSendRejection(error)) {
+    if (isConfirmedNoSend(error)) {
       await prisma.postbackDelivery.delete({ where: { id: operationId } });
       throw error;
     }
@@ -1174,7 +1185,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     });
   } catch (originalError) {
     const error = classifySendError(originalError);
-    if (isConfirmedSendRejection(error)) await releaseWorkspaceDMReservation(
+    if (isConfirmedNoSend(error)) await releaseWorkspaceDMReservation(
       automation.workspaceId,
       usage.periodStart,
     );
@@ -1186,7 +1197,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     // failure the user can act on — so don't log it as FAILED and don't retry
     // it against a window that cannot reopen on its own. It still delivers in
     // the case that does work: the user replied by typing instead of tapping.
-    if (fallback && !isDeliveryUnconfirmed(error)) {
+    if (fallback && !(error instanceof BillingError) && !isDeliveryUnconfirmed(error)) {
       console.log(
         "[DM Worker] Read fallback not delivered (messaging window closed):",
         formatError(error),
@@ -1511,7 +1522,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         },
       });
     } catch (error) {
-      if (isConfirmedSendRejection(error)) await releaseWorkspaceDMReservation(
+      if (isConfirmedNoSend(error)) await releaseWorkspaceDMReservation(
         automation.workspaceId,
         usage.periodStart
       );
@@ -1526,13 +1537,13 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           ...logBase,
           commenterName,
           status: "FAILED",
-          attempts: job.attemptsMade + 1,
+          attempts: error instanceof BillingError ? existingLog?.attempts ?? 0 : job.attemptsMade + 1,
           errorMessage: formatError(error),
           dmDeliveryUnconfirmed: isDeliveryUnconfirmed(error),
         },
         update: {
           status: "FAILED",
-          attempts: job.attemptsMade + 1,
+          attempts: error instanceof BillingError ? existingLog?.attempts ?? 0 : job.attemptsMade + 1,
           errorMessage: formatError(error),
           dmDeliveryUnconfirmed: isDeliveryUnconfirmed(error),
         },
@@ -1564,7 +1575,7 @@ async function processJob(job: Job<DmQueueJob>): Promise<void> {
     // formatError() takes unknown; isDeliveryUnconfirmed() is a type guard on
     // Error subclasses, but keep using formatError() for a consistent message
     // format across every UnrecoverableError thrown from this worker.
-    if (isDeliveryUnconfirmed(error))
+    if (error instanceof BillingError || isDeliveryUnconfirmed(error))
       throw new UnrecoverableError(formatError(error));
     throw error;
   }

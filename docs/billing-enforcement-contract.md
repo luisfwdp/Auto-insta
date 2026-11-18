@@ -44,3 +44,13 @@ A migração candidata adiciona User.activeWorkspaceId e metadados de Publishing
 4. Rollback de código para o SHA anterior aprovado continua compatível com as colunas/tabelas aditivas. Não desfazer schema nem apagar recibos/reservas, nem mover UNKNOWN para REJECTED sem prova.
 
 Storage usa os assets como baseline de ocupação, incluindo dados retidos antes da assinatura, em vez de zerar um bucket ao mudar trial→pago. Assinaturas exigem teto real privado finito do bucket; exclusões físicas e liberações precisam de confirmação do provedor e token expirado. Uploads incertos mantêm reserva para recuperação explícita; há limites reais da API para provar término de um upload em voo. A migração conserva metadados ao impedir exclusão física do workspace com assets ainda registrados.
+
+## Guardas de composição revisadas
+
+Antes de alocar uma DM, o gateway consulta a identidade existente sem consumir quota. Um recibo COMMITTED permite replay; um resultado DISPATCHING não permite reenvio. Operações novas só reservam depois de validar a conta utilizável, evitando que tráfego numa conexão excedente drene a franquia das contas válidas. Recusas comerciais anteriores ao envio registram código seguro, liberam contadores/rate slots legados e não recebem a etiqueta de entrega incerta.
+
+Cancelamento HTTP/MCP e liberação de reservas ainda não despachadas ocorrem na mesma transação. Só RESERVED/REJECTED podem liberar quota. Resposta media_publish sem ID válido não comprova publicação: conserva UNKNOWN até confirmação canônica. Se uma execução concorrente registrou REVIEW enquanto a chamada anterior estava em voo, o recibo real pode finalizar o mesmo container; a atualização é limitada pelo workspace/id/container e preserva cancelledAt e a intenção CANCELLED do lote. Nunca retomar CANCELLED comum sem prova de efeito já ocorrido. Cancelar não retrai uma chamada Graph já em voo ou aceita.
+
+Objetos de mídias usadas apenas por publicações PUBLISHED/CANCELLED podem ser removidos após TTL, preservando todas as referências e metadados de histórico. DRAFT/SCHEDULED/QUEUED/PROCESSING/FAILED continuam bloqueando remoção pois podem ser usados/repetidos. Um estado DELETED legado não basta para zerar consumo: o fluxo antigo podia apagar antes do vencimento do token e permitir reupload. Não preencher storageDeletedAt nem zerar holds por esse status sem auditoria aprovada do provedor.
+
+Antes de ativar, repetir inventário agregado de assets/objetos/órfãos/bytes e confirmar bucket privado com teto finito. Havendo legado incerto, manter bloqueio de baseline e concluir recuperação aprovada. A verificação de18/11/2026 do projeto desta instalação não encontrou assets ou objetos órfãos; isso é observação operacional, não garante o inventário futuro.

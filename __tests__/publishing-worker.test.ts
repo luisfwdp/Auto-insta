@@ -275,6 +275,14 @@ describe("commercial publishing dispatch", () => {
     for (const [args] of mocks.updateMany.mock.calls) expect(args.data).not.toHaveProperty("metaContainerId", null);
   });
 
+  it.each([undefined, null, "", 42, {}, "contains whitespace", "bad\nid", "x".repeat(2049)])("does not accept malformed publication receipts as proof: %#", async receipt => {
+    mocks.publishContainer.mockResolvedValueOnce(receipt);
+    await expect(processor()(job)).rejects.toThrow("PUBLICATION_OUTCOME_REVIEW_REQUIRED");
+    expect(mocks.finish).toHaveBeenCalledExactlyOnceWith("workspace_1", "reservation_1", "dispatch_1", "UNKNOWN");
+    expect(mocks.updateMany.mock.calls.some(([args]) => args.data.status === "PUBLISHED")).toBe(false);
+    expect(mocks.release).not.toHaveBeenCalled();
+  });
+
   it.each([
     new RateLimitError("fixture rate limit"), new TokenExpiredError("fixture token expired"),
     ...[10, 100, 200, 551].map(code => new MetaApiError(code, undefined, undefined, `fixture rejection ${code}`)),

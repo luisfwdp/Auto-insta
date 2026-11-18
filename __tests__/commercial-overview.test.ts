@@ -38,7 +38,7 @@ describe("commercial overview read boundaries", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store"); expect(globalThis.fetch).not.toHaveBeenCalled();
   });
   it("returns an allowlisted DTO with explicit unreported byte counters", async () => {
-    state.buckets.mockResolvedValue([{ resource: "DM", consumed: 3n, reserved: 2n }]);
+    state.buckets.mockResolvedValue([{ resource: "DM", consumed: BigInt("3"), reserved: BigInt("2") }]);
     const result = await readCommercialOverview("server-workspace");
     expect(result).toEqual({ hasAccess: true, kind: "trial", periodStart: active.periodStart.toISOString(), periodEnd: active.periodEnd.toISOString(), limits,
       counters: { dms: { consumed: 3, reserved: 2, limit: 100 }, publications: { consumed: 0, reserved: 0, limit: 10 }, storage: null, transfer: null }, metering: { storage: "NOT_REPORTED", transfer: "NOT_METERED" } });
@@ -49,8 +49,8 @@ describe("commercial overview read boundaries", () => {
     state.loader.mockResolvedValue(access); const result = await readCommercialOverview("server-workspace");
     expect(result).toEqual({ hasAccess: false, code: access?.code ?? "BILLING_NOT_STARTED", limits: null, counters: null }); expect(state.buckets).not.toHaveBeenCalled();
   });
-  it.each([BigInt(Number.MAX_SAFE_INTEGER) + 1n, -1n])("fails closed for an unsafe stored counter %s", async consumed => {
-    state.buckets.mockResolvedValue([{ resource: "DM", consumed, reserved: 0n }]);
+  it.each([BigInt(Number.MAX_SAFE_INTEGER) + BigInt("1"), -BigInt("1")])("fails closed for an unsafe stored counter %s", async consumed => {
+    state.buckets.mockResolvedValue([{ resource: "DM", consumed, reserved: BigInt("0") }]);
     const response = await GET(); expect(response.status).toBe(503); expect(await response.json()).toEqual({ success: false, error: "BILLING_UNAVAILABLE" });
   });
   it.each([new Error("secret-token-and-prisma-details"), new BillingError("bad secret", 500)])("redacts unexpected service errors", async error => {

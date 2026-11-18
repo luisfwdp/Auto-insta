@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ enabled: true }));
-const ledger = vi.hoisted(() => ({ reserve: vi.fn(), begin: vi.fn(), finish: vi.fn(), receipt: vi.fn(), gate: vi.fn(), connection: vi.fn() }));
+const ledger = vi.hoisted(() => ({ find: vi.fn(), reserve: vi.fn(), begin: vi.fn(), finish: vi.fn(), receipt: vi.fn(), gate: vi.fn(), connection: vi.fn() }));
 vi.mock("@/lib/billing/trial", () => ({ isBillingEnabled: () => state.enabled }));
-vi.mock("@/lib/billing/commercial-usage", () => ({ reserveCommercialUsage: ledger.reserve, beginCommercialDispatch: ledger.begin,
+vi.mock("@/lib/billing/commercial-usage", () => ({ findCommercialUsageOperation: ledger.find, reserveCommercialUsage: ledger.reserve, beginCommercialDispatch: ledger.begin,
   finishCommercialDispatch: ledger.finish, readCommercialUsageReceipt: ledger.receipt }));
 vi.mock("@/lib/billing/commercial-capacity", () => ({ assertCommercialAccountUsable: ledger.gate }));
 vi.mock("@/lib/db/client", () => ({ prisma: { zernioConnection: { findUnique: ledger.connection } } }));
@@ -33,6 +33,7 @@ function respond(provider: "META" | "ZERNIO", body?: unknown, status = 200) {
 }
 beforeEach(() => {
   state.enabled = true; vi.clearAllMocks(); fetcher.mockReset(); vi.stubGlobal("fetch", fetcher);
+  ledger.find.mockReset().mockResolvedValue(null);
   ledger.reserve.mockResolvedValue({ mode: "commercial", reservationId, status: "RESERVED" });
   ledger.begin.mockResolvedValue({ dispatchToken: token }); ledger.finish.mockResolvedValue(true); ledger.receipt.mockResolvedValue(null); ledger.gate.mockResolvedValue(undefined);
 });
@@ -51,7 +52,7 @@ describe.each(["META", "ZERNIO"] as const)("commercial %s messaging", provider =
   it.each(paths)("preserves the legacy $kind send with no commercial DB/gate calls when disabled", async ({ send }) => {
     state.enabled = false; const ctx = context(provider); delete ctx.operationId; delete ctx.workspaceId;
     respond(provider); await send(ctx); expect(fetcher).toHaveBeenCalledOnce();
-    for (const call of [ledger.reserve, ledger.begin, ledger.finish, ledger.gate, ledger.receipt]) expect(call).not.toHaveBeenCalled();
+    for (const call of [ledger.find, ledger.reserve, ledger.begin, ledger.finish, ledger.gate, ledger.receipt]) expect(call).not.toHaveBeenCalled();
   });
   it("gates public replies without reserving or charging a DM", async () => {
     respond(provider, provider === "META" ? { id: "real_public_reply" } : { data: { commentId: "real_public_reply" } });
@@ -65,6 +66,7 @@ describe.each(["META", "ZERNIO"] as const)("commercial %s messaging", provider =
     for (const { send } of paths) await expect(send(context(provider))).rejects.toMatchObject({ code: "COMMERCIAL_ACCOUNT_UNUSABLE" });
     await expect(messaging.sendCommentReply({ context: context(provider), ...args })).rejects.toMatchObject({ code: "COMMERCIAL_ACCOUNT_UNUSABLE" });
     expect(fetcher).not.toHaveBeenCalled(); expect(ledger.begin).not.toHaveBeenCalled();
+    expect(ledger.reserve).not.toHaveBeenCalled();
   });
 });
 
@@ -94,19 +96,20 @@ it("uses stable hashes and separates operation, target, payload and each DM kind
   expect(new Set(ledger.reserve.mock.calls.map(call => call[2])).size).toBe(6);
 });
 it("replays COMMITTED using the real persisted receipt even if account access has since expired", async () => {
-  ledger.reserve.mockResolvedValue({ mode: "commercial", reservationId, status: "COMMITTED" });
+  ledger.find.mockResolvedValue({ reservationId, status: "COMMITTED" });
   ledger.receipt.mockResolvedValue({ messageId: "m$real=+/_:1", recipientId: args.userId });
   ledger.gate.mockRejectedValue(new BillingError("COMMERCIAL_ACCESS_REQUIRED", 402));
   expect(await paths[3].send(context("META"))).toEqual({ message_id: "m$real=+/_:1", recipient_id: args.userId });
-  expect(ledger.receipt).toHaveBeenCalledWith("workspace_a", reservationId); expect(ledger.gate).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
+  expect(ledger.receipt).toHaveBeenCalledWith("workspace_a", reservationId); expect(ledger.gate).not.toHaveBeenCalled(); expect(ledger.reserve).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
 });
 it.each([null, { messageId: "" }, { messageId: 123 }, { messageId: "contains whitespace" }])("never fabricates an accepted result when stored receipt is unavailable %#", async receipt => {
-  ledger.reserve.mockResolvedValue({ mode: "commercial", reservationId, status: "COMMITTED" }); ledger.receipt.mockResolvedValue(receipt);
+  ledger.find.mockResolvedValue({ reservationId, status: "COMMITTED" }); ledger.receipt.mockResolvedValue(receipt);
   await expect(paths[3].send(context("META"))).rejects.toBeInstanceOf(DeliveryUnconfirmedError); expect(fetcher).not.toHaveBeenCalled();
 });
 it.each(["DISPATCHING", "RELEASED"])("does not resend a prior %s operation", async status => {
-  ledger.reserve.mockResolvedValue({ mode: "commercial", reservationId, status });
+  ledger.find.mockResolvedValue({ reservationId, status });
   await expect(paths[3].send(context("META"))).rejects.toBeInstanceOf(DeliveryUnconfirmedError); expect(fetcher).not.toHaveBeenCalled(); expect(ledger.begin).not.toHaveBeenCalled();
+  expect(ledger.gate).not.toHaveBeenCalled(); expect(ledger.reserve).not.toHaveBeenCalled();
 });
 it("does not send when another process won the dispatch CAS", async () => {
   ledger.begin.mockResolvedValue(null); await expect(paths[3].send(context("META"))).rejects.toBeInstanceOf(DeliveryUnconfirmedError); expect(fetcher).not.toHaveBeenCalled();
@@ -141,6 +144,11 @@ describe("manual request identity and immutable intent", () => {
 
   function fingerprintLedger() {
     const operations = new Map<string, { fingerprint: string; committed: boolean }>();
+    ledger.find.mockImplementation(async (workspaceId, resource, key, _amount, fingerprint) => {
+      const previous = operations.get(`${workspaceId}:${resource}:${key}`);
+      if (previous && previous.fingerprint !== fingerprint) throw new BillingError("USAGE_OPERATION_CONFLICT", 409);
+      return previous ? { reservationId, status: previous.committed ? "COMMITTED" : "RESERVED" } : null;
+    });
     ledger.reserve.mockImplementation(async (workspaceId, resource, key, _amount, fingerprint) => {
       if (!/^[a-f0-9]{64}$/.test(fingerprint ?? "")) throw new BillingError("INVALID_USAGE_FINGERPRINT", 400);
       const identity = `${workspaceId}:${resource}:${key}`, previous = operations.get(identity);
@@ -164,7 +172,7 @@ describe("manual request identity and immutable intent", () => {
     expect(await messaging.sendDirectMessage(input)).toEqual(first);
     expect(fetcher).toHaveBeenCalledOnce();
     expect(ledger.reserve.mock.calls[0]).toEqual(["workspace_a", "DM", expect.stringMatching(/^message:[a-f0-9]{64}$/), 1, expect.stringMatching(/^[a-f0-9]{64}$/)]);
-    expect(ledger.reserve.mock.calls[0]).toEqual(ledger.reserve.mock.calls[1]);
+    expect(ledger.find.mock.calls[0]).toEqual(ledger.find.mock.calls[1]); expect(ledger.reserve).toHaveBeenCalledOnce();
   });
 
   it.each(["body", "target", "account", "kind"])("rejects a changed %s under the same manual UUID before another dispatch", async changed => {
@@ -180,9 +188,9 @@ describe("manual request identity and immutable intent", () => {
     const send = changed === "kind" ? messaging.sendDirectMessageWithButton : messaging.sendDirectMessage;
     await expect(send(changedInput)).rejects.toMatchObject({ code: "USAGE_OPERATION_CONFLICT", httpStatus: 409 });
     expect(fetcher).toHaveBeenCalledOnce(); expect(ledger.begin).toHaveBeenCalledOnce();
-    const [first, second] = ledger.reserve.mock.calls;
+    const [first, second] = ledger.find.mock.calls;
     expect(first[2]).toBe(second[2]); expect(first[4]).not.toBe(second[4]);
-    const saved = JSON.stringify(ledger.reserve.mock.calls);
+    const saved = JSON.stringify([...ledger.find.mock.calls, ...ledger.reserve.mock.calls]);
     for (const secret of [args.message, args.userId, "changed private content", "other_recipient", "other_account"])
       expect(saved).not.toContain(secret);
   });
@@ -200,7 +208,7 @@ describe("manual request identity and immutable intent", () => {
     const first = await messaging.sendDirectMessage({ context: manualContext(), ...args });
     expect(await messaging.sendDirectMessage({ context: { ...manualContext(), operationId: `manual:${requestId.toUpperCase()}` }, ...args })).toEqual(first);
     expect(fetcher).toHaveBeenCalledOnce();
-    expect(ledger.reserve.mock.calls[0]).toEqual(ledger.reserve.mock.calls[1]);
+    expect(ledger.find.mock.calls[0]).toEqual(ledger.find.mock.calls[1]); expect(ledger.reserve).toHaveBeenCalledOnce();
   });
 
   it.each(["manual:bad", "manual:", "manual:a0000000-0000-4000-8000-000000000001:extra"])("rejects malformed server manual identity %s before reservation", async operationId => {

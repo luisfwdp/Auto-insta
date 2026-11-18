@@ -38,6 +38,10 @@ async function confirmed() {
   return upload.asset.id;
 }
 async function expire(id: string) { await state.db.publishingAsset.update({ where: { id }, data: { uploadTokenExpiresAt: new Date(Date.now() - 1000) } }); }
+async function reference(assetId: string, status: import("../app/generated/prisma/client").PublicationStatus) {
+  return state.db.scheduledPublication.create({ data: { workspaceId: "workspace-a", instagramAccountId: "storage-instagram", type: "REEL",
+    timezone: "America/Sao_Paulo", status, idempotencyKey: randomUUID(), assets: { create: { assetId, position: 0 } } } });
+}
 
 describe.skipIf(!url)("commercial retained storage on PostgreSQL", () => {
   beforeAll(async () => {
@@ -47,11 +51,13 @@ describe.skipIf(!url)("commercial retained storage on PostgreSQL", () => {
     state.db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, max: 10, options: `-c search_path=${schema}` }, { schema }) });
     for (const id of ["storage-owner", "other-owner"]) await state.db.user.create({ data: { id, email: `${id}@example.test` } });
     for (const id of ["workspace-a", "workspace-b", "workspace-c"]) await state.db.workspace.create({ data: { id, name: id, ownerId: id === "workspace-c" ? "other-owner" : "storage-owner" } });
+    await state.db.instagramAccount.create({ data: { id: "storage-instagram", workspaceId: "workspace-a", instagramId: "ig_storage_test", username: "storage_test", accessToken: "fake-local-only" } });
   });
   beforeEach(async () => {
     vi.restoreAllMocks(); vi.clearAllMocks();
     vi.stubEnv("BILLING_ENABLED", "true"); vi.stubEnv("ASAAS_ENVIRONMENT", "sandbox"); vi.stubEnv("ASAAS_ACCOUNT_SCOPE", scope); vi.stubEnv("VERCEL_ENV", "test"); vi.stubEnv("FLY_APP_NAME", "local-test");
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No real HTTP permitted"));
+    await state.db.publicationAsset.deleteMany(); await state.db.scheduledPublication.deleteMany();
     await state.db.publishingAsset.deleteMany(); await state.db.workspaceBilling.updateMany({ data: { currentSubscriptionId: null } });
     await state.db.billingPayment.deleteMany(); await state.db.billingCommand.deleteMany(); await state.db.billingEvent.deleteMany(); await state.db.billingSubscription.deleteMany(); await state.db.billingCheckout.deleteMany();
     await state.db.workspaceBilling.deleteMany(); await state.db.trialRedemption.deleteMany();
@@ -122,6 +128,32 @@ describe.skipIf(!url)("commercial retained storage on PostgreSQL", () => {
     const id = await confirmed();
     await expect(deleteCommercialMedia("workspace-a", id)).rejects.toMatchObject({ code: "UPLOAD_TOKEN_STILL_VALID", httpStatus: 409, retryAfter: expect.any(Number) });
     expect(state.remove).not.toHaveBeenCalled(); expect((await state.db.publishingAsset.findUniqueOrThrow({ where: { id } })).status).toBe("READY");
+  });
+  it.each(["PUBLISHED", "CANCELLED"] as const)("deletes a terminal %s object's bytes after expiry while retaining publication history and freeing quota", async status => {
+    const id = await confirmed(), publication = await reference(id, status); await expire(id);
+    const before = await state.db.publishingAsset.findUniqueOrThrow({ where: { id } });
+    await expect(reserveCommercialStorageAsset("workspace-a", input, 1_000_000_000)).rejects.toMatchObject({ code: "COMMERCIAL_STORAGE_LIMIT" });
+    state.inspect.mockResolvedValue(null); await deleteCommercialMedia("workspace-a", id);
+    expect(state.remove).toHaveBeenCalledWith(before.storagePath, { commercial: true });
+    expect(state.inspect).toHaveBeenLastCalledWith(before.storagePath, { commercial: true });
+    expect(await state.db.publishingAsset.findUniqueOrThrow({ where: { id } })).toMatchObject({ id, filename: before.filename, storagePath: before.storagePath,
+      mimeType: before.mimeType, byteSize: before.byteSize, status: "DELETED", uploadCapacityBytes: BigInt(0), storageDeletedAt: expect.any(Date) });
+    expect(await state.db.scheduledPublication.findUniqueOrThrow({ where: { id: publication.id } })).toEqual(publication);
+    expect(await state.db.publicationAsset.findUniqueOrThrow({ where: { publicationId_assetId: { publicationId: publication.id, assetId: id } } })).toMatchObject({ assetId: id, position: 0 });
+    await expect(reserveCommercialStorageAsset("workspace-a", input, 1_000_000_000)).resolves.toMatchObject({ uploadCapacityBytes: BigInt(1_000_000_000) });
+  });
+  it.each(["DRAFT", "SCHEDULED", "QUEUED", "PROCESSING", "FAILED"] as const)("blocks a referenced %s asset even after token expiry because it can still publish/retry", async status => {
+    const id = await confirmed(), publication = await reference(id, status); await expire(id);
+    await expect(deleteCommercialMedia("workspace-a", id)).rejects.toMatchObject({ code: "MEDIA_IN_USE", httpStatus: 409 });
+    expect(state.remove).not.toHaveBeenCalled();
+    expect(await state.db.publishingAsset.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "READY", uploadCapacityBytes: BigInt(500), storageDeletedAt: null });
+    expect(await state.db.publicationAsset.count({ where: { publicationId: publication.id, assetId: id } })).toBe(1);
+  });
+  it.each(["PUBLISHED", "CANCELLED"] as const)("keeps token-lifetime protection for a terminal %s reference", async status => {
+    const id = await confirmed(); await reference(id, status);
+    await expect(deleteCommercialMedia("workspace-a", id)).rejects.toMatchObject({ code: "UPLOAD_TOKEN_STILL_VALID", httpStatus: 409 });
+    expect(state.remove).not.toHaveBeenCalled();
+    expect((await state.db.publishingAsset.findUniqueOrThrow({ where: { id } })).status).toBe("READY");
   });
   it("releases actual retained bytes only after expired READY DELETE succeeds and HEAD proves absence", async () => {
     const id = await confirmed(); await expire(id); state.inspect.mockResolvedValue(null);

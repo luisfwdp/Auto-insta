@@ -4,7 +4,7 @@ import { BillingError, getBillingProviderScope } from "./config";
 import { isBillingEnabled } from "./trial";
 
 function safeCounter(value: bigint): number {
-  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new BillingError("BILLING_UNAVAILABLE", 503);
+  if (value < BigInt("0") || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new BillingError("BILLING_UNAVAILABLE", 503);
   return Number(value);
 }
 
@@ -23,7 +23,7 @@ export async function readCommercialOverview(workspaceId: string) {
       select: { resource: true, consumed: true, reserved: true } });
     const counter = (resource: "DM" | "PUBLICATION", limit: number) => {
       const row = buckets.find(bucket => bucket.resource === resource);
-      return { consumed: safeCounter(row?.consumed ?? 0n), reserved: safeCounter(row?.reserved ?? 0n), limit };
+      return { consumed: safeCounter(row?.consumed ?? BigInt("0")), reserved: safeCounter(row?.reserved ?? BigInt("0")), limit };
     };
     const limits = access.limits;
     return { hasAccess: true as const, kind: access.status, periodStart: access.periodStart.toISOString(), periodEnd: access.periodEnd.toISOString(),
