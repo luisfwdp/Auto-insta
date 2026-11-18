@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { assertCommercialAccess } from "@/lib/billing/commercial-access";
+import { BillingError } from "@/lib/billing/config";
 import { z } from "zod";
 
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -103,6 +105,7 @@ export function createPrismaMcpPublishingService(workspace?: string): McpPublish
       });
     },
     async createPublication(input) {
+      await assertCommercialAccess(workspaceId);
       const assets = await assertRelations(input.instagramAccountId, input.assetIds);
       if (input.type === "REEL" && assets[0]?.mediaType !== "VIDEO") {
         throw new Error("A Reel requires a video");
@@ -134,6 +137,7 @@ export function createPrismaMcpPublishingService(workspace?: string): McpPublish
       });
     },
     async createBatch(input) {
+      await assertCommercialAccess(workspaceId);
       const assetIds = input.items.map((item) => item.assetId);
       const assets = await assertRelations(input.instagramAccountId, assetIds, true);
       const randomSeed = input.orderMode === "RANDOM" ? randomUUID() : null;
@@ -200,6 +204,7 @@ export function createPrismaMcpPublishingService(workspace?: string): McpPublish
       if (!(allowed[action] as readonly string[]).includes(batch.status)) {
         throw new Error(`Cannot ${action} a ${batch.status.toLowerCase()} batch`);
       }
+      if (action === "resume") await assertCommercialAccess(workspaceId);
       return prisma.$transaction(async (tx) => {
         const nextStatus = action === "cancel" ? "CANCELLED" : action === "pause" ? "PAUSED" : "SCHEDULED";
         const claimed = await tx.speedPostBatch.updateMany({
@@ -249,6 +254,10 @@ async function safeResult(operation: () => Promise<unknown>) {
       "Batch not found in the authorized workspace",
       "Batch changed while the action was being applied",
     ];
+    if (error instanceof BillingError) return {
+      content: [{ type: "text" as const, text: JSON.stringify({ error: error.code, status: error.httpStatus }) }],
+      isError: true,
+    };
     const message = error instanceof Error &&
       (known.includes(error.message) || /^Cannot (pause|resume|cancel) a /.test(error.message))
       ? error.message

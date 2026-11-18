@@ -5,11 +5,24 @@ import type { CommercialUsageResource, Prisma } from "@/app/generated/prisma/cli
 import { BillingError, getBillingProviderScope } from "./config";
 import { loadCommercialEntitlement } from "./commercial-access";
 import { isBillingEnabled } from "./trial";
+import { encryptToken, decryptToken } from "@/lib/meta/oauth";
 
 const operation = z.string().regex(/^[A-Za-z0-9:_-]{1,200}$/);
 const resources = new Set<CommercialUsageResource>(["DM", "PUBLICATION", "STORAGE_BYTES", "TRANSFER_BYTES"]);
 const limitKey = { DM: "dms", PUBLICATION: "publications", STORAGE_BYTES: "storageBytes", TRANSFER_BYTES: "transferBytes" } as const;
 type Tx = Prisma.TransactionClient;
+const receiptSchema = z.object({ messageId: z.string().regex(/^[!-~]{1,2048}$/), recipientId: z.string().regex(/^[!-~]{1,2048}$/).optional() }).strict();
+export type CommercialMessageReceipt = z.infer<typeof receiptSchema>;
+
+/** IDs only, encrypted at rest; no raw provider payload or message text. A real
+ * receipt makes an idempotent replay possible without inventing delivery IDs. */
+export async function readCommercialUsageReceipt(workspaceId: string, reservationId: string): Promise<CommercialMessageReceipt | null> {
+  if (!z.uuid().safeParse(reservationId).success) throw new BillingError("INVALID_USAGE_RESERVATION", 400);
+  const row = await prisma.commercialUsageReservation.findFirst({ where: { id: reservationId, workspaceId, resource: "DM", status: "COMMITTED" }, select: { receiptCiphertext: true } });
+  if (!row?.receiptCiphertext) return null;
+  try { return receiptSchema.parse(JSON.parse(decryptToken(row.receiptCiphertext))); }
+  catch { throw new BillingError("USAGE_RECEIPT_UNAVAILABLE", 503); }
+}
 
 async function entitlement(tx: Tx, workspaceId: string) {
   const result = await loadCommercialEntitlement(tx, workspaceId, new Date());
@@ -20,20 +33,29 @@ async function entitlement(tx: Tx, workspaceId: string) {
 
 /** Internal server API: workspace and operation identities must be established
  * by authenticated routes or persisted jobs. No browser-provided subject IDs.
- * Existing operations remain bound to their original period across retries. */
-export async function reserveCommercialUsage(workspaceId: string, resource: CommercialUsageResource, operationKey: string, amount = 1) {
+ * Unknown/confirmed operations retain their original allocation. Only a proven
+ * rejection may reserve again in a new period; a cancellation stays terminal. */
+export async function reserveCommercialUsage(workspaceId: string, resource: CommercialUsageResource, operationKey: string, amount = 1, intentFingerprint?: string) {
   if (!resources.has(resource) || !operation.safeParse(operationKey).success || !Number.isSafeInteger(amount) || amount <= 0)
     throw new BillingError("INVALID_USAGE_RESERVATION", 400);
+  if (intentFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(intentFingerprint)) throw new BillingError("INVALID_USAGE_RESERVATION", 400);
   if (!isBillingEnabled()) return { mode: "legacy" as const, reservationId: null, status: null };
   // Storage needs an authoritative baseline of retained assets when a trial
   // becomes paid. This primitive cannot safely infer that from usage events.
   if (resource === "STORAGE_BYTES") throw new BillingError("STORAGE_ENFORCEMENT_NOT_READY", 503);
   return prisma.$transaction(async tx => {
-    const access = await entitlement(tx, workspaceId);
     const previous = await tx.commercialUsageReservation.findUnique({ where: { workspaceId_resource_operationKey: { workspaceId, resource, operationKey } } });
     if (previous) {
-      if (previous.amount !== BigInt(amount)) throw new BillingError("USAGE_OPERATION_CONFLICT");
-      return { mode: "commercial" as const, reservationId: previous.id, status: previous.status };
+      if (previous.amount !== BigInt(amount) || previous.intentFingerprint !== (intentFingerprint ?? null)) throw new BillingError("USAGE_OPERATION_CONFLICT");
+      if (!["RESERVED", "REJECTED"].includes(previous.status)) return { mode: "commercial" as const, reservationId: previous.id, status: previous.status };
+    }
+    const access = await entitlement(tx, workspaceId);
+    // The access loader serializes this workspace. A concurrent first request
+    // may have inserted the operation while we waited for that lock.
+    const lockedPrevious = await tx.commercialUsageReservation.findUnique({ where: { workspaceId_resource_operationKey: { workspaceId, resource, operationKey } } });
+    if (lockedPrevious) {
+      if (lockedPrevious.amount !== BigInt(amount) || lockedPrevious.intentFingerprint !== (intentFingerprint ?? null)) throw new BillingError("USAGE_OPERATION_CONFLICT");
+      if (lockedPrevious.status !== "REJECTED") return { mode: "commercial" as const, reservationId: lockedPrevious.id, status: lockedPrevious.status };
     }
     const scopeKey = access.subjectKind === "OWNER_TRIAL" ? "owner-trial-v1" : (() => {
       const scope = getBillingProviderScope(); return `${scope.environment}:${scope.accountScope}`;
@@ -53,7 +75,9 @@ export async function reserveCommercialUsage(workspaceId: string, resource: Comm
     if (current.periodEnd.getTime() !== periodEnd.getTime()) throw new BillingError("USAGE_PERIOD_CONFLICT");
     if (current.consumed + current.reserved + BigInt(amount) > cap) throw new BillingError("COMMERCIAL_QUOTA_EXCEEDED", 402);
     await tx.commercialUsageBucket.update({ where: { id: current.id }, data: { reserved: { increment: BigInt(amount) } } });
-    const row = await tx.commercialUsageReservation.create({ data: { workspaceId, bucketId: current.id, resource, operationKey, amount: BigInt(amount) } });
+    const row = lockedPrevious ? await tx.commercialUsageReservation.update({ where: { id: lockedPrevious.id, workspaceId }, data: {
+      bucketId: current.id, status: "RESERVED", dispatchToken: null } }) :
+      await tx.commercialUsageReservation.create({ data: { workspaceId, bucketId: current.id, resource, operationKey, amount: BigInt(amount), intentFingerprint } });
     return { mode: "commercial" as const, reservationId: row.id, status: row.status };
   });
 }
@@ -83,36 +107,65 @@ export async function beginCommercialDispatch(workspaceId: string, reservationId
   });
 }
 
-/** Call only with authoritative provider proof. UNKNOWN keeps the reservation
- * held and cannot dispatch again. A confirmed rejection permits a safe retry.
+/** Call only with authoritative proof of the external outcome. UNKNOWN keeps
+ * the reservation held. A proven rejection frees cost and permits reserve again.
  * Finalizing already-made effects remains available after trial expiry. */
 export async function finishCommercialDispatch(workspaceId: string, reservationId: string, dispatchToken: string,
-  outcome: "CONFIRMED" | "DEFINITELY_REJECTED" | "UNKNOWN") {
+  outcome: "CONFIRMED" | "DEFINITELY_REJECTED" | "UNKNOWN", receipt?: CommercialMessageReceipt) {
   if (!z.uuid().safeParse(reservationId).success || !z.uuid().safeParse(dispatchToken).success || !["CONFIRMED", "DEFINITELY_REJECTED", "UNKNOWN"].includes(outcome))
     throw new BillingError("INVALID_USAGE_RESERVATION", 400);
   if (outcome === "UNKNOWN") return false;
+  let receiptCiphertext: string | undefined;
+  if (receipt !== undefined) {
+    if (outcome !== "CONFIRMED") throw new BillingError("INVALID_USAGE_RECEIPT", 400);
+    const parsed = receiptSchema.safeParse(receipt);
+    if (!parsed.success) throw new BillingError("INVALID_USAGE_RECEIPT", 400);
+    receiptCiphertext = encryptToken(JSON.stringify(parsed.data));
+  }
   return prisma.$transaction(async tx => {
     const row = await tx.commercialUsageReservation.findFirst({ where: { id: reservationId, workspaceId, status: "DISPATCHING", dispatchToken } });
     if (!row) return false;
+    if (receiptCiphertext !== undefined && row.resource !== "DM") throw new BillingError("INVALID_USAGE_RECEIPT", 400);
     const claim = await tx.commercialUsageReservation.updateMany({ where: { id: row.id, workspaceId, status: "DISPATCHING", dispatchToken },
-      data: outcome === "CONFIRMED" ? { status: "COMMITTED" } : { status: "RESERVED", dispatchToken: null } });
+      data: outcome === "CONFIRMED" ? { status: "COMMITTED", ...(receiptCiphertext !== undefined ? { receiptCiphertext } : {}) } : { status: "REJECTED", dispatchToken: null } });
     if (claim.count !== 1) return false;
-    if (outcome === "CONFIRMED") await tx.commercialUsageBucket.update({ where: { id: row.bucketId }, data: {
-      reserved: { decrement: row.amount }, consumed: { increment: row.amount } } });
+    await tx.commercialUsageBucket.update({ where: { id: row.bucketId }, data: {
+      reserved: { decrement: row.amount }, ...(outcome === "CONFIRMED" ? { consumed: { increment: row.amount } } : {}) } });
     return true;
   });
 }
 
-/** Release is safe before dispatch only. Never free unknown/confirmed sends.
+/** Recovery only after the worker receives canonical Meta PUBLISHED proof.
+ * Bind the proof to the persisted tenant/container/operation. Already completed
+ * publications without a commercial reservation remain recoverable unchanged. */
+export async function recoverCommercialPublication(workspaceId: string, operationKey: string, containerId: string, mediaId?: string) {
+  if (!isBillingEnabled()) return false;
+  if (!operation.safeParse(operationKey).success || !containerId || !/^[!-~]{1,2048}$/.test(containerId)
+    || (mediaId !== undefined && !/^[!-~]{1,2048}$/.test(mediaId))) throw new BillingError("INVALID_USAGE_RECEIPT", 400);
+  return prisma.$transaction(async tx => {
+    const publication = await tx.scheduledPublication.findFirst({ where: { workspaceId, idempotencyKey: operationKey, metaContainerId: containerId }, select: { id: true } });
+    if (!publication) throw new BillingError("PUBLICATION_PROOF_MISMATCH");
+    const row = await tx.commercialUsageReservation.findUnique({ where: { workspaceId_resource_operationKey: { workspaceId, resource: "PUBLICATION", operationKey } } });
+    if (!row || !["RESERVED", "DISPATCHING"].includes(row.status)) return false;
+    const claim = await tx.commercialUsageReservation.updateMany({ where: { id: row.id, workspaceId, status: row.status, dispatchToken: row.dispatchToken },
+      data: { status: "COMMITTED", dispatchToken: row.dispatchToken ?? randomUUID() } });
+    if (claim.count !== 1) return false;
+    await tx.commercialUsageBucket.update({ where: { id: row.bucketId }, data: { reserved: { decrement: row.amount }, consumed: { increment: row.amount } } });
+    return true;
+  });
+}
+
+/** Release is safe before dispatch or after a proven rejection only. It makes
+ * cancellation terminal. Never free unknown/confirmed sends.
  * There is deliberately no blanket expiry job or auto-reset for reservations. */
 export async function releaseCommercialUsage(workspaceId: string, reservationId: string) {
   if (!z.uuid().safeParse(reservationId).success) throw new BillingError("INVALID_USAGE_RESERVATION", 400);
   return prisma.$transaction(async tx => {
-    const row = await tx.commercialUsageReservation.findFirst({ where: { id: reservationId, workspaceId, status: "RESERVED" } });
+    const row = await tx.commercialUsageReservation.findFirst({ where: { id: reservationId, workspaceId, status: { in: ["RESERVED", "REJECTED"] } } });
     if (!row) return false;
-    const claim = await tx.commercialUsageReservation.updateMany({ where: { id: row.id, workspaceId, status: "RESERVED" }, data: { status: "RELEASED" } });
+    const claim = await tx.commercialUsageReservation.updateMany({ where: { id: row.id, workspaceId, status: row.status }, data: { status: "RELEASED" } });
     if (claim.count !== 1) return false;
-    await tx.commercialUsageBucket.update({ where: { id: row.bucketId }, data: { reserved: { decrement: row.amount } } });
+    if (row.status === "RESERVED") await tx.commercialUsageBucket.update({ where: { id: row.bucketId }, data: { reserved: { decrement: row.amount } } });
     return true;
   });
 }

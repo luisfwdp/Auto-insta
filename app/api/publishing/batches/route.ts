@@ -4,6 +4,17 @@ import { prisma } from "@/lib/db/client";
 import { createBatchSchema } from "@/lib/publishing/schemas";
 import { generateBatchSchedule, orderBatchItems } from "@/lib/publishing/schedule";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
+import { assertCommercialAccess } from "@/lib/billing/commercial-access";
+import { BillingError } from "@/lib/billing/config";
+
+async function commercialGate(workspaceId: string) {
+  try {
+    await assertCommercialAccess(workspaceId);
+  } catch (error) {
+    if (!(error instanceof BillingError)) throw error;
+    return NextResponse.json({ success: false, error: error.code }, { status: error.httpStatus });
+  }
+}
 
 export async function GET(request: NextRequest) {
   const context = await getCurrentWorkspaceContext();
@@ -32,6 +43,9 @@ export async function POST(request: NextRequest) {
   ]);
   if (!account) return NextResponse.json({ success: false, error: "Instagram account not found" }, { status: 404 });
   if (assets.length !== assetIds.length) return NextResponse.json({ success: false, error: "Every Speed Post item must be an available video" }, { status: 400 });
+
+  const denied = await commercialGate(context.workspaceId);
+  if (denied) return denied;
 
   const randomSeed = input.orderMode === "RANDOM" ? input.randomSeed ?? randomUUID() : null;
   const filenames = new Map(assets.map((asset) => [asset.id, asset.filename]));

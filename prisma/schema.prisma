@@ -15,6 +15,7 @@ model User {
   email         String?   @unique
   emailVerified DateTime?
   image         String?
+  activeWorkspaceId String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -25,6 +26,8 @@ model User {
   sentInvitations   WorkspaceInvitation[] @relation("WorkspaceInvitationsSent")
   mcpGrants         McpGrant[]
   trialRedemption   TrialRedemption?
+  activeWorkspace Workspace? @relation("ActiveWorkspace", fields: [activeWorkspaceId], references: [id], onDelete: SetNull)
+  @@index([activeWorkspaceId])
 }
 
 model Account {
@@ -71,6 +74,7 @@ model Workspace {
   name      String
   ownerId   String
   owner     User     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  selectedBy User[] @relation("ActiveWorkspace")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -134,6 +138,8 @@ model CommercialUsageReservation {
   amount BigInt
   status CommercialUsageState @default(RESERVED)
   dispatchToken String? @db.Uuid
+  receiptCiphertext String?
+  intentFingerprint String? @db.VarChar(64)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
@@ -159,6 +165,7 @@ enum CommercialUsageState {
   DISPATCHING
   COMMITTED
   RELEASED
+  REJECTED
 }
 
 /// Payment details stay at Asaas. No paid access is granted by these routes.
@@ -743,6 +750,9 @@ model PublishingAsset {
   mimeType      String
   mediaType     PublishingMediaType
   byteSize      Int
+  uploadCapacityBytes BigInt?
+  uploadTokenExpiresAt DateTime?
+  storageDeletedAt DateTime?
   width         Int?
   height        Int?
   durationMs    Int?
@@ -752,7 +762,7 @@ model PublishingAsset {
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
 
-  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace    Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   publications PublicationAsset[]
 
   @@index([workspaceId, createdAt])

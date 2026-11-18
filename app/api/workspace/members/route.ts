@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db/client";
+import type { Prisma } from "@/app/generated/prisma/client";
+import { isBillingEnabled } from "@/lib/billing/trial";
+import { BillingError } from "@/lib/billing/config";
+import { assertCommercialMemberCapacity, findCommercialInvitationUser } from "@/lib/billing/commercial-capacity";
 import {
   buildInvitationUrl,
   generateInvitationToken,
@@ -123,53 +127,65 @@ export async function POST(request: NextRequest) {
   }
 
   const email = normalizeInvitationEmail(parsed.data.email);
-  const existingUser = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true },
-  });
-
-  if (existingUser) {
-    await prisma.workspaceMember.upsert({
-      where: {
-        workspaceId_userId: {
+  const persist = async (db: Prisma.TransactionClient, existingUser: { id: string } | null) => {
+    if (existingUser) {
+      await db.workspaceMember.upsert({
+        where: {
+          workspaceId_userId: {
+            workspaceId: context.workspaceId,
+            userId: existingUser.id,
+          },
+        },
+        create: {
           workspaceId: context.workspaceId,
           userId: existingUser.id,
+          role: parsed.data.role,
         },
-      },
-      create: {
-        workspaceId: context.workspaceId,
-        userId: existingUser.id,
-        role: parsed.data.role,
-      },
-      // Inviting an existing member must never change their role. In
-      // particular, an admin cannot bypass PATCH's OWNER protection here.
-      // The upsert preserves this rule even if membership is added concurrently.
-      update: {},
-    });
-  } else {
-    await prisma.workspaceInvitation.upsert({
-      where: {
-        workspaceId_email: {
+        // Inviting an existing member must never change their role. In
+        // particular, an admin cannot bypass PATCH's OWNER protection here.
+        // The upsert preserves this rule even if membership is added concurrently.
+        update: {},
+      });
+    } else {
+      await db.workspaceInvitation.upsert({
+        where: {
+          workspaceId_email: {
+            workspaceId: context.workspaceId,
+            email,
+          },
+        },
+        create: {
           workspaceId: context.workspaceId,
           email,
+          role: parsed.data.role,
+          token: generateInvitationToken(),
+          invitedByUserId: context.userId,
+          expiresAt: getInvitationExpiry(),
         },
-      },
-      create: {
-        workspaceId: context.workspaceId,
-        email,
-        role: parsed.data.role,
-        token: generateInvitationToken(),
-        invitedByUserId: context.userId,
-        expiresAt: getInvitationExpiry(),
-      },
-      update: {
-        role: parsed.data.role,
-        status: "PENDING",
-        token: generateInvitationToken(),
-        invitedByUserId: context.userId,
-        expiresAt: getInvitationExpiry(),
-      },
-    });
+        update: {
+          role: parsed.data.role,
+          status: "PENDING",
+          token: generateInvitationToken(),
+          invitedByUserId: context.userId,
+          expiresAt: getInvitationExpiry(),
+        },
+      });
+    }
+  };
+  if (isBillingEnabled()) {
+    try {
+      await prisma.$transaction(async tx => {
+        const existingUser = await findCommercialInvitationUser(tx, email);
+        await assertCommercialMemberCapacity(tx, context.workspaceId, { userId: existingUser?.id, email });
+        await persist(tx, existingUser);
+      });
+    } catch (error) {
+      if (error instanceof BillingError) return NextResponse.json({ success: false, error: error.code }, { status: error.httpStatus, headers: { "Cache-Control": "no-store" } });
+      throw error;
+    }
+  } else {
+    const existingUser = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    await persist(prisma, existingUser);
   }
 
   return NextResponse.json({

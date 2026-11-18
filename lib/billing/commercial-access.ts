@@ -1,6 +1,16 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import { getBillingProviderScope } from "./config";
 import { evaluateCommercialEntitlement, type CommercialEntitlementInput } from "./entitlements";
+import { BillingError } from "./config";
+import { prisma } from "@/lib/db/client";
+import { isBillingEnabled } from "./trial";
+
+/** Gates new side effects only; reads, cancellation and recovery stay usable. */
+export async function assertCommercialAccess(workspaceId: string) {
+  if (!isBillingEnabled()) return;
+  const result = await prisma.$transaction(tx => loadCommercialEntitlement(tx, workspaceId, new Date()));
+  if (!result || result.status === "denied") throw new BillingError("COMMERCIAL_ACCESS_REQUIRED", 402);
+}
 
 /** Only trusted server workspace IDs enter this loader. Never accept a subject
  * or provider binding supplied by the browser. Caller owns the transaction. */

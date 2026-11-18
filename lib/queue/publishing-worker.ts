@@ -1,6 +1,14 @@
-import { Worker, type Job } from "bullmq";
+import { UnrecoverableError, Worker, type Job } from "bullmq";
+import { assertCommercialAccess } from "@/lib/billing/commercial-access";
+import { assertCommercialAccountUsable } from "@/lib/billing/commercial-capacity";
+import { BillingError } from "@/lib/billing/config";
+import {
+  beginCommercialDispatch, finishCommercialDispatch, recoverCommercialPublication,
+  releaseCommercialUsage, reserveCommercialUsage,
+} from "@/lib/billing/commercial-usage";
 import { prisma } from "@/lib/db/client";
 import { createInstagramContext } from "@/lib/instagram/context";
+import { isConfirmedSendRejection } from "@/lib/instagram/delivery-errors";
 import {
   assertContentPublishPermission,
   createPublishContainer,
@@ -54,7 +62,7 @@ async function mediaFor(publication: {
   };
 }
 
-async function processPublication(job: Job<PublishPublicationJob>) {
+async function publishPublication(job: Job<PublishPublicationJob>) {
   const publication = await prisma.scheduledPublication.findFirst({
     where: { id: job.data.publicationId, workspaceId: job.data.workspaceId },
     include: {
@@ -66,6 +74,8 @@ async function processPublication(job: Job<PublishPublicationJob>) {
   if (!publication || publication.status === "CANCELLED") return;
   if (publication.status === "PUBLISHED") {
     // An earlier attempt may have published before its batch refresh failed.
+    if (publication.metaContainerId) await recoverCommercialPublication(publication.workspaceId,
+      publication.idempotencyKey, publication.metaContainerId, publication.metaMediaId ?? undefined);
     await refreshBatchProgress(publication.batchId, publication.workspaceId);
     return;
   }
@@ -96,6 +106,10 @@ async function processPublication(job: Job<PublishPublicationJob>) {
 
   let containerId = publication.metaContainerId;
   if (!containerId) {
+    // Creating a container exposes signed private media to Meta. Gate it even
+    // though only the final media_publish consumes the publication allowance.
+    await assertCommercialAccess(publication.workspaceId);
+    await assertCommercialAccountUsable(publication.workspaceId, context.instagramId);
     await assertPublishingQuota(context.instagramId, context.accessToken);
     containerId = await createPublishContainer(
       context.instagramId,
@@ -114,21 +128,69 @@ async function processPublication(job: Job<PublishPublicationJob>) {
   // never call media_publish twice for the same container.
   const recoveredPublishedContainer = state.status_code === "PUBLISHED";
   let mediaId = publication.metaMediaId;
-  if (!recoveredPublishedContainer) {
+  if (recoveredPublishedContainer) {
+    // Finalize already-made effects even when the trial has expired meanwhile.
+    await recoverCommercialPublication(publication.workspaceId, publication.idempotencyKey,
+      containerId, mediaId ?? undefined);
+  } else {
+    // Container processing can take minutes. Never rely on the access decision
+    // made before it started, or on a stale cancellation/batch snapshot.
+    await assertCommercialAccess(publication.workspaceId);
+    await assertCommercialAccountUsable(publication.workspaceId, context.instagramId);
     // An existing container may have consumed the last quota slot on an earlier
     // attempt. Recover PUBLISHED first; quota only gates a new publish request.
     if (publication.metaContainerId)
       await assertPublishingQuota(context.instagramId, context.accessToken);
+    const reservation = await reserveCommercialUsage(publication.workspaceId, "PUBLICATION", publication.idempotencyKey);
+    const dispatch = reservation.mode === "commercial"
+      ? await beginCommercialDispatch(publication.workspaceId, reservation.reservationId)
+      : null;
+    if (reservation.mode === "commercial" && !dispatch)
+      throw new BillingError("PUBLICATION_OUTCOME_REVIEW_REQUIRED", 409);
     // Persist the external-call boundary before media_publish. The Graph API
     // returns the final media ID only in the publish response, so a process
     // crash after Meta accepts the request cannot safely reconstruct that ID.
     // The container's later PUBLISHED status is authoritative, however, and
     // lets a retry finish without issuing a duplicate publish request.
-    await prisma.scheduledPublication.updateMany({
-      where: { id: publication.id, workspaceId: publication.workspaceId, status: "PROCESSING" },
+    const boundary = await prisma.scheduledPublication.updateMany({
+      where: { id: publication.id, workspaceId: publication.workspaceId, status: "PROCESSING",
+        OR: [{ batchId: null }, { batch: { is: { status: { notIn: ["PAUSED", "CANCELLED"] } } } }] },
       data: { metaStatus: "PUBLISHING" },
     });
-    mediaId = await publishContainer(context.instagramId, context.accessToken, containerId);
+    if (boundary.count !== 1) {
+      // No external call occurred: relinquish only our dispatch claim. A pause
+      // keeps the reservation reusable; a permanent cancel can release it.
+      if (reservation.mode === "commercial" && dispatch)
+        await finishCommercialDispatch(publication.workspaceId, reservation.reservationId, dispatch.dispatchToken, "DEFINITELY_REJECTED");
+      const current = await prisma.scheduledPublication.findFirst({
+        where: { id: publication.id, workspaceId: publication.workspaceId },
+        select: { status: true, batch: { select: { status: true } } },
+      });
+      const cancelled = current?.status === "CANCELLED" || current?.batch?.status === "CANCELLED";
+      if (cancelled && reservation.mode === "commercial") await releaseCommercialUsage(publication.workspaceId, reservation.reservationId);
+      if (current?.batch && ["PAUSED", "CANCELLED"].includes(current.batch.status))
+        await prisma.scheduledPublication.updateMany({ where: { id: publication.id, workspaceId: publication.workspaceId, status: "PROCESSING" },
+          data: { status: cancelled ? "CANCELLED" : "SCHEDULED" } });
+      return;
+    }
+    try {
+      mediaId = await publishContainer(context.instagramId, context.accessToken, containerId);
+    } catch (error) {
+      if (reservation.mode !== "commercial") throw error;
+      // Only an explicit provider rejection proves no publication occurred.
+      // It releases the hold; a retry must reserve and revalidate again. Lost
+      // responses, 5xx and persistence failures need canonical recovery.
+      const rejected = isConfirmedSendRejection(error);
+      let finished: boolean;
+      try {
+        finished = await finishCommercialDispatch(publication.workspaceId, reservation.reservationId,
+          dispatch!.dispatchToken, rejected ? "DEFINITELY_REJECTED" : "UNKNOWN");
+      } catch { throw new BillingError("PUBLICATION_OUTCOME_REVIEW_REQUIRED", 409); }
+      if (rejected && finished) throw error;
+      throw new BillingError("PUBLICATION_OUTCOME_REVIEW_REQUIRED", 409);
+    }
+    if (reservation.mode === "commercial")
+      await finishCommercialDispatch(publication.workspaceId, reservation.reservationId, dispatch!.dispatchToken, "CONFIRMED");
   }
   await prisma.scheduledPublication.updateMany({
     where: { id: publication.id, workspaceId: publication.workspaceId, status: "PROCESSING" },
@@ -143,6 +205,25 @@ async function processPublication(job: Job<PublishPublicationJob>) {
     },
   });
   await refreshBatchProgress(publication.batchId, publication.workspaceId);
+}
+
+async function processPublication(job: Job<PublishPublicationJob>) {
+  try {
+    await publishPublication(job);
+  } catch (error) {
+    if (!(error instanceof BillingError)) throw error;
+    // BullMQ stops retrying UnrecoverableError before attemptsMade reaches the
+    // configured maximum, so persist terminal commercial failures here.
+    await prisma.scheduledPublication.updateMany({
+      where: { id: job.data.publicationId, workspaceId: job.data.workspaceId, status: "PROCESSING" },
+      data: { status: "FAILED", lastError: error.code },
+    });
+    const row = await prisma.scheduledPublication.findFirst({
+      where: { id: job.data.publicationId, workspaceId: job.data.workspaceId }, select: { batchId: true },
+    });
+    await refreshBatchProgress(row?.batchId ?? null, job.data.workspaceId);
+    throw new UnrecoverableError(error.code);
+  }
 }
 
 export function createPublishingWorker(): Worker<PublishPublicationJob> {

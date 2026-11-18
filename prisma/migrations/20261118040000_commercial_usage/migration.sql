@@ -5,7 +5,7 @@ CREATE TYPE "CommercialUsageSubject" AS ENUM ('OWNER_TRIAL', 'WORKSPACE_PAID');
 CREATE TYPE "CommercialUsageResource" AS ENUM ('DM', 'PUBLICATION', 'STORAGE_BYTES', 'TRANSFER_BYTES');
 
 -- CreateEnum
-CREATE TYPE "CommercialUsageState" AS ENUM ('RESERVED', 'DISPATCHING', 'COMMITTED', 'RELEASED');
+CREATE TYPE "CommercialUsageState" AS ENUM ('RESERVED', 'DISPATCHING', 'COMMITTED', 'RELEASED', 'REJECTED');
 
 -- CreateTable
 CREATE TABLE "CommercialUsageBucket" (
@@ -35,6 +35,8 @@ CREATE TABLE "CommercialUsageReservation" (
     "amount" BIGINT NOT NULL,
     "status" "CommercialUsageState" NOT NULL DEFAULT 'RESERVED',
     "dispatchToken" UUID,
+    "receiptCiphertext" TEXT,
+    "intentFingerprint" VARCHAR(64),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -70,12 +72,12 @@ ALTER TABLE "CommercialUsageReservation"
   ADD CONSTRAINT "CommercialUsageReservation_amount_positive" CHECK ("amount" > 0),
   ADD CONSTRAINT "CommercialUsageReservation_dispatch_binding" CHECK (
     ("status" IN ('DISPATCHING', 'COMMITTED') AND "dispatchToken" IS NOT NULL)
-    OR ("status" IN ('RESERVED', 'RELEASED') AND "dispatchToken" IS NULL));
+    OR ("status" IN ('RESERVED', 'RELEASED', 'REJECTED') AND "dispatchToken" IS NULL));
 
 CREATE TRIGGER "CommercialUsageBucket_snapshot_immutable" BEFORE UPDATE ON "CommercialUsageBucket"
 FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('reserved,consumed,updatedAt');
 CREATE TRIGGER "CommercialUsageReservation_snapshot_immutable" BEFORE UPDATE ON "CommercialUsageReservation"
-FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('status,dispatchToken,updatedAt');
+FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('status,bucketId,dispatchToken,receiptCiphertext,updatedAt');
 
 DO $$
 DECLARE usage_table text;
@@ -110,5 +112,61 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-CREATE TRIGGER "CommercialUsageReservation_binding_valid" BEFORE INSERT ON "CommercialUsageReservation"
+CREATE TRIGGER "CommercialUsageReservation_binding_valid" BEFORE INSERT OR UPDATE OF "bucketId" ON "CommercialUsageReservation"
 FOR EACH ROW EXECUTE FUNCTION "commercial_usage_binding_valid"();
+
+ALTER TABLE "CommercialUsageReservation" ADD CONSTRAINT "CommercialUsageReservation_receipt_state"
+CHECK ("receiptCiphertext" IS NULL OR "status" = 'COMMITTED');
+CREATE FUNCTION "commercial_usage_receipt_immutable"() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD."receiptCiphertext" IS NOT NULL AND NEW."receiptCiphertext" IS DISTINCT FROM OLD."receiptCiphertext" THEN
+    RAISE EXCEPTION 'Usage receipt is immutable' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER "CommercialUsageReservation_receipt_immutable" BEFORE UPDATE ON "CommercialUsageReservation"
+FOR EACH ROW EXECUTE FUNCTION "commercial_usage_receipt_immutable"();
+
+-- Existing media stays intact. New commercial uploads account for the storage
+-- provider's actual maximum, not a size asserted by the browser.
+ALTER TABLE "PublishingAsset"
+  ADD COLUMN "uploadCapacityBytes" BIGINT,
+  ADD COLUMN "uploadTokenExpiresAt" TIMESTAMP(3),
+  ADD COLUMN "storageDeletedAt" TIMESTAMP(3),
+  ADD CONSTRAINT "PublishingAsset_upload_capacity_nonnegative"
+    CHECK ("uploadCapacityBytes" IS NULL OR "uploadCapacityBytes" >= 0);
+
+ALTER TABLE "CommercialUsageReservation" ADD CONSTRAINT "CommercialUsageReservation_fingerprint_valid"
+CHECK ("intentFingerprint" IS NULL OR "intentFingerprint" ~ '^[a-f0-9]{64}$');
+CREATE FUNCTION "commercial_usage_retry_binding"() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW."bucketId" IS DISTINCT FROM OLD."bucketId" AND NOT (
+    OLD."status" = 'REJECTED' AND OLD."receiptCiphertext" IS NULL
+    AND NEW."status" = 'RESERVED' AND NEW."dispatchToken" IS NULL) THEN
+    RAISE EXCEPTION 'Usage period binding may change only after proven rejection' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER "CommercialUsageReservation_retry_binding" BEFORE UPDATE ON "CommercialUsageReservation"
+FOR EACH ROW EXECUTE FUNCTION "commercial_usage_retry_binding"();
+
+-- The preference never establishes membership or role. Every resolver checks
+-- the current user's actual membership again; revoked choices fall back safely.
+ALTER TABLE "User" ADD COLUMN "activeWorkspaceId" TEXT;
+CREATE INDEX "User_activeWorkspaceId_idx" ON "User"("activeWorkspaceId");
+ALTER TABLE "User" ADD CONSTRAINT "User_activeWorkspaceId_fkey"
+  FOREIGN KEY ("activeWorkspaceId") REFERENCES "Workspace"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- Metadata for stored objects must survive until actual provider cleanup. Keep
+-- both constraint changes inside one atomic statement, without deleting rows.
+DO $$
+BEGIN
+  ALTER TABLE "PublishingAsset" DROP CONSTRAINT "PublishingAsset_workspaceId_fkey";
+  ALTER TABLE "PublishingAsset" ADD CONSTRAINT "PublishingAsset_workspaceId_fkey"
+    FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+END;
+$$;

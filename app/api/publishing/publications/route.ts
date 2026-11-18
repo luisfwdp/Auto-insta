@@ -3,6 +3,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { publicationInputSchema, updatePublicationSchema } from "@/lib/publishing/schemas";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
+import { assertCommercialAccess } from "@/lib/billing/commercial-access";
+import { BillingError } from "@/lib/billing/config";
+
+async function commercialGate(workspaceId: string) {
+  try {
+    await assertCommercialAccess(workspaceId);
+  } catch (error) {
+    if (!(error instanceof BillingError)) throw error;
+    return NextResponse.json({ success: false, error: error.code }, { status: error.httpStatus });
+  }
+}
 
 const includePublication = {
   assets: { orderBy: { position: "asc" as const }, include: { asset: { select: { id: true, filename: true, mimeType: true, mediaType: true, status: true } } } },
@@ -57,6 +68,9 @@ export async function POST(request: NextRequest) {
   if (relations.assets.length !== parsed.data.assetIds.length) return NextResponse.json({ success: false, error: "One or more media items are unavailable" }, { status: 400 });
   if (parsed.data.type === "REEL" && relations.assets[0]?.mediaType !== "VIDEO") return NextResponse.json({ success: false, error: "A Reel requires a video" }, { status: 400 });
   if (parsed.data.type === "IMAGE_POST" && relations.assets[0]?.mediaType !== "IMAGE") return NextResponse.json({ success: false, error: "An image post requires a JPEG image" }, { status: 400 });
+
+  const denied = await commercialGate(workspaceId);
+  if (denied) return denied;
 
   const scheduledFor = parsed.data.publishNow ? new Date() : parsed.data.scheduledFor ? new Date(parsed.data.scheduledFor) : null;
   const publication = await prisma.scheduledPublication.create({
@@ -131,6 +145,9 @@ export async function PATCH(request: NextRequest) {
   if (effective.data.type === "IMAGE_POST" && relations.assets[0]?.mediaType !== "IMAGE") return NextResponse.json({ success: false, error: "An image post requires a JPEG image" }, { status: 400 });
   const scheduledFor = parsed.data.action === "publish" ? new Date() : parsed.data.scheduledFor === undefined ? existing.scheduledFor : parsed.data.scheduledFor ? new Date(parsed.data.scheduledFor) : null;
   if ((parsed.data.action === "schedule" || parsed.data.action === "reschedule") && !scheduledFor) return NextResponse.json({ success: false, error: "A scheduled date is required" }, { status: 400 });
+
+  const denied = await commercialGate(workspaceId);
+  if (denied) return denied;
 
   const publication = await prisma.$transaction(async (tx) => {
     const claimed = await tx.scheduledPublication.updateMany({

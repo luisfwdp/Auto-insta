@@ -12,7 +12,7 @@ import { beforeAll, beforeEach, afterAll, afterEach, describe, expect, it, vi } 
 const url = process.env.TEST_DATABASE_URL, schema = `commercial_usage_${randomBytes(5).toString("hex")}`;
 const state = vi.hoisted(() => ({ db: undefined as unknown as import("../app/generated/prisma/client").PrismaClient }));
 vi.mock("@/lib/db/client", () => ({ get prisma() { return state.db; } }));
-import { reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch, releaseCommercialUsage } from "../lib/billing/commercial-usage";
+import { reserveCommercialUsage, beginCommercialDispatch, finishCommercialDispatch, releaseCommercialUsage, readCommercialUsageReceipt } from "../lib/billing/commercial-usage";
 import { BILLING_PLANS, type BillingPlanId } from "../lib/billing/catalog";
 import { monthlyInvoicePeriod } from "../lib/billing/financial-policy";
 import { saoPauloDate } from "../lib/billing/config";
@@ -49,7 +49,7 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
     await state.db.workspace.createMany({ data: [{ id: "workspace-a", name: "A", ownerId: "owner-a" }, { id: "workspace-b", name: "B", ownerId: "owner-a" }, { id: "workspace-c", name: "C", ownerId: "owner-b" }] });
   });
   beforeEach(async () => {
-    vi.stubEnv("BILLING_ENABLED", "true"); vi.stubEnv("ASAAS_ENVIRONMENT", "sandbox"); vi.stubEnv("ASAAS_ACCOUNT_SCOPE", scope); vi.stubEnv("VERCEL_ENV", "preview"); vi.stubEnv("FLY_APP_NAME", "");
+    vi.stubEnv("BILLING_ENABLED", "true"); vi.stubEnv("ASAAS_ENVIRONMENT", "sandbox"); vi.stubEnv("ASAAS_ACCOUNT_SCOPE", scope); vi.stubEnv("VERCEL_ENV", "preview"); vi.stubEnv("FLY_APP_NAME", ""); vi.stubEnv("ENCRYPTION_KEY", "11".repeat(32));
     await sql.query(`TRUNCATE TABLE "CommercialUsageReservation", "CommercialUsageBucket", "BillingEvent", "BillingCommand", "BillingPayment", "BillingSubscription", "BillingCheckout", "WorkspaceBilling", "TrialRedemption" CASCADE`);
     await state.db.workspace.updateMany({ where: { id: { in: ["workspace-a", "workspace-b"] } }, data: { ownerId: "owner-a" } });
     trialStartedAt = new Date(Date.now() - 600000); trialEndsAt = new Date(trialStartedAt.getTime() + 72 * 3600000);
@@ -110,9 +110,11 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
     expect(await releaseCommercialUsage("workspace-a", id)).toBe(false);
   });
   it("can retry a definite provider rejection with a new token while rejecting the old owner", async () => {
-    const id = await reservation(), first = await beginCommercialDispatch("workspace-a", id);
+    const key = randomUUID(), id = await reservation("workspace-a", "DM", key), first = await beginCommercialDispatch("workspace-a", id);
     expect(await finishCommercialDispatch("workspace-a", id, first!.dispatchToken, "DEFINITELY_REJECTED")).toBe(true);
-    expect(await usage(id)).toMatchObject({ status: "RESERVED", dispatchToken: null, bucket: { reserved: BigInt(1), consumed: BigInt(0) } });
+    expect(await usage(id)).toMatchObject({ status: "REJECTED", dispatchToken: null, bucket: { reserved: BigInt(0), consumed: BigInt(0) } });
+    expect(await beginCommercialDispatch("workspace-a", id)).toBeNull();
+    expect(await reservation("workspace-a", "DM", key)).toBe(id);
     const second = await beginCommercialDispatch("workspace-a", id); expect(second!.dispatchToken).not.toBe(first!.dispatchToken);
     for (const outcome of ["CONFIRMED", "DEFINITELY_REJECTED"] as const) expect(await finishCommercialDispatch("workspace-a", id, first!.dispatchToken, outcome)).toBe(false);
     expect(await finishCommercialDispatch("workspace-a", id, second!.dispatchToken, "CONFIRMED")).toBe(true);
@@ -123,6 +125,50 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
     expect(await finishCommercialDispatch("workspace-a", id, claim!.dispatchToken, "UNKNOWN")).toBe(false);
     expect(await beginCommercialDispatch("workspace-a", id)).toBeNull(); expect(await releaseCommercialUsage("workspace-a", id)).toBe(false);
     expect(await usage(id)).toMatchObject({ status: "DISPATCHING", dispatchToken: claim!.dispatchToken, bucket: { reserved: BigInt(1), consumed: BigInt(0) } });
+  });
+  it("releases a rejected button attempt so its text fallback consumes only the one real DM", async () => {
+    const button = await reservation("workspace-a", "DM", "reveal-button"), first = await beginCommercialDispatch("workspace-a", button);
+    await finishCommercialDispatch("workspace-a", button, first!.dispatchToken, "DEFINITELY_REJECTED");
+    const fallback = await reservation("workspace-a", "DM", "reveal-text"), second = await beginCommercialDispatch("workspace-a", fallback);
+    await finishCommercialDispatch("workspace-a", fallback, second!.dispatchToken, "CONFIRMED", { messageId: "mid.$real+id/==" });
+    expect((await usage(fallback)).bucket).toMatchObject({ reserved: BigInt(0), consumed: BigInt(1) });
+  });
+  it("rearms the same rejected operation once under twenty concurrent retries", async () => {
+    const key = "rejected-concurrent", id = await reservation("workspace-a", "DM", key), claim = await beginCommercialDispatch("workspace-a", id);
+    await finishCommercialDispatch("workspace-a", id, claim!.dispatchToken, "DEFINITELY_REJECTED");
+    const ids = await Promise.all(Array.from({ length: 20 }, () => reservation("workspace-a", "DM", key)));
+    expect(new Set(ids)).toEqual(new Set([id])); expect((await usage(id)).bucket.reserved).toBe(BigInt(1));
+  });
+  it("allows a proven rejected trial operation to retry against its paid allocation without using a stale free slot", async () => {
+    const key = "rejected-upgrade", id = await reservation("workspace-a", "DM", key), claim = await beginCommercialDispatch("workspace-a", id), old = await usage(id);
+    await finishCommercialDispatch("workspace-a", id, claim!.dispatchToken, "DEFINITELY_REJECTED"); await makePaid();
+    expect(await reservation("workspace-a", "DM", key)).toBe(id);
+    expect(await usage(id)).toMatchObject({ status: "RESERVED", bucket: { subjectKind: "WORKSPACE_PAID", reserved: BigInt(1), consumed: BigInt(0) } });
+    expect(await state.db.commercialUsageBucket.findUniqueOrThrow({ where: { id: old.bucketId } })).toMatchObject({ reserved: BigInt(0), consumed: BigInt(0) });
+  });
+  it("binds a manual intent fingerprint across concurrent retries, rejection and receipt replay", async () => {
+    const key = "manual-fixed", fingerprint = "a".repeat(64);
+    const first = await reserveCommercialUsage("workspace-a", "DM", key, 1, fingerprint), id = first.reservationId!;
+    for (const changed of [undefined, "b".repeat(64)]) await expect(reserveCommercialUsage("workspace-a", "DM", key, 1, changed)).rejects.toMatchObject({ code: "USAGE_OPERATION_CONFLICT" });
+    const claim = await beginCommercialDispatch("workspace-a", id);
+    await finishCommercialDispatch("workspace-a", id, claim!.dispatchToken, "DEFINITELY_REJECTED");
+    await expect(reserveCommercialUsage("workspace-a", "DM", key, 1, "b".repeat(64))).rejects.toMatchObject({ code: "USAGE_OPERATION_CONFLICT" });
+    await reserveCommercialUsage("workspace-a", "DM", key, 1, fingerprint); const retry = await beginCommercialDispatch("workspace-a", id);
+    await finishCommercialDispatch("workspace-a", id, retry!.dispatchToken, "CONFIRMED", { messageId: "real-message", recipientId: "real-recipient" });
+    await expect(sql.query(`UPDATE "CommercialUsageReservation" SET "intentFingerprint"=$1 WHERE "id"=$2`, ["b".repeat(64), id])).rejects.toMatchObject({ code: "23514" });
+    expect(await readCommercialUsageReceipt("workspace-a", id)).toEqual({ messageId: "real-message", recipientId: "real-recipient" });
+    expect(await readCommercialUsageReceipt("workspace-b", id)).toBeNull();
+    expect((await usage(id)).receiptCiphertext).not.toContain("real-message");
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(trialEndsAt.getTime() + 1);
+    expect(await reserveCommercialUsage("workspace-a", "DM", key, 1, fingerprint)).toMatchObject({ status: "COMMITTED", reservationId: id });
+    expect(await readCommercialUsageReceipt("workspace-a", id)).toEqual({ messageId: "real-message", recipientId: "real-recipient" });
+  });
+  it("keeps the first real receipt immutable and refuses unknown/extra provider fields", async () => {
+    const id = await reservation(), claim = await beginCommercialDispatch("workspace-a", id);
+    await expect(finishCommercialDispatch("workspace-a", id, claim!.dispatchToken, "CONFIRMED", { messageId: "id", token: "fake-untrusted" } as unknown as { messageId: string })).rejects.toMatchObject({ code: "INVALID_USAGE_RECEIPT" });
+    expect((await usage(id)).status).toBe("DISPATCHING");
+    await finishCommercialDispatch("workspace-a", id, claim!.dispatchToken, "CONFIRMED", { messageId: "id" });
+    await expect(sql.query(`UPDATE "CommercialUsageReservation" SET "receiptCiphertext"='replacement' WHERE "id"=$1`, [id])).rejects.toMatchObject({ code: "23514" });
   });
   it("releases an unstarted operation once under concurrent duplicate cancellations", async () => {
     const id = await reservation(), results = await Promise.all(Array.from({ length: 20 }, () => releaseCommercialUsage("workspace-a", id)));
