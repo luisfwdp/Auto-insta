@@ -99,7 +99,7 @@ export default function ProgrammingWorkspace() {
             <div className={styles.row}><button type="button" className={styles.button} onClick={() => setCalendarMonth(new Date(today.getFullYear(), today.getMonth(), 1))}>{t("Today")}</button><button type="button" className={styles.button} aria-label={t("Previous month")} onClick={() => setCalendarMonth(value => new Date(value.getFullYear(), value.getMonth() - 1, 1))}>←</button><button type="button" className={styles.button} aria-label={t("Next month")} onClick={() => setCalendarMonth(value => new Date(value.getFullYear(), value.getMonth() + 1, 1))}>→</button></div>
           </div>
           <p className={styles.muted}>{t("Times shown in {timezone}.", { timezone })}</p>
-          {data.loading ? <p role="status" className={styles.notice}>{t("Loading...")}</p> : <>
+          {data.loading ? <p role="status" className={styles.notice}>{t("Loading...")}</p> : data.error ? <p className={styles.notice}>{t("Publishing data could not be loaded.")}</p> : <>
             <div className={styles.calendarWrap} role="region" aria-labelledby="calendar-title" tabIndex={0}><div className={styles.calendar}>
               {weekdays.map((weekday, index) => <span className={styles.dayNumber} key={`weekday-${index}`}>{weekday}</span>)}
               {days.map((day, index) => <div className={`${styles.day} ${day === today.getDate() && publicationIsInMonth(today.toISOString(), calendarMonth) ? styles.today : ""}`} key={index}>

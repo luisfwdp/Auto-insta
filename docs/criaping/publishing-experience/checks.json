@@ -1,6 +1,6 @@
 {
   "success": true,
-  "checksPassed": 53,
+  "checksPassed": 55,
   "checks": [
     "desktop:onboarding:empty:honest-progress",
     "desktop:onboarding:accounts:honest-progress",
@@ -28,6 +28,7 @@
     "desktop:next-month-events",
     "desktop:reschedule-contract-and-timezone",
     "desktop:cancel-contract-once",
+    "desktop:calendar-error-never-claims-empty",
     "mobile:onboarding:empty:honest-progress",
     "mobile:onboarding:accounts:honest-progress",
     "mobile:onboarding:axe",
@@ -53,6 +54,7 @@
     "mobile:next-month-events",
     "mobile:reschedule-contract-and-timezone",
     "mobile:cancel-contract-once",
+    "mobile:calendar-error-never-claims-empty",
     "no-external-provider-requests",
     "no-page-errors"
   ],
@@ -111,11 +113,11 @@
   "timezone": "America/Sao_Paulo",
   "motion": "reduce",
   "pageErrors": [],
-  "externalIO": "all outside-loopback requests blocked;14Vercel analytics attempts blocked",
+  "externalIO": "All outside-loopback requests aborted. No provider request attempted.",
   "backend": "isolated Next.js fixture; API and signed-storage responses mocked; no production IO or real publication",
   "sourceSha256": {
     "components/publishing/media-uploader.tsx": "6934c578fa58f046258dd1ade8c1af0c42693a00eb5b69f0528b3d9e824685a4",
-    "components/publishing/programming-workspace.tsx": "50638bf1485f3997625ee5a68c63536335da9bfcc2e23398492fc211c913e9fe",
+    "components/publishing/programming-workspace.tsx": "ffd30b53d6773a2b6080a029dbcdf4fcbc6c2280729ec2d623c3a87250d4f315",
     "components/publishing/speed-post-workspace.tsx": "c975145df84baf1d8d4513811d4dad34c035b0d3d5e6dd3425db5962a4e676aa",
     "components/criaping-onboarding.tsx": "bce8a7b6f5c4682c3de9d6b6e44894c19e6ebb2a288d87b2ce2123a238b4996d",
     "components/campaigns.module.css": "87f3dbf57d13a6aab914aa8c58701541ca25e0104b93fda0ee0f02e88c20552b",
@@ -128,5 +130,9 @@
     "passed": 1945,
     "suites": 120,
     "skipped": 0
-  }
+  },
+  "externalRequestsBlocked": 16,
+  "externalBlockedHosts": [
+    "va.vercel-scripts.com"
+  ]
 }

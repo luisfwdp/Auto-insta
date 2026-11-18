@@ -41,9 +41,9 @@ não fazem parte deste PR de revisão.
 
 - 1.945 testes /120 suítes, sem skips, com PostgreSQL descartável.
 - Typecheck, lint e build passaram; lint tem somente o aviso anterior em invitation-accept-card.
-- [53 verificações de navegador](criaping/publishing-experience/checks.json),
+- [55 verificações de navegador](criaping/publishing-experience/checks.json),
   incluindo lote de 100 arquivos, teclado, drop válido/ocupado/inválido, confirmação,
-  falha parcial, limites, progresso honesto, fuso, edição e cancelamento.
+  falha parcial, limites, progresso honesto, fuso, edição, cancelamento e erro de calendário sem falso mês vazio.
 - Seis auditorias axe WCAG A/AA nos componentes dentro de main: zero violações.
 - [Upload desktop](criaping/publishing-experience/speed-upload-desktop.png)
   e [mobile](criaping/publishing-experience/speed-upload-mobile.png).
