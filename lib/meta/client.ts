@@ -448,6 +448,34 @@ export async function getMediaComments(
   return data.data;
 }
 
+type CommentPage = { data: InstagramComment[]; paging?: { next?: string } };
+const COMMENT_PAGE_SIZES = [50, 25, 10] as const;
+
+/**
+ * Meta answers a busy post with error code 1 ("Please reduce the amount of data
+ * you're asking for") when a page of comments with nested replies is too heavy.
+ * Retry the same cursor with a smaller page instead of failing the whole sweep.
+ * https://developers.facebook.com/docs/graph-api/results (limit paging)
+ */
+async function fetchCommentPage(url: string): Promise<CommentPage> {
+  const requested = Number(new URL(url).searchParams.get("limit")) || COMMENT_PAGE_SIZES[0];
+  const sizes = [requested, ...COMMENT_PAGE_SIZES.filter((size) => size < requested)];
+  let lastError: unknown;
+  for (const size of sizes) {
+    const pageUrl = new URL(url);
+    pageUrl.searchParams.set("limit", String(size));
+    try {
+      return await handleResponse<CommentPage>(await fetch(pageUrl.toString()));
+    } catch (error) {
+      const tooMuchData = error instanceof MetaApiError && error.code === 1
+        && /reduce the amount of data/i.test(error.message);
+      if (!tooMuchData) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 /**
  * Recent comments on a media, newest first, each with its replies so the caller
  * can tell whether the account owner has already responded. Pagination stops as
@@ -476,11 +504,7 @@ export async function getRecentMediaComments(
   let nextUrl: string | null = first.toString();
 
   while (nextUrl !== null && results.length < max) {
-    const response: Response = await fetch(nextUrl);
-    const page = await handleResponse<{
-      data: InstagramComment[];
-      paging?: { next?: string };
-    }>(response);
+    const page = await fetchCommentPage(nextUrl);
     const data = page.data ?? [];
     results.push(...data);
 
