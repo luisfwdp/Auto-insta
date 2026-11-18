@@ -8,6 +8,8 @@ import { criapingInter } from "@/app/fonts/criaping";
 import LanguageSwitcher from "@/components/language-switcher";
 import { I18nProvider } from "@/lib/i18n/provider";
 import { getI18n } from "@/lib/i18n/server";
+import { isBillingEnabled } from "@/lib/billing/trial";
+import CommercialHome from "@/components/commercial-home";
 
 const GITHUB_URL = "https://github.com/luisfwdp/Auto-insta";
 const SETUP_DOCS_URL = `${GITHUB_URL}/blob/main/docs/setup.md`;
@@ -169,6 +171,7 @@ const features = [
 ];
 
 export default async function Home() {
+  if (isBillingEnabled()) return <CommercialHome />;
   const stars = await getGitHubStars();
   const { locale } = await getI18n();
   const lang = locale === "en" ? "en" : "pt";

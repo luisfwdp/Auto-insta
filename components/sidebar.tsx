@@ -13,6 +13,7 @@ import Image from "next/image";
 import { zernioLink } from "@/lib/zernio-links";
 import { usePathname } from "next/navigation";
 import LogoutButton from "@/components/logout-button";
+import WorkspaceSwitcher from "@/components/workspace-switcher";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard" },
@@ -23,6 +24,7 @@ const navItems = [
   { label: "Speed Post", href: "/speed-post" },
   { label: "DM Logs", href: "/logs" },
   { label: "Settings", href: "/settings" },
+  { label: "Billing and subscription", href: "/billing" },
   { label: "Diagnostics", href: "/diagnostics" },
 ] as const;
 
@@ -116,6 +118,7 @@ export default function Sidebar({
         </nav>
 
         <div className={`px-5 py-4 border-t ${newDesign ? "border-[#494949]" : "border-border"}`}>
+          <WorkspaceSwitcher />
           <div className="mb-4"><LanguageSwitcher /></div>
           <p className={`text-sm truncate ${newDesign ? "text-[#F5F5F5]" : "text-foreground"}`}>{workspaceName}</p>
           <p className={`text-xs ${newDesign ? "text-[#B5B5B5]" : "text-muted"}`}>{t("Self-hosted")}</p>
