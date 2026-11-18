@@ -20,6 +20,7 @@ export default function CriapingOnboarding({ metaConfigured }: { metaConfigured:
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<number | null>(null);
   const [reload, setReload] = useState(0);
+  const [progress, setProgress] = useState({ campaigns: 0, messages: 0 });
   useEffect(() => {
     const abort = new AbortController();
     let active = true;
@@ -32,15 +33,32 @@ export default function CriapingOnboarding({ metaConfigured }: { metaConfigured:
         if (active) {
           const list: Account[] = payload.data.instagramAccounts;
           setAccounts(list); setSelected(list[0]?.id ?? "");
+          setProgress({ campaigns: Number(payload.data.totalAutomations) || 0, messages: Number(payload.data.totalDMs) || 0 });
         }
       }).catch(() => { if (active) setError(0); })
       .finally(() => { window.clearTimeout(timer); if (active) setLoading(false); });
     return () => { active = false; abort.abort(); window.clearTimeout(timer); };
   }, [reload]);
   const account = accounts.find((item) => item.id === selected);
+  const steps = [
+    { title: t("Connect Instagram"), complete: accounts.length > 0 },
+    { title: t("Create Campaign"), complete: progress.campaigns > 0 },
+    { title: t("First message sent"), complete: progress.messages > 0 },
+  ];
+  const completed = steps.filter(step => step.complete).length;
+  const currentStep = steps.findIndex(step => !step.complete);
   return <div className={styles.page}>
     <header><h1>{t("Welcome to CRIA PING")}</h1><p>{t("Your first campaign starts here.")}</p></header>
     <Link className={styles.link} href="/dashboard">{t("Back to dashboard")}</Link>
+    {!loading && error === null && <section className={styles.setup} aria-labelledby="setup-progress">
+      <div className={styles.header}><h2 id="setup-progress">{t("Workspace setup")}</h2><span className={styles.muted}>{t("{completed} of {total} steps completed", { completed, total: steps.length })}</span></div>
+      <progress className={styles.setupProgress} value={completed} max={steps.length} aria-labelledby="setup-progress" />
+      <ol className={styles.setupSteps}>{steps.map((step, index) => <li key={step.title} aria-current={index === currentStep ? "step" : undefined} data-complete={step.complete}>
+        <span className={styles.stepNumber} aria-hidden="true">{step.complete ? "✓" : index + 1}</span><span><strong>{step.title}</strong><small>{t(step.complete ? "Completed" : index === currentStep ? "Next step" : "Not completed yet")}</small></span>
+      </li>)}</ol>
+      <p className={styles.muted}>{t("Progress reflects this workspace. A connected account does not confirm message delivery.")}</p>
+      <Link className={styles.link} href="/logs">{t("Review message delivery")}</Link>
+    </section>}
     {loading ? <Skeleton label={t("Loading campaign settings")} /> : error !== null ?
       <EmptyState title={t(error === 403 ? "Not permitted" : "Dashboard unavailable")}
         description={t("We could not load your real data. Nothing estimated was shown.")}
