@@ -53,7 +53,10 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
     sql = new Client({ connectionString: url }); await sql.connect(); await sql.query(`CREATE SCHEMA "${schema}"`); await sql.query(`SET search_path TO "${schema}"`);
     const migrations = path.join(__dirname, "..", "prisma", "migrations");
     for (const directory of readdirSync(migrations, { withFileTypes: true }).filter(x => x.isDirectory()).map(x => x.name).sort()) await sql.query(readFileSync(path.join(migrations, directory, "migration.sql"), "utf8"));
-    state.db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, max: 10, options: `-c search_path=${schema}` }, { schema }) });
+    // This fixture deliberately queues 120 transactions against ten connections.
+    // Give acquisition a bounded budget independent of the 2s production default;
+    // quota/isolation assertions must not depend on shared CI runner throughput.
+    state.db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, max: 10, options: `-c search_path=${schema}` }, { schema }), transactionOptions: { maxWait: 10000 } });
     await state.db.user.createMany({ data: [{ id: "owner-a", email: "owner-a@example.test" }, { id: "owner-b", email: "owner-b@example.test" }] });
     await state.db.workspace.createMany({ data: [{ id: "workspace-a", name: "A", ownerId: "owner-a" }, { id: "workspace-b", name: "B", ownerId: "owner-a" }, { id: "workspace-c", name: "C", ownerId: "owner-b" }] });
   });
@@ -197,17 +200,18 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
   it("admits exactly one hundred distinct trial DMs across two workspaces of the same owner", async () => {
     const attempts = await Promise.allSettled(Array.from({ length: 120 }, (_, index) => reservation(index % 2 ? "workspace-a" : "workspace-b", "DM", `dm_${index}`)));
     const accepted = attempts.filter(result => result.status === "fulfilled"), rejected = attempts.filter(result => result.status === "rejected");
-    expect(accepted).toHaveLength(100); expect(rejected).toHaveLength(20);
     const errorCodes = rejected.reduce<Record<string, number>>((counts, result) => {
       const code = result.status === "rejected" ? (result.reason as { code?: string }).code ?? "UNTYPED_ERROR" : "UNEXPECTED_SUCCESS";
       counts[code] = (counts[code] ?? 0) + 1; return counts;
     }, {});
-    expect(errorCodes).toEqual({ COMMERCIAL_QUOTA_EXCEEDED: 20 });
+    const diagnostic = JSON.stringify({ accepted: accepted.length, rejected: rejected.length, errorCodes });
+    expect(accepted, diagnostic).toHaveLength(100); expect(rejected, diagnostic).toHaveLength(20);
+    expect(errorCodes, diagnostic).toEqual({ COMMERCIAL_QUOTA_EXCEEDED: 20 });
     for (const result of rejected) expect(result).toMatchObject({ reason: { code: "COMMERCIAL_QUOTA_EXCEEDED", httpStatus: 402 } });
     expect(await state.db.commercialUsageBucket.count()).toBe(1);
     expect(await state.db.commercialUsageBucket.findFirstOrThrow()).toMatchObject({ subjectId: "owner-a", reserved: BigInt(100), consumed: BigInt(0) });
     expect(await state.db.commercialUsageReservation.count()).toBe(100);
-  });
+  }, 15000);
   it("isolates different owners even when the client operation text and trial dates coincide", async () => {
     const a = await reservation("workspace-a", "DM", "shared-text", 100);
     const b = await reservation("workspace-c", "DM", "shared-text", 100);
