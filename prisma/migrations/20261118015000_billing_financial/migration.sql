@@ -28,6 +28,7 @@ CREATE TABLE "BillingCheckout" (
     "checkoutUrlCiphertext" TEXT,
     "lastErrorCode" TEXT,
     "recoveryEnqueuedAt" TIMESTAMP(3),
+    "lastOwnerRefreshAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -231,7 +232,7 @@ END;
 $$;
 
 CREATE TRIGGER "BillingCheckout_snapshot_immutable" BEFORE UPDATE ON "BillingCheckout"
-FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('status,providerCheckoutId,checkoutUrlCiphertext,lastErrorCode,recoveryEnqueuedAt,updatedAt');
+FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('status,providerCheckoutId,checkoutUrlCiphertext,lastErrorCode,recoveryEnqueuedAt,lastOwnerRefreshAt,updatedAt');
 CREATE TRIGGER "BillingSubscription_snapshot_immutable" BEFORE UPDATE ON "BillingSubscription"
 FOR EACH ROW EXECUTE FUNCTION "billing_financial_snapshot_immutable"('renewalStatus,recoveryEnqueuedAt,updatedAt');
 CREATE TRIGGER "BillingPayment_snapshot_immutable" BEFORE UPDATE ON "BillingPayment"

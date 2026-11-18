@@ -166,6 +166,7 @@ model BillingCheckout {
   checkoutUrlCiphertext String?
   lastErrorCode String?
   recoveryEnqueuedAt DateTime?
+  lastOwnerRefreshAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

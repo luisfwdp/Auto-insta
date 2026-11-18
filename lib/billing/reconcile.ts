@@ -163,9 +163,13 @@ function sourceFor(event: BillingEvent) {
 }
 
 export async function processBillingInbox(limit = 5, provider?: Gateway) {
-  const gateway = provider ?? createAsaasClient(), events = await claimBillingEvents(limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new BillingError("INVALID_REQUEST", 400);
+  const gateway = provider ?? createAsaasClient();
   let processed = 0;
-  for (const event of events) {
+  // Claim just before processing: slow reads must not age the next job's lease.
+  for (let index = 0; index < limit; index++) {
+    const [event] = await claimBillingEvents(1);
+    if (!event) break;
     const owned = await prisma.billingEvent.findFirst({ where: { id: event.id, ...getBillingProviderScope(), status: "PROCESSING", leaseToken: event.leaseToken, leaseUntil: { gt: new Date() } }, select: { id: true } });
     if (!owned) continue;
     try {

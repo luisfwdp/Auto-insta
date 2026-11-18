@@ -41,6 +41,8 @@ provider's full path/query after the September2026 URL changes.
    two complete canonical reads find no invoice and the inbox has no payment/paid
    evidence. UNKNOWN is never released by a timer. An explicit attempt can refresh
    an expired OPEN link first; a replacement still requires a separate request.
+   Owner-triggered canonical refresh is limited by a dedicated CAS timestamp to
+   once every5 minutes, including failed reads; it does not move the recovery cursor.
 2. Inbox IDs are unique per environment/account/event. Duplicate conflicts do not
    overwrite the first event. Recoverable CAS leases, bounded retries and durable
    DEAD states protect crashes. Arrival order/callback URLs are not financial proof.
@@ -73,7 +75,9 @@ provider's full path/query after the September2026 URL changes.
 
 The existing worker starts bounded financial maintenance only with a valid scope;
 unconfigured self-hosted deployments do not query new tables or create timers.
-One tick runs at a time; crash leases recover after180s. It classifies interrupted
+One tick runs at a time; crash leases recover after180s. Inbox work is claimed one
+event at a time so a slow earlier read does not waste a later event's attempt.
+It classifies interrupted
 creations, processes cancellation outbox and inbox, and enqueues sparse recovery
 GETs no more often than6h per resource. A separate CAS cursor advances atomically
 with the event so failing rows cannot monopolize the sweep. Each tick queues at
@@ -123,6 +127,10 @@ HTTP/MCP/worker side effects, and the UI after the backend contract is human-mer
 Sandbox must include payment across São Paulo midnight and monthly anchors29,30,31.
 Confirm first dueDate and invoice amount against the immutable quote; no unverified
 one-day tolerance is introduced to hide a provider mismatch.
+Also prove that a payment cannot newly complete after the configured checkout TTL
+and measure checkout-index/webhook lag before accepting the5-minute expiry grace
+for live owner-triggered replacement. Late contradictory payments remain an
+operator/DLQ case requiring provider-side review/refund, not a silent second plan.
 Catalog quotas alone do not enforce usage. No production charge or deployment is
 part of these local tests; mocks are not real financial proof.
 

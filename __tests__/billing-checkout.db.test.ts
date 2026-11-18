@@ -19,6 +19,7 @@ import { claimBillingSync, assertBillingSyncLease, releaseBillingSync } from "..
 import { startCardFreeTrial, billingStatusDTO } from "../lib/billing/trial";
 import { decryptToken, encryptToken } from "../lib/meta/oauth";
 import { AsaasError, type createAsaasClient, type AsaasSubscriptionDTO } from "../lib/billing/asaas-client";
+import { BillingError } from "../lib/billing/config";
 
 type Gateway = ReturnType<typeof createAsaasClient>;
 const scope = "10000000-0000-4000-8000-000000000001";
@@ -161,14 +162,79 @@ describe.skipIf(!url)("durable checkout and cancellation services", () => {
   it("does not expire or re-POST an old OPEN checkout with persisted CHECKOUT_PAID evidence and an empty canonical index", async () => {
     const old = await seedOldOpenCheckout(), provider = gateway();
     await state.db.billingEvent.create({ data: { environment: "sandbox", accountScope: scope, eventId: "evt_paid_evidence&opaque", eventType: "CHECKOUT_PAID", checkoutId: providerCheckoutId } });
-    for (const input of [request({ requestId: old.requestId }), request()]) {
-      await expect(requestCheckout("workspace-a", input, provider)).rejects.toMatchObject({ code: "PAYMENT_NOT_VISIBLE", httpStatus: 503 });
-    }
-    expect(provider.listPaymentsByCheckout).toHaveBeenCalledTimes(4);
+    await expect(requestCheckout("workspace-a", request({ requestId: old.requestId }), provider)).rejects.toMatchObject({ code: "PAYMENT_NOT_VISIBLE", httpStatus: 503 });
+    await expect(requestCheckout("workspace-a", request(), provider)).rejects.toMatchObject({ code: "CHECKOUT_REFRESH_THROTTLED", httpStatus: 429 });
+    expect(provider.listPaymentsByCheckout).toHaveBeenCalledTimes(2);
     expect(await state.db.billingCheckout.findUniqueOrThrow({ where: { id: old.id } })).toMatchObject({ status: "OPEN", providerCheckoutId });
     expect(await state.db.billingCheckout.count()).toBe(1); expect(provider.createHostedCheckout).not.toHaveBeenCalled();
     expect((await state.db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-a" } })).syncLeaseToken).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+  it.each(["same request", "new request"])("throttles %s refresh before another API read and allows it again at the exact5-minute boundary", async mode => {
+    const old = await seedOldOpenCheckout(), provider = gateway();
+    await state.db.billingEvent.create({ data: { environment: "sandbox", accountScope: scope, eventId: "evt_paid_refresh", eventType: "CHECKOUT_PAID", checkoutId: providerCheckoutId } });
+    await expect(requestCheckout("workspace-a", request({ requestId: old.requestId }), provider)).rejects.toMatchObject({ code: "PAYMENT_NOT_VISIBLE" });
+    const input = () => request(mode === "same request" ? { requestId: old.requestId } : {});
+    const repeated = requestCheckout("workspace-a", input(), provider);
+    await repeated.catch(() => {});
+    expect(provider.listPaymentsByCheckout).toHaveBeenCalledTimes(2);
+    await expect(repeated).rejects.toMatchObject({ code: "CHECKOUT_REFRESH_THROTTLED", httpStatus: 429 });
+    const first = await state.db.billingCheckout.findUniqueOrThrow({ where: { id: old.id } });
+    expect(first.lastOwnerRefreshAt).not.toBeNull(); expect(first.updatedAt).toEqual(old.updatedAt); expect(first.recoveryEnqueuedAt).toEqual(old.recoveryEnqueuedAt);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(first.lastOwnerRefreshAt!.getTime() + 5 * 60_000 - 1);
+      await expect(requestCheckout("workspace-a", input(), provider)).rejects.toMatchObject({ code: "CHECKOUT_REFRESH_THROTTLED", httpStatus: 429 });
+      expect(provider.listPaymentsByCheckout).toHaveBeenCalledTimes(2);
+      vi.setSystemTime(first.lastOwnerRefreshAt!.getTime() + 5 * 60_000);
+      await expect(requestCheckout("workspace-a", input(), provider)).rejects.toMatchObject({ code: "PAYMENT_NOT_VISIBLE", httpStatus: 503 });
+      expect(provider.listPaymentsByCheckout).toHaveBeenCalledTimes(4);
+      const after = await state.db.billingCheckout.findUniqueOrThrow({ where: { id: old.id } });
+      expect(after.lastOwnerRefreshAt).toEqual(new Date()); expect(after.updatedAt).toEqual(old.updatedAt); expect(after.recoveryEnqueuedAt).toEqual(old.recoveryEnqueuedAt);
+      expect(provider.createHostedCheckout).not.toHaveBeenCalled(); expect(await state.db.billingCheckout.count()).toBe(1);
+    } finally { vi.useRealTimers(); }
+  });
+  it("lets only one of20 concurrent owner retries refresh the same old link", async () => {
+    const old = await seedOldOpenCheckout(), provider = gateway();
+    await state.db.billingEvent.create({ data: { environment: "sandbox", accountScope: scope, eventId: "evt_concurrent_paid_refresh", eventType: "CHECKOUT_PAID", checkoutId: providerCheckoutId } });
+    const results = await Promise.allSettled(Array.from({ length: 20 }, () => requestCheckout("workspace-a", request({ requestId: old.requestId }), provider)));
+    const codes = results.map(result => {
+      expect(result.status).toBe("rejected");
+      if (result.status !== "rejected") throw new Error("Unexpected successful checkout");
+      expect(result.reason).toBeInstanceOf(BillingError);
+      return (result.reason as BillingError).code;
+    });
+    expect(codes.filter(code => code === "PAYMENT_NOT_VISIBLE")).toHaveLength(1);
+    expect(codes.filter(code => code === "CHECKOUT_REFRESH_THROTTLED")).toHaveLength(19);
+    expect(provider.listPaymentsByCheckout).toHaveBeenCalledTimes(2); expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+    const after = await state.db.billingCheckout.findUniqueOrThrow({ where: { id: old.id } });
+    expect(after.lastOwnerRefreshAt).not.toBeNull(); expect(after.updatedAt).toEqual(old.updatedAt); expect(after.recoveryEnqueuedAt).toEqual(old.recoveryEnqueuedAt);
+  });
+  it("rejects a stale checkout version before reading the provider", async () => {
+    const old = await seedOldOpenCheckout(), provider = gateway();
+    const update = state.db.billingCheckout.updateMany.bind(state.db.billingCheckout);
+    vi.spyOn(state.db.billingCheckout, "updateMany").mockImplementationOnce(args => (async () => {
+      // Simulate another canonical writer committing after the owner's read.
+      await state.db.billingCheckout.update({ where: { id: old.id }, data: { updatedAt: new Date(old.updatedAt.getTime() + 1) } });
+      return update(args);
+    })() as ReturnType<typeof update>);
+    await expect(requestCheckout("workspace-a", request({ requestId: old.requestId }), provider)).rejects.toMatchObject({ code: "CHECKOUT_REFRESH_THROTTLED", httpStatus: 429 });
+    expect(provider.listPaymentsByCheckout).not.toHaveBeenCalled(); expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: old.id } })).lastOwnerRefreshAt).toBeNull();
+  });
+  it.each(["account", "environment"])("does not refresh a checkout whose stored %s differs from the configured provider binding", async mismatch => {
+    const old = await seedOldOpenCheckout(), provider = gateway();
+    if (mismatch === "account") vi.stubEnv("ASAAS_ACCOUNT_SCOPE", randomUUID()); else vi.stubEnv("ASAAS_ENVIRONMENT", "production");
+    await expect(requestCheckout("workspace-a", request({ requestId: old.requestId }), provider)).rejects.toMatchObject({ code: "REQUEST_CONFLICT" });
+    expect(provider.listPaymentsByCheckout).not.toHaveBeenCalled(); expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: old.id } })).lastOwnerRefreshAt).toBeNull();
+  });
+  it("keeps old UNKNOWN checkouts operator-gated even when their provider id is known", async () => {
+    const old = await seedOldOpenCheckout(), provider = gateway();
+    await state.db.billingCheckout.update({ where: { id: old.id }, data: { status: "UNKNOWN" } });
+    for (const input of [request({ requestId: old.requestId }), request()]) expect(await requestCheckout("workspace-a", input, provider)).toMatchObject({ id: old.id, status: "UNKNOWN", url: null });
+    expect(provider.listPaymentsByCheckout).not.toHaveBeenCalled(); expect(provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: old.id } })).lastOwnerRefreshAt).toBeNull();
   });
   it("keeps unknown POST outcomes durable and never POSTs again for the same or a new request id", async () => {
     const provider = gateway(), input = request(); provider.createHostedCheckout.mockRejectedValueOnce(new AsaasError("UNKNOWN_OUTCOME"));

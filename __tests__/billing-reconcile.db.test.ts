@@ -204,6 +204,40 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     expect(Date.now() - started).toBeGreaterThan(180000); expect(billingStatusDTO(await paidState()).hasAccess).toBe(true);
     expect((await paidState()).syncLeaseToken).toBeNull();
   });
+  it("claims each queued event only when processing starts so a long first reconciliation cannot age the second lease", async () => {
+    const link = await checkout(), fake = gateway(link);
+    const first = await event("CHECKOUT_PAID", { checkoutId: link.providerCheckoutId! });
+    const second = await event("CHECKOUT_PAID", { checkoutId: link.providerCheckoutId! });
+    const ids = [first.id, second.id], started = Date.now();
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(started);
+    const advance = () => vi.setSystemTime(Date.now() + 120000);
+    let firstRead = true, secondClaimObserved = false;
+    fake.provider.listPaymentsByCheckout.mockImplementation(async () => {
+      if (firstRead) {
+        firstRead = false;
+        const rows = await state.db.billingEvent.findMany({ where: { id: { in: ids } } });
+        expect(rows.filter(row => row.status === "PROCESSING")).toHaveLength(1);
+        expect(rows.filter(row => row.status === "PENDING" && row.attempts === 0)).toHaveLength(1);
+      }
+      advance(); return page([payment(link)]);
+    });
+    fake.provider.getSubscription.mockImplementation(async () => {
+      const rows = await state.db.billingEvent.findMany({ where: { id: { in: ids } } });
+      if (rows.some(row => row.status === "PROCESSED")) {
+        secondClaimObserved = true;
+        expect(rows.filter(row => row.status === "PROCESSING" && row.attempts === 1)).toHaveLength(1);
+      }
+      advance(); return clone(fake.sub);
+    });
+    fake.provider.listPaymentsBySubscription.mockImplementation(async () => { advance(); return page([payment(link)]); });
+    expect(await processBillingInbox(2, fake.provider)).toEqual({ processed: 2 });
+    expect(Date.now() - started).toBeGreaterThan(180000); expect(secondClaimObserved).toBe(true);
+    const rows = await state.db.billingEvent.findMany({ where: { id: { in: ids } } });
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row).toMatchObject({ status: "PROCESSED", attempts: 1, leaseToken: null, leaseUntil: null });
+    expect(await state.db.billingPayment.count()).toBe(1); expect(billingStatusDTO(await paidState()).hasAccess).toBe(true);
+    expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled(); expect(fake.provider.cancelSubscription).not.toHaveBeenCalled();
+  });
   it("never revives a lease whose single API read reached the 180-second deadline", async () => {
     const link = await checkout(), fake = gateway(link), started = Date.now();
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(started);

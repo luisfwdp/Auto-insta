@@ -59,6 +59,11 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
   });
   if (!reservation.created) {
     if (reservation.row.status === "OPEN" && reservation.row.providerCheckoutId && Date.now() - reservation.row.createdAt.getTime() > 65 * 60_000) {
+      const refreshNow = new Date();
+      const claim = await prisma.billingCheckout.updateMany({ where: { id: reservation.row.id, workspaceId, ...scope, status: "OPEN", providerCheckoutId: reservation.row.providerCheckoutId,
+        updatedAt: reservation.row.updatedAt, OR: [{ lastOwnerRefreshAt: null }, { lastOwnerRefreshAt: { lte: new Date(refreshNow.getTime() - 5 * 60_000) } }] },
+      data: { lastOwnerRefreshAt: refreshNow, updatedAt: reservation.row.updatedAt } });
+      if (claim.count !== 1) throw new BillingError("CHECKOUT_REFRESH_THROTTLED", 429);
       await reconcileBillingResource({ checkoutId: reservation.row.providerCheckoutId, recoverExpiredOpen: true }, gateway);
       return readCheckout(workspaceId, reservation.row.id);
     }
