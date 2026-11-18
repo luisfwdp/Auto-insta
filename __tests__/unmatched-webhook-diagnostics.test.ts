@@ -128,10 +128,53 @@ describe("signed unmatched Instagram webhook diagnostics", () => {
     expect(mocks.eventUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "PROCESSED" }) }));
   });
 
-  it("emits no unmatched diagnostic for fully matching or non-Instagram payloads", async () => {
+  it("emits no unmatched diagnostic for fully matching payloads", async () => {
     mocks.accounts.mockResolvedValue([{ id: "connection", instagramId: unknown.id, workspaceId: "workspace" }]);
     await processWebhook({ provider: "META", payload: { object: "instagram", entry: [unknown] } });
-    await processWebhook({ provider: "META", payload: { object: "page", entry: [unknown] } });
     expect(mocks.operationalCreate).not.toHaveBeenCalled();
   });
+
+  it("records a signed non-Instagram object once per minute without any payload content", async () => {
+    await processWebhook({ provider: "META", payload: { object: "page", entry: [unknown] } });
+    await processWebhook({ provider: "META", payload: { object: "page", entry: [unknown, unknown] } });
+
+    expect(mocks.accounts).not.toHaveBeenCalled();
+    expect(mocks.eventCreate).not.toHaveBeenCalled();
+    expect(mocks.queueAdd).not.toHaveBeenCalled();
+    expect(mocks.operationalCreate).toHaveBeenCalledOnce();
+    const { data } = mocks.operationalCreate.mock.calls[0][0];
+    expect(data).toMatchObject({
+      workspaceId: null, source: "SYSTEM", level: "WARNING",
+      message: "Signed webhook ignored: unsupported object or shape",
+      payload: { provider: "META", object: "page", hasEntryArray: true, receivedEntries: 1 },
+    });
+    expect(JSON.stringify(data)).not.toMatch(/private-|unconnected-account/);
+  });
+
+  it("never stores an unknown object name and tolerates a missing entry array", async () => {
+    await processWebhook({ provider: "META", payload: { object: "private-object-name", entry: undefined } as never });
+    const { data } = mocks.operationalCreate.mock.calls[0][0];
+    expect(data.payload).toEqual({ provider: "META", object: "other", hasEntryArray: false, receivedEntries: 0 });
+  });
+
+  it("does not fail the request when the unsupported-object diagnostic cannot be stored", async () => {
+    mocks.transaction.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(processWebhook({ provider: "META", payload: { object: "page", entry: [unknown] } })).resolves.toBeUndefined();
+  });
+  it("reserves the unsupported-object budget concurrently and renews after a minute", async () => {
+    await Promise.all(Array.from({ length: 20 }, () => processWebhook({ provider: "META", payload: { object: "page", entry: [] } })));
+    expect(mocks.operationalCreate).toHaveBeenCalledOnce();
+    vi.setSystemTime(Date.now() + 60_000);
+    await processWebhook({ provider: "META", payload: { object: "page", entry: [] } });
+    expect(mocks.operationalCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a failed unsupported-object sample budget spent", async () => {
+    mocks.transaction.mockRejectedValueOnce(new Error("database unavailable"));
+    await processWebhook({ provider: "META", payload: { object: "page", entry: [] } });
+    await processWebhook({ provider: "META", payload: { object: "page", entry: [] } });
+    expect(mocks.transaction).toHaveBeenCalledOnce();
+    expect(mocks.operationalCreate).not.toHaveBeenCalled();
+  });
+
 });
