@@ -93,6 +93,7 @@ model Workspace {
   mcpGrants        McpGrant[]
 
   billing         WorkspaceBilling?
+  commercialReservations CommercialUsageReservation[]
 
   @@index([ownerId])
 }
@@ -103,6 +104,61 @@ model TrialRedemption {
   trialStartedAt  DateTime
   trialEndsAt     DateTime
   owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+}
+
+/// Server-only counters. Owner trial buckets survive workspace replacement.
+model CommercialUsageBucket {
+  id String @id @default(uuid()) @db.Uuid
+  subjectKind CommercialUsageSubject
+  subjectId String
+  scopeKey String
+  resource CommercialUsageResource
+  periodStart DateTime
+  periodEnd DateTime
+  limitSnapshot BigInt
+  reserved BigInt @default(0)
+  consumed BigInt @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  reservations CommercialUsageReservation[]
+  @@unique([subjectKind, subjectId, scopeKey, resource, periodStart])
+  @@unique([id, resource])
+}
+
+model CommercialUsageReservation {
+  id String @id @default(uuid()) @db.Uuid
+  workspaceId String
+  bucketId String @db.Uuid
+  resource CommercialUsageResource
+  operationKey String @db.VarChar(200)
+  amount BigInt
+  status CommercialUsageState @default(RESERVED)
+  dispatchToken String? @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  bucket CommercialUsageBucket @relation(fields: [bucketId, resource], references: [id, resource], onDelete: Restrict)
+  @@unique([workspaceId, resource, operationKey])
+  @@index([bucketId])
+}
+
+enum CommercialUsageSubject {
+  OWNER_TRIAL
+  WORKSPACE_PAID
+}
+
+enum CommercialUsageResource {
+  DM
+  PUBLICATION
+  STORAGE_BYTES
+  TRANSFER_BYTES
+}
+
+enum CommercialUsageState {
+  RESERVED
+  DISPATCHING
+  COMMITTED
+  RELEASED
 }
 
 /// Payment details stay at Asaas. No paid access is granted by these routes.

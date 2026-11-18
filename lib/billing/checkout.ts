@@ -6,6 +6,7 @@ import { createAsaasClient, AsaasError, getAsaasCheckoutOrigin } from "./asaas-c
 import { BILLING_PLANS, BILLING_PLAN_IDS } from "./catalog";
 import { BillingError, getBillingProviderScope, saoPauloDate } from "./config";
 import { isBillingEnabled } from "./trial";
+import { isBillingSalesEnabled } from "./sales";
 import { reconcileBillingResource } from "./reconcile";
 
 export const checkoutRequest = z.object({
@@ -24,6 +25,7 @@ function checkoutDTO(row: BillingCheckout) {
 /** Durable intent BEFORE the only provider POST; no network inside a DB lock. */
 export async function requestCheckout(workspaceId: string, value: CheckoutRequest, provider?: ReturnType<typeof createAsaasClient>) {
   if (!isBillingEnabled()) throw new BillingError("BILLING_DISABLED", 404);
+  if (!isBillingSalesEnabled()) throw new BillingError("BILLING_SALES_DISABLED", 503);
   const parsed = checkoutRequest.safeParse(value);
   if (!parsed.success) throw new BillingError("INVALID_REQUEST", 400);
   const input = parsed.data, plan = BILLING_PLANS[input.planId], scope = getBillingProviderScope();
