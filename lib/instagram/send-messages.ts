@@ -6,6 +6,7 @@ import {
   ZernioDeliveryUnconfirmedError,
 } from "@/lib/zernio/client";
 import type { InstagramContext, ZernioContext } from "./context";
+import { executeCommercialMessage, assertCommercialPublicReply } from "@/lib/billing/commercial-messaging";
 
 type Button =
   | { type: "url"; title: string; url: string }
@@ -86,14 +87,16 @@ export async function sendPrivateReply({
   message: string;
   postId?: string;
 }) {
-  if (context.provider === "META")
-    return meta.sendPrivateReply(
-      context.accessToken,
-      instagramAccountId,
-      commentId,
-      message
-    );
-  return sendZernioMessage({ context, commentId, postId, text: message });
+  return executeCommercialMessage({ context, instagramAccountId, kind: "private_plain", targetId: commentId, payload: { message, postId } }, async () => {
+    if (context.provider === "META")
+      return meta.sendPrivateReply(
+        context.accessToken,
+        instagramAccountId,
+        commentId,
+        message
+      );
+    return sendZernioMessage({ context, commentId, postId, text: message });
+  });
 }
 
 export async function sendPrivateReplyWithButton({
@@ -113,21 +116,23 @@ export async function sendPrivateReplyWithButton({
   payload: string;
   postId?: string;
 }) {
-  if (context.provider === "META")
-    return meta.sendPrivateReplyWithButton(
-      context.accessToken,
-      instagramAccountId,
+  return executeCommercialMessage({ context, instagramAccountId, kind: "private_button", targetId: commentId, payload: { text: text.slice(0, 640), buttonTitle: buttonTitle.slice(0, 20), payload, postId } }, async () => {
+    if (context.provider === "META")
+      return meta.sendPrivateReplyWithButton(
+        context.accessToken,
+        instagramAccountId,
+        commentId,
+        text,
+        buttonTitle,
+        payload
+      );
+    return sendZernioMessage({
+      context,
       commentId,
-      text,
-      buttonTitle,
-      payload
-    );
-  return sendZernioMessage({
-    context,
-    commentId,
-    postId,
-    text: text,
-    buttons: [{ type: "postback", title: buttonTitle.slice(0, 20), payload }],
+      postId,
+      text: text,
+      buttons: [{ type: "postback", title: buttonTitle.slice(0, 20), payload }],
+  });
   });
 }
 
@@ -146,20 +151,22 @@ export async function sendDirectMessageWithButton({
   buttonTitle: string;
   payload: string;
 }) {
-  if (context.provider === "META")
-    return meta.sendDirectMessageWithButton(
-      context.accessToken,
-      instagramAccountId,
-      userId,
-      text,
-      buttonTitle,
-      payload
-    );
-  return sendZernioMessage({
-    context,
-    recipientId: userId,
-    text: text,
-    buttons: [{ type: "postback", title: buttonTitle.slice(0, 20), payload }],
+  return executeCommercialMessage({ context, instagramAccountId, kind: "direct_button", targetId: userId, payload: { text: text.slice(0, 640), buttonTitle: buttonTitle.slice(0, 20), payload } }, async () => {
+    if (context.provider === "META")
+      return meta.sendDirectMessageWithButton(
+        context.accessToken,
+        instagramAccountId,
+        userId,
+        text,
+        buttonTitle,
+        payload
+      );
+    return sendZernioMessage({
+      context,
+      recipientId: userId,
+      text: text,
+      buttons: [{ type: "postback", title: buttonTitle.slice(0, 20), payload }],
+  });
   });
 }
 
@@ -178,20 +185,22 @@ export async function sendPrivateReplyWithLinkButton({
   buttons: meta.LinkButton[];
   postId?: string;
 }) {
-  if (context.provider === "META")
-    return meta.sendPrivateReplyWithLinkButton(
-      context.accessToken,
-      instagramAccountId,
+  return executeCommercialMessage({ context, instagramAccountId, kind: "private_link", targetId: commentId, payload: { text: text.slice(0, 640), buttons: linkButtons(buttons), postId } }, async () => {
+    if (context.provider === "META")
+      return meta.sendPrivateReplyWithLinkButton(
+        context.accessToken,
+        instagramAccountId,
+        commentId,
+        text,
+        buttons
+      );
+    return sendZernioMessage({
+      context,
       commentId,
-      text,
-      buttons
-    );
-  return sendZernioMessage({
-    context,
-    commentId,
-    postId,
-    text: text,
-    buttons: linkButtons(buttons),
+      postId,
+      text: text,
+      buttons: linkButtons(buttons),
+  });
   });
 }
 
@@ -206,14 +215,16 @@ export async function sendDirectMessage({
   userId: string;
   message: string;
 }) {
-  if (context.provider === "META")
-    return meta.sendDirectMessage(
-      context.accessToken,
-      instagramAccountId,
-      userId,
-      message
-    );
-  return sendZernioMessage({ context, recipientId: userId, text: message });
+  return executeCommercialMessage({ context, instagramAccountId, kind: "direct_plain", targetId: userId, payload: { message } }, async () => {
+    if (context.provider === "META")
+      return meta.sendDirectMessage(
+        context.accessToken,
+        instagramAccountId,
+        userId,
+        message
+      );
+    return sendZernioMessage({ context, recipientId: userId, text: message });
+  });
 }
 
 export async function sendDirectMessageWithLinkButton({
@@ -229,19 +240,21 @@ export async function sendDirectMessageWithLinkButton({
   text: string;
   buttons: meta.LinkButton[];
 }) {
-  if (context.provider === "META")
-    return meta.sendDirectMessageWithLinkButton(
-      context.accessToken,
-      instagramAccountId,
-      userId,
-      text,
-      buttons
-    );
-  return sendZernioMessage({
-    context,
-    recipientId: userId,
-    text: text,
-    buttons: linkButtons(buttons),
+  return executeCommercialMessage({ context, instagramAccountId, kind: "direct_link", targetId: userId, payload: { text: text.slice(0, 640), buttons: linkButtons(buttons) } }, async () => {
+    if (context.provider === "META")
+      return meta.sendDirectMessageWithLinkButton(
+        context.accessToken,
+        instagramAccountId,
+        userId,
+        text,
+        buttons
+      );
+    return sendZernioMessage({
+      context,
+      recipientId: userId,
+      text: text,
+      buttons: linkButtons(buttons),
+  });
   });
 }
 
@@ -256,6 +269,8 @@ export async function sendCommentReply({
   message: string;
   postId?: string;
 }) {
+
+  await assertCommercialPublicReply(context);
   if (context.provider === "META")
     return meta.sendCommentReply(context.accessToken, commentId, message);
   const result = await zernioRequest<{ data: { commentId: string } }>({

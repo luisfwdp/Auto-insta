@@ -2,6 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { batchActionSchema } from "@/lib/publishing/schemas";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
+import { assertCommercialAccess } from "@/lib/billing/commercial-access";
+import { BillingError } from "@/lib/billing/config";
+import { isBillingEnabled } from "@/lib/billing/trial";
+import { releaseCommercialUsage } from "@/lib/billing/commercial-usage";
+
+async function commercialGate(workspaceId: string) {
+  try {
+    await assertCommercialAccess(workspaceId);
+  } catch (error) {
+    if (!(error instanceof BillingError)) throw error;
+    return NextResponse.json({ success: false, error: error.code }, { status: error.httpStatus });
+  }
+}
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -37,6 +50,11 @@ export async function PATCH(request: NextRequest, routeContext: RouteContext) {
   } as const;
   if (!(allowed[parsed.data.action] as readonly string[]).includes(batch.status)) return NextResponse.json({ success: false, error: `Cannot ${parsed.data.action} a ${batch.status.toLowerCase()} batch` }, { status: 409 });
 
+  if (parsed.data.action === "resume") {
+    const denied = await commercialGate(context.workspaceId);
+    if (denied) return denied;
+  }
+
   const updated = await prisma.$transaction(async (tx) => {
     const nextStatus = parsed.data.action === "cancel" ? "CANCELLED" : parsed.data.action === "pause" ? "PAUSED" : "SCHEDULED";
     const claimed = await tx.speedPostBatch.updateMany({
@@ -54,6 +72,18 @@ export async function PATCH(request: NextRequest, routeContext: RouteContext) {
         where: { batchId: batch.id, workspaceId: context.workspaceId, status: { in: ["DRAFT", "SCHEDULED", "QUEUED", "FAILED"] } },
         data: { status: "CANCELLED", cancelledAt: new Date() },
       });
+      if (isBillingEnabled()) {
+        const publications = await tx.scheduledPublication.findMany({
+          where: { batchId: batch.id, workspaceId: context.workspaceId, status: "CANCELLED" },
+          select: { idempotencyKey: true },
+        });
+        const reservations = await tx.commercialUsageReservation.findMany({
+          where: { workspaceId: context.workspaceId, resource: "PUBLICATION",
+            operationKey: { in: publications.map(publication => publication.idempotencyKey) }, status: { in: ["RESERVED", "REJECTED"] } },
+          select: { id: true },
+        });
+        for (const reservation of reservations) await releaseCommercialUsage(context.workspaceId, reservation.id, tx);
+      }
     } else if (parsed.data.action === "resume") {
       await tx.scheduledPublication.updateMany({
         where: { batchId: batch.id, workspaceId: context.workspaceId, status: "FAILED" },

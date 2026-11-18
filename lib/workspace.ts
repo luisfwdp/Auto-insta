@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/db/client";
 import type { Workspace, WorkspaceRole } from "@/app/generated/prisma/client";
+import { assertCommercialMemberCapacity } from "@/lib/billing/commercial-capacity";
+import { BillingError } from "@/lib/billing/config";
+import { isBillingEnabled } from "@/lib/billing/trial";
+import { getSelectedWorkspaceMembership } from "@/lib/workspace-selection";
 
 function normalizeInviteEmail(email: string) {
   return email.trim().toLowerCase();
@@ -15,14 +19,15 @@ export async function acceptPendingInvitationsForUser(
   const now = new Date();
   const invitations = await prisma.workspaceInvitation.findMany({
     where: {
-      email: normalizedEmail,
+      email: isBillingEnabled() ? { equals: normalizedEmail, mode: "insensitive" } : normalizedEmail,
       status: "PENDING",
       expiresAt: { gt: now },
     },
   });
 
   for (const invitation of invitations) {
-    await prisma.$transaction(async (tx) => {
+    try { await prisma.$transaction(async (tx) => {
+      await assertCommercialMemberCapacity(tx, invitation.workspaceId, { userId, email: normalizedEmail });
       const acceptedAt = new Date();
       // A pending snapshot can be revoked, expire or be replaced before this
       // transaction. Claim exactly that invitation before granting membership.
@@ -30,7 +35,7 @@ export async function acceptPendingInvitationsForUser(
         where: {
           id: invitation.id,
           workspaceId: invitation.workspaceId,
-          email: normalizedEmail,
+          email: isBillingEnabled() ? invitation.email : normalizedEmail,
           token: invitation.token,
           role: invitation.role,
           status: "PENDING",
@@ -55,7 +60,11 @@ export async function acceptPendingInvitationsForUser(
         // Invitation acceptance cannot overwrite later membership authority.
         update: {},
       });
-    });
+    }); } catch (error) {
+      // A full/expired invited workspace must not prevent the user signing in
+      // to an existing workspace, or creating their own. Leave the invite pending.
+      if (!(error instanceof BillingError)) throw error;
+    }
   }
 }
 
@@ -63,11 +72,7 @@ export async function getWorkspaceMembership(userId: string): Promise<{
   workspace: Workspace;
   role: WorkspaceRole;
 } | null> {
-  const membership = await prisma.workspaceMember.findFirst({
-    where: { userId },
-    include: { workspace: true },
-    orderBy: { createdAt: "asc" },
-  });
+  const membership = await getSelectedWorkspaceMembership(userId);
 
   if (!membership) return null;
 

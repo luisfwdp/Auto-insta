@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { assertCommercialAccess } from "@/lib/billing/commercial-access";
+import { BillingError } from "@/lib/billing/config";
+import { isBillingEnabled } from "@/lib/billing/trial";
+import { releaseCommercialUsage } from "@/lib/billing/commercial-usage";
 import { z } from "zod";
 
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -103,6 +107,7 @@ export function createPrismaMcpPublishingService(workspace?: string): McpPublish
       });
     },
     async createPublication(input) {
+      await assertCommercialAccess(workspaceId);
       const assets = await assertRelations(input.instagramAccountId, input.assetIds);
       if (input.type === "REEL" && assets[0]?.mediaType !== "VIDEO") {
         throw new Error("A Reel requires a video");
@@ -134,6 +139,7 @@ export function createPrismaMcpPublishingService(workspace?: string): McpPublish
       });
     },
     async createBatch(input) {
+      await assertCommercialAccess(workspaceId);
       const assetIds = input.items.map((item) => item.assetId);
       const assets = await assertRelations(input.instagramAccountId, assetIds, true);
       const randomSeed = input.orderMode === "RANDOM" ? randomUUID() : null;
@@ -200,6 +206,7 @@ export function createPrismaMcpPublishingService(workspace?: string): McpPublish
       if (!(allowed[action] as readonly string[]).includes(batch.status)) {
         throw new Error(`Cannot ${action} a ${batch.status.toLowerCase()} batch`);
       }
+      if (action === "resume") await assertCommercialAccess(workspaceId);
       return prisma.$transaction(async (tx) => {
         const nextStatus = action === "cancel" ? "CANCELLED" : action === "pause" ? "PAUSED" : "SCHEDULED";
         const claimed = await tx.speedPostBatch.updateMany({
@@ -217,6 +224,16 @@ export function createPrismaMcpPublishingService(workspace?: string): McpPublish
             where: { batchId: id, workspaceId, status: { in: ["DRAFT", "SCHEDULED", "QUEUED", "FAILED"] } },
             data: { status: "CANCELLED", cancelledAt: new Date() },
           });
+          if (isBillingEnabled()) {
+            const publications = await tx.scheduledPublication.findMany({
+              where: { batchId: id, workspaceId, status: "CANCELLED" }, select: { idempotencyKey: true },
+            });
+            const reservations = await tx.commercialUsageReservation.findMany({
+              where: { workspaceId, resource: "PUBLICATION", operationKey: { in: publications.map(publication => publication.idempotencyKey) },
+                status: { in: ["RESERVED", "REJECTED"] } }, select: { id: true },
+            });
+            for (const reservation of reservations) await releaseCommercialUsage(workspaceId, reservation.id, tx);
+          }
         } else if (action === "resume") {
           await tx.scheduledPublication.updateMany({
             where: { batchId: id, workspaceId, status: "FAILED" },
@@ -249,6 +266,10 @@ async function safeResult(operation: () => Promise<unknown>) {
       "Batch not found in the authorized workspace",
       "Batch changed while the action was being applied",
     ];
+    if (error instanceof BillingError) return {
+      content: [{ type: "text" as const, text: JSON.stringify({ error: error.code, status: error.httpStatus }) }],
+      isError: true,
+    };
     const message = error instanceof Error &&
       (known.includes(error.message) || /^Cannot (pause|resume|cancel) a /.test(error.message))
       ? error.message

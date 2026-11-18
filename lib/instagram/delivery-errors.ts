@@ -7,6 +7,7 @@ import {
   ZernioApiError,
   ZernioDeliveryUnconfirmedError,
 } from "@/lib/zernio/client";
+import { BillingError } from "@/lib/billing/config";
 
 export class DeliveryUnconfirmedError extends Error {
   constructor(error: unknown) {
@@ -41,7 +42,9 @@ export function isConfirmedSendRejection(error: unknown): boolean {
 }
 
 export function classifySendError(error: unknown): unknown {
-  return isDeliveryUnconfirmed(error) || isConfirmedSendRejection(error)
+  // The commercial gateway emits BillingError only before calling the
+  // provider. Every post-dispatch anomaly stays DeliveryUnconfirmedError.
+  return error instanceof BillingError || isDeliveryUnconfirmed(error) || isConfirmedSendRejection(error)
     ? error
     : new DeliveryUnconfirmedError(error);
 }

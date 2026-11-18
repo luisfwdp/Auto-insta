@@ -9,6 +9,8 @@ import {
   getAuthorizationUrl,
 } from "@/lib/meta/oauth";
 import { rememberOAuthNonce } from "@/lib/meta/oauth-nonce";
+import { assertCommercialCapacityAccess } from "@/lib/billing/commercial-capacity";
+import { BillingError } from "@/lib/billing/config";
 
 export async function GET() {
   const context = await getCurrentWorkspaceContext();
@@ -17,6 +19,11 @@ export async function GET() {
   }
   if (!canManageWorkspace(context.role)) {
     return NextResponse.redirect(`${getBaseUrl()}/settings?instagram=forbidden`);
+  }
+  try { await assertCommercialCapacityAccess(context.workspaceId); }
+  catch (error) {
+    if (error instanceof BillingError) return NextResponse.redirect(`${getBaseUrl()}/settings?instagram=forbidden&reason=billing_required`);
+    throw error;
   }
 
   // getAuthorizationUrl and createOAuthState call requireEnv, which throws.

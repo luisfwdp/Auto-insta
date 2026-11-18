@@ -26,6 +26,8 @@ import {
   type PageInstagramAccount,
 } from "@/lib/meta/facebook-login";
 import { canManageWorkspace } from "@/lib/workspace-access";
+import { withCommercialAccountCapacity } from "@/lib/billing/commercial-capacity";
+import { BillingError } from "@/lib/billing/config";
 
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
@@ -244,15 +246,19 @@ export async function GET(request: NextRequest) {
       tokenExpiresAt,
       webhookSubscribed,
     };
-    const existing = await prisma.instagramAccount.findUnique({ where: { instagramId } });
-    if (existing) {
-      const updated = await prisma.instagramAccount.updateMany({
-        where: { id: existing.id, workspaceId: state.workspaceId, provider: 'META' }, data,
-      });
-      if (!updated.count) return finish(`${baseUrl}/settings?instagram=already_connected`);
-    } else {
-      await prisma.instagramAccount.create({ data: { ...data, workspaceId: state.workspaceId, instagramId, provider: 'META' } });
-    }
+    const stored = await withCommercialAccountCapacity(state.workspaceId, instagramId, async tx => {
+      const existing = await tx.instagramAccount.findUnique({ where: { instagramId } });
+      if (existing) {
+        const updated = await tx.instagramAccount.updateMany({
+          where: { id: existing.id, workspaceId: state.workspaceId, provider: 'META' }, data,
+        });
+        if (!updated.count) return false;
+      } else {
+        await tx.instagramAccount.create({ data: { ...data, workspaceId: state.workspaceId, instagramId, provider: 'META' } });
+      }
+      return true;
+    });
+    if (!stored) return finish(`${baseUrl}/settings?instagram=already_connected`);
 
     return finish(`${baseUrl}/dashboard?connected=true`);
   } catch (err) {
@@ -279,7 +285,7 @@ export async function GET(request: NextRequest) {
     // Only an allow-listed code goes in the URL (browser history, referrers,
     // screenshots); the sanitized detail stays in the operational event.
     return finish(
-      `${baseUrl}/settings?instagram=failed&reason=${failureCode(message)}`
+      `${baseUrl}/settings?instagram=failed&reason=${err instanceof BillingError ? err.code === "COMMERCIAL_ACCOUNT_LIMIT" ? "plan_limit" : "billing_required" : failureCode(message)}`
     );
   }
 }
@@ -371,26 +377,29 @@ async function connectUnifiedAccounts(
         tokenExpiresAt: null,
         webhookSubscribed,
       };
-      const existing = await prisma.instagramAccount.findUnique({ where: { instagramId: account.id } });
-      if (existing) {
-        const updated = await prisma.instagramAccount.updateMany({
-          where: { id: existing.id, workspaceId, provider: "META" },
-          data,
-        });
-        if (!updated.count) {
-          outcome.skipped.push(label);
-          continue;
+      const stored = await withCommercialAccountCapacity(workspaceId, account.id, async tx => {
+        const existing = await tx.instagramAccount.findUnique({ where: { instagramId: account.id } });
+        if (existing) {
+          const updated = await tx.instagramAccount.updateMany({
+            where: { id: existing.id, workspaceId, provider: "META" },
+            data,
+          });
+          if (!updated.count) {
+            return false;
+          }
+        } else {
+          await tx.instagramAccount.create({
+            data: { ...data, workspaceId, instagramId: account.id, provider: "META" },
+          });
         }
-      } else {
-        await prisma.instagramAccount.create({
-          data: { ...data, workspaceId, instagramId: account.id, provider: "META" },
-        });
-      }
+        return true;
+      });
+      if (!stored) { outcome.skipped.push(label); continue; }
       outcome.connected.push(userInfo.username ?? label);
     } catch (error) {
       outcome.failed.push({
         username: label,
-        reason: error instanceof Error ? error.message : "Unknown error",
+        reason: error instanceof BillingError ? error.code : error instanceof Error ? error.message : "Unknown error",
       });
     }
   }
@@ -427,26 +436,29 @@ async function connectFacebookPageAccounts(
         tokenExpiresAt: null,
         webhookSubscribed,
       };
-      const existing = await prisma.instagramAccount.findUnique({ where: { instagramId: account.instagramId } });
-      if (existing) {
-        const updated = await prisma.instagramAccount.updateMany({
-          where: { id: existing.id, workspaceId, provider: "META" },
-          data,
-        });
-        if (!updated.count) {
-          outcome.skipped.push(label);
-          continue;
+      const stored = await withCommercialAccountCapacity(workspaceId, account.instagramId, async tx => {
+        const existing = await tx.instagramAccount.findUnique({ where: { instagramId: account.instagramId } });
+        if (existing) {
+          const updated = await tx.instagramAccount.updateMany({
+            where: { id: existing.id, workspaceId, provider: "META" },
+            data,
+          });
+          if (!updated.count) {
+            return false;
+          }
+        } else {
+          await tx.instagramAccount.create({
+            data: { ...data, workspaceId, instagramId: account.instagramId, provider: "META" },
+          });
         }
-      } else {
-        await prisma.instagramAccount.create({
-          data: { ...data, workspaceId, instagramId: account.instagramId, provider: "META" },
-        });
-      }
+        return true;
+      });
+      if (!stored) { outcome.skipped.push(label); continue; }
       outcome.connected.push(userInfo.username ?? label);
     } catch (error) {
       outcome.failed.push({
         username: label,
-        reason: error instanceof Error ? error.message.slice(0, 200) : "unknown",
+        reason: error instanceof BillingError ? error.code : error instanceof Error ? error.message.slice(0, 200) : "unknown",
       });
     }
   }

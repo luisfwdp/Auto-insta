@@ -45,7 +45,7 @@ describe("Instagram provider boundary", () => {
         instagramId: "ig",
         accessToken: "",
       })
-    ).toEqual({ ...context, apiKey: "decrypted:encrypted" });
+    ).toEqual({ ...context, workspaceId: "workspace", apiKey: "decrypted:encrypted" });
     expect(prisma.zernioConnection.findUnique).toHaveBeenCalledWith({
       where: { workspaceId: "workspace" },
       select: { apiKey: true },

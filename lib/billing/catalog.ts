@@ -6,4 +6,6 @@ export const BILLING_PLANS = {
 } as const;
 export type BillingPlanId = keyof typeof BILLING_PLANS;
 export const BILLING_PLAN_IDS = ["essential-v1", "pro-v1", "agency-v1"] as const;
-export const TRIAL_LIMITS = { accounts: 1, members: 1, dms: 100, publications: 10, storageBytes: 300_000_000, transferBytes: 500_000_000 } as const;
+// A signed video upload reserves the bucket's full technical cap (300 MiB in
+// the deployment checklist), so a useful trial needs more than 300 MB decimal.
+export const TRIAL_LIMITS = { accounts: 1, members: 1, dms: 100, publications: 10, storageBytes: 1_000_000_000, transferBytes: 500_000_000 } as const;

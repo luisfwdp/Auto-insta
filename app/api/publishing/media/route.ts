@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { isBillingEnabled } from "@/lib/billing/trial";
+import { BillingError } from "@/lib/billing/config";
+import { CommercialStorageError, prepareCommercialMediaUpload, confirmCommercialMediaUpload, deleteCommercialMedia } from "@/lib/billing/commercial-storage";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
@@ -6,6 +9,13 @@ import { ALLOWED_MEDIA, confirmAssetSchema, createAssetSchema } from "@/lib/publ
 import { createSignedUpload, deletePrivateObject, inspectPrivateObject, matchesDeclaredMedia, mediaStoragePath } from "@/lib/publishing/storage";
 
 export const runtime = "nodejs";
+
+function commercialError(error: unknown) {
+  const known = error instanceof BillingError;
+  return NextResponse.json({ success: false, error: "Media storage request could not be completed.", code: known ? error.code : "STORAGE_UNAVAILABLE" }, {
+    status: known ? error.httpStatus : 503, headers: { "Cache-Control": "private, no-store", ...(error instanceof CommercialStorageError && error.retryAfter ? { "Retry-After": String(error.retryAfter) } : {}) },
+  });
+}
 
 async function access() {
   const context = await getCurrentWorkspaceContext();
@@ -34,6 +44,11 @@ export async function POST(request: NextRequest) {
 
   const parsed = createAssetSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ success: false, error: "Invalid media", details: parsed.error.flatten() }, { status: 400 });
+
+  if (isBillingEnabled()) {
+    try { return NextResponse.json({ success: true, data: await prepareCommercialMediaUpload(result.context!.workspaceId, parsed.data) }, { status: 201, headers: { "Cache-Control": "private, no-store" } }); }
+    catch (error) { return commercialError(error); }
+  }
 
   const id = randomUUID();
   const storagePath = mediaStoragePath(result.context!.workspaceId, id, parsed.data.filename);
@@ -65,6 +80,14 @@ export async function PATCH(request: NextRequest) {
   const parsed = confirmAssetSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ success: false, error: "Invalid media confirmation", details: parsed.error.flatten() }, { status: 400 });
 
+  if (isBillingEnabled()) {
+    try {
+      const confirmed = await confirmCommercialMediaUpload(result.context!.workspaceId, parsed.data);
+      return confirmed.valid ? NextResponse.json({ success: true, data: confirmed.asset }, { headers: { "Cache-Control": "private, no-store" } })
+        : NextResponse.json({ success: false, error: "Uploaded file failed media validation", code: "UPLOAD_VALIDATION_FAILED" }, { status: 400, headers: { "Cache-Control": "private, no-store" } });
+    } catch (error) { return commercialError(error); }
+  }
+
   const asset = await prisma.publishingAsset.findFirst({ where: { id: parsed.data.id, workspaceId: result.context!.workspaceId } });
   if (!asset) return NextResponse.json({ success: false, error: "Media not found" }, { status: 404 });
   if (asset.status !== "UPLOADING") return NextResponse.json({ success: false, error: "Media is not awaiting upload" }, { status: 409 });
@@ -94,6 +117,11 @@ export async function DELETE(request: NextRequest) {
   if (!canManageWorkspace(result.context!.role)) return NextResponse.json({ success: false, error: "Only owners and admins can delete media" }, { status: 403 });
   const id = request.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ success: false, error: "Missing media ID" }, { status: 400 });
+  if (isBillingEnabled()) {
+    try { await deleteCommercialMedia(result.context!.workspaceId, id); return NextResponse.json({ success: true, data: { deleted: true } }, { headers: { "Cache-Control": "private, no-store" } }); }
+    catch (error) { return commercialError(error); }
+  }
+
   const asset = await prisma.publishingAsset.findFirst({ where: { id, workspaceId: result.context!.workspaceId }, include: { _count: { select: { publications: true } } } });
   if (!asset) return NextResponse.json({ success: false, error: "Media not found" }, { status: 404 });
   if (asset._count.publications > 0) return NextResponse.json({ success: false, error: "Media is in use by a publication" }, { status: 409 });

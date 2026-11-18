@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
 import { normalizeInvitationEmail } from "@/lib/workspace-invitations";
+import { assertCommercialMemberCapacity } from "@/lib/billing/commercial-capacity";
+import { BillingError } from "@/lib/billing/config";
+import { isBillingEnabled } from "@/lib/billing/trial";
 
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -43,14 +46,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (normalizeInvitationEmail(session.user.email) !== invitation.email) {
+  if (normalizeInvitationEmail(session.user.email) !== (isBillingEnabled() ? normalizeInvitationEmail(invitation.email) : invitation.email)) {
     return NextResponse.json(
       { success: false, error: "This invitation is for a different email" },
       { status: 403 }
     );
   }
 
-  const accepted = await prisma.$transaction(async (tx) => {
+  let accepted = false;
+  try { accepted = await prisma.$transaction(async (tx) => {
+    await assertCommercialMemberCapacity(tx, invitation.workspaceId, { userId: session.user.id, email: normalizeInvitationEmail(session.user.email!) });
     // Atomically consume a still-valid invitation before creating membership.
     // A revoked, expired or concurrently accepted invitation grants nothing.
     const consumed = await tx.workspaceInvitation.updateMany({
@@ -80,8 +85,16 @@ export async function POST(request: NextRequest) {
       // Stale invitations must not overwrite a member's current role.
       update: {},
     });
+    // Explicitly accepting an invitation selects its workspace, without losing
+    // the user's older memberships. Every resolver rechecks current membership.
+    if (isBillingEnabled()) await tx.user.update({
+      where: { id: session.user.id }, data: { activeWorkspaceId: invitation.workspaceId },
+    });
     return true;
-  });
+  }); } catch (error) {
+    if (error instanceof BillingError) return NextResponse.json({ success: false, error: error.code }, { status: error.httpStatus, headers: { "Cache-Control": "no-store" } });
+    throw error;
+  }
 
   if (!accepted) {
     return NextResponse.json(

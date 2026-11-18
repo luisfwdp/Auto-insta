@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { isBillingEnabled } from "@/lib/billing/trial";
+import { BillingError } from "@/lib/billing/config";
+import { isDeliveryUnconfirmed } from "@/lib/instagram/delivery-errors";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { checkManualDmRateLimit } from "@/lib/api/manual-dm-rate-limit";
 import { prisma } from "@/lib/db/client";
@@ -135,6 +139,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
+const commercialManualRequest = z.object({
+  instagramAccountId: z.string().min(1).optional(), recipientId: z.string().trim().min(1),
+  text: z.string().trim().min(1), requestId: z.uuid(),
+}).strict();
+
 // Send a direct message reply.
 export async function POST(request: NextRequest) {
   const context = await getCurrentWorkspaceContext();
@@ -155,6 +164,7 @@ export async function POST(request: NextRequest) {
     instagramAccountId?: string;
     recipientId?: string;
     text?: string;
+    requestId?: string;
   };
   try {
     body = await request.json();
@@ -163,6 +173,13 @@ export async function POST(request: NextRequest) {
       { success: false, error: "Invalid request body" },
       { status: 400 }
     );
+  }
+
+  const commercial = isBillingEnabled();
+  if (commercial) {
+    const parsed = commercialManualRequest.safeParse(body);
+    if (!parsed.success) return NextResponse.json({ success: false, error: "Invalid request body", code: "INVALID_REQUEST" }, { status: 400 });
+    body = parsed.data;
   }
 
   const text = body.text?.trim();
@@ -214,7 +231,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const accessToken = await createInstagramContext(account);
+    const accessToken = commercial ? await createInstagramContext(account, `manual:${body.requestId}`) : await createInstagramContext(account);
     const result = await sendDirectMessage({
       context: accessToken,
       instagramAccountId: account.instagramId,
@@ -230,7 +247,7 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ success: true, data: result });
   } catch (err) {
-    console.error("[Conversations] Send error:", err);
+    if (!commercial) console.error("[Conversations] Send error:", err);
     // Surface Meta's own message — the common case is the 24-hour messaging
     // window having closed, which the user needs to see explicitly.
     const message =
@@ -242,6 +259,10 @@ export async function POST(request: NextRequest) {
       outcome: "FAILED",
       messageLength: text.length,
     });
+    if (commercial && (err instanceof BillingError || isDeliveryUnconfirmed(err))) return NextResponse.json({
+      success: false, error: "Message service temporarily unavailable.",
+      code: err instanceof BillingError ? err.code : "DELIVERY_UNCONFIRMED",
+    }, { status: err instanceof BillingError ? err.httpStatus : 503 });
     return NextResponse.json(
       { success: false, error: message },
       { status: 502 }
