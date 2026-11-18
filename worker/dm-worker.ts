@@ -9,6 +9,7 @@ import { createPublishingWorker } from "@/lib/queue/publishing-worker";
 import { enqueueDuePublications } from "@/lib/queue/publishing";
 import { auditMetaWebhookSubscriptions } from "@/lib/ops/meta-webhook-audit";
 import { startBillingMaintenance } from "@/lib/billing/worker";
+import { applyRetention } from "@/lib/privacy/retention";
 import os from "node:os";
 
 const worker = createDMWorker();
@@ -110,6 +111,21 @@ async function auditWebhooks() {
 const webhookAuditBootTimer = setTimeout(() => void auditWebhooks(), 30_000);
 const webhookAuditTimer = setInterval(() => void auditWebhooks(), WEBHOOK_AUDIT_INTERVAL_MS);
 
+// Opt-in data retention (docs/lgpd.md). Does nothing unless a RETENTION_*_DAYS
+// variable is set, so deploying this never deletes data by itself.
+const RETENTION_INTERVAL_MS = 24 * 60 * 60_000;
+async function runRetention() {
+  try {
+    const result = await applyRetention();
+    if (result) console.log("[DM Worker] Data retention applied:", result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[DM Worker] Data retention failed:", message);
+  }
+}
+const retentionBootTimer = setTimeout(() => void runRetention(), 60_000);
+const retentionTimer = setInterval(() => void runRetention(), RETENTION_INTERVAL_MS);
+
 async function shutdown(signal: string) {
   console.log(`[DM Worker] ${signal} received, closing worker`);
   clearInterval(heartbeatTimer);
@@ -117,6 +133,8 @@ async function shutdown(signal: string) {
   clearInterval(publishingSweepTimer);
   clearTimeout(webhookAuditBootTimer);
   clearInterval(webhookAuditTimer);
+  clearTimeout(retentionBootTimer);
+  clearInterval(retentionTimer);
   await Promise.all([worker.close(), publishingWorker.close(), billingMaintenance.stop()]);
   process.exit(0);
 }
