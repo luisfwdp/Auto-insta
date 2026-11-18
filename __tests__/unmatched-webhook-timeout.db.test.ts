@@ -27,6 +27,7 @@ const matched = { id: "connected", time: 1, messaging: [{
 const payload = { object: "instagram", entry: [unmatched, matched] };
 let sql: Client;
 let processWebhook: typeof import("@/lib/queue/process-webhook").processInstagramWebhook;
+let unsupportedDiagnostic: typeof import("@/lib/queue/webhook-diagnostics").recordUnsupportedWebhookObject;
 let recordDiagnostic: typeof import("@/lib/queue/webhook-diagnostics").recordUnmatchedWebhook;
 
 // Test watchdog only: callers release the held lock and await the real query in
@@ -77,6 +78,7 @@ describe.skipIf(!DATABASE_URL)("bounded unmatched diagnostics on disposable Post
     await state.db.webhookEvent.deleteMany();
     await state.db.operationalEvent.deleteMany();
     processWebhook = (await import("@/lib/queue/process-webhook")).processInstagramWebhook;
+    unsupportedDiagnostic = (await import("@/lib/queue/webhook-diagnostics")).recordUnsupportedWebhookObject;
     recordDiagnostic = (await import("@/lib/queue/webhook-diagnostics")).recordUnmatchedWebhook;
   });
   afterAll(async () => {
@@ -146,4 +148,27 @@ describe.skipIf(!DATABASE_URL)("bounded unmatched diagnostics on disposable Post
     await assertPoolUsableAndTimeoutsRestored();
     expect(await state.db.operationalEvent.count()).toBe(0);
   });
+  it("bounds unsupported-object diagnostics under a PostgreSQL lock and spends the failed budget", async () => {
+    const locker = new Client({ connectionString: DATABASE_URL });
+    await locker.connect();
+    await locker.query("BEGIN");
+    await locker.query(`LOCK TABLE "${schema}"."OperationalEvent" IN ACCESS EXCLUSIVE MODE`);
+    const args = { provider: "META" as const, object: "page", entries: [] };
+    const started = Date.now();
+    const pending = unsupportedDiagnostic(args);
+    void pending.catch(() => {});
+    try {
+      await within(pending, 2_000);
+      // The held lock must exercise the configured 250 ms lock timeout.
+      expect(Date.now() - started).toBeGreaterThanOrEqual(200);
+      await assertPoolUsableAndTimeoutsRestored();
+    } finally {
+      await locker.query("ROLLBACK");
+      await pending.catch(() => {});
+      await locker.end();
+    }
+    await unsupportedDiagnostic(args);
+    expect(await state.db.operationalEvent.count()).toBe(0);
+  });
+
 });

@@ -36,8 +36,8 @@ The sample is dropped on failure and its per-provider minute budget stays spent.
 The native PostgreSQL regression holds an exclusive diagnostic-table lock until
 after the request finishes, cancels a five-second insert trigger, and exercises
 a busy one-connection pool. It verifies that the connection is reusable afterward,
-transaction-local timeouts are restored, and no diagnostic lock wait or aborted
-transaction remains. Run `unmatched-webhook-timeout.db.test.ts` with a disposable
+transaction-local timeouts are restored, and no diagnostic lock wait, idle transaction or
+aborted transaction remains. Run `unmatched-webhook-timeout.db.test.ts` with a disposable
 `TEST_DATABASE_URL`; mocks do not establish PostgreSQL cancellation behavior.
 
 Compare a known account's locally computed entry-ID hash with the warning to
@@ -53,3 +53,22 @@ No new Graph API calls or schema changes. Rollback: revert the code commit and
 redeploy the previously approved web application. No data rollback or migration
 is required. Unit tests demonstrate filtering and sampling; a real signed Meta
 delivery is still required to establish the production cause.
+
+## Webhooks assinados com outro objeto
+
+Um webhook com assinatura válida cujo `object` não é `instagram` (ou sem lista
+`entry`) continua sendo ignorado pelas automações, mas passa a gerar o evento
+operacional `Signed webhook ignored: unsupported object or shape`, no máximo um
+por minuto por provedor e por processo. O evento guarda só o nome do objeto
+(quando é um dos objetos documentados pela Meta; senão `other`), se havia lista
+`entry` e quantas entradas vieram. Nenhum ID, remetente ou texto é gravado.
+
+Um diagnóstico persistido é evidência positiva de que uma requisição alcançou
+esse caminho. A ausência de registro não comprova ausência de callback: os
+registros são amostrados, a gravação pode falhar ou expirar, e payloads sem eventos
+podem não produzir registro. Uma assinatura inválida segue o diagnóstico de
+rejeição separado, também limitado; não é uma requisição assinada validada.
+
+Para investigar não chegada, correlacione access logs HTTP da Vercel, request ID,
+janela de tempo e status com os diagnósticos persistidos. Testes unitários e uma
+amostra ausente não estabelecem a causa de uma DM não entregue.
