@@ -24,6 +24,7 @@ model User {
   workspaceMembers  WorkspaceMember[]
   sentInvitations   WorkspaceInvitation[] @relation("WorkspaceInvitationsSent")
   mcpGrants         McpGrant[]
+  trialRedemption   TrialRedemption?
 }
 
 model Account {
@@ -91,7 +92,41 @@ model Workspace {
   speedPostBatches SpeedPostBatch[]
   mcpGrants        McpGrant[]
 
+  billing         WorkspaceBilling?
+
   @@index([ownerId])
+}
+
+/// Keeps the owner's original deadline when a workspace is replaced.
+model TrialRedemption {
+  ownerId         String @id
+  trialStartedAt  DateTime
+  trialEndsAt     DateTime
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+}
+
+/// Payment details stay at Asaas. No paid access is granted by these routes.
+model WorkspaceBilling {
+  workspaceId             String   @id
+  status                  BillingStatus @default(TRIALING)
+  trialStartedAt          DateTime
+  trialEndsAt             DateTime
+  paidThrough             DateTime?
+  planId                  String?
+  providerCustomerId      String?
+  providerSubscriptionId  String?  @unique
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+enum BillingStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  SUSPENDED
 }
 
 model WorkspaceMember {
