@@ -763,5 +763,7 @@
   "Switching workspace": "Trocando workspace",
   "Could not load workspaces.": "Não foi possível consultar seus workspaces.",
   "Workspace access changed. Refresh the list.": "Seu acesso ao workspace mudou. Consulte a lista atualizada.",
-  "Choose a workspace": "Escolha um workspace"
+  "Choose a workspace": "Escolha um workspace",
+  "Pricing - CRIA PING": "Preços — CRIA PING",
+  "Subscription plans and a 3-day card-free trial.": "Planos de assinatura e teste de 3 dias sem cartão."
 }

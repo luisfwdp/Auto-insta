@@ -763,5 +763,7 @@
   "Switching workspace": "正在切換工作區",
   "Could not load workspaces.": "無法取得您的工作區。",
   "Workspace access changed. Refresh the list.": "工作區存取權已變更，請查看更新後的清單。",
-  "Choose a workspace": "選擇工作區"
+  "Choose a workspace": "選擇工作區",
+  "Pricing - CRIA PING": "方案價格 — CRIA PING",
+  "Subscription plans and a 3-day card-free trial.": "訂閱方案與免信用卡的 3 天免費試用。"
 }

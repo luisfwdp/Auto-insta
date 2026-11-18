@@ -8,6 +8,8 @@ integrados nos PRs #97–#99. Não cria endpoints, provedores, planos ou migraç
 - `/login?mode=signup` usa o link de e-mail do Auth.js e retorna ao onboarding.
   Cadastro não exige senha, cartão ou contratação. Respostas de elegibilidade e
   falha do provedor de e-mail são uniformes; allowlist e rate limit permanecem.
+- Entradas por template validado passam pelo mesmo onboarding no modo comercial;
+  o destino da campanha é preservado depois da ativação, sem reiniciar o trial.
 - O proprietário ativa explicitamente o teste de 72 horas. Visitas às páginas e
   consultas GET não iniciam nem renovam o teste. O backend decide elegibilidade,
   prazo e acesso. Outros membros não podem ativar teste ou alterar cobrança.

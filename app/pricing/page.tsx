@@ -9,7 +9,10 @@ import { isBillingEnabled } from "@/lib/billing/trial";
 import { isBillingSalesEnabled } from "@/lib/billing/sales";
 import styles from "./pricing.module.css";
 
-export const metadata: Metadata = { title: "Preços | PING CHAT", description: "Planos de assinatura e teste de 3 dias sem cartão." };
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getI18n();
+  return { title: t("Pricing - CRIA PING"), description: t("Subscription plans and a 3-day card-free trial.") };
+}
 
 export default async function PricingPage() {
   const { locale, t } = await getI18n();

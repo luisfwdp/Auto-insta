@@ -10,6 +10,7 @@ import { AuthError } from "next-auth";
 import { z } from "zod";
 import Link from "next/link";
 import styles from "./auth-page.module.css";
+import { isBillingEnabled } from "@/lib/billing/trial";
 
 const GITHUB_URL = "https://github.com/diwenne/openreply";
 const SETUP_DOCS_URL = `${GITHUB_URL}/blob/main/docs/setup.md`;
@@ -66,7 +67,7 @@ export default async function LoginPage({
   const checkEmail = params.checkEmail === "1";
   const selectedTemplate = getCampaignTemplate(params.template);
   const templateCallbackUrl = selectedTemplate
-    ? `/campaigns/new?template=${selectedTemplate.slug}`
+    ? `${isBillingEnabled() ? "/onboarding" : "/campaigns/new"}?template=${selectedTemplate.slug}`
     : null;
   const callbackUrl = params.callbackUrl ?? templateCallbackUrl ?? (signup ? "/onboarding" : "/dashboard");
   const checkEmailUrl = `/login?checkEmail=1${signup ? "&mode=signup" : ""}`;
