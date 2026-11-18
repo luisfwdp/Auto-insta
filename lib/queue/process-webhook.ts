@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db/client';
 import { getDMQueue, MESSAGE_JOB_NAME, POSTBACK_JOB_NAME } from '@/lib/queue/client';
 import { parseCommentEvents, parseMessageEvents, parsePostbackEvents, parseReadEvents } from '@/lib/meta/webhook';
 import { Prisma, type InstagramProvider } from '@/app/generated/prisma/client';
-import { recordUnmatchedWebhook } from './webhook-diagnostics';
+import { recordUnmatchedWebhook, recordUnsupportedWebhookObject } from './webhook-diagnostics';
 
 const OPENING_DM_READ_FALLBACK_DELAY_MS = 5 * 60 * 1000;
 type InstagramPayload = Parameters<typeof parseCommentEvents>[0];
@@ -10,7 +10,10 @@ type InstagramPayload = Parameters<typeof parseCommentEvents>[0];
 export async function processInstagramWebhook({ payload: incoming, provider, workspaceId }: {
   payload: InstagramPayload; provider: InstagramProvider; workspaceId?: string;
 }) {
-  if (incoming.object !== 'instagram' || !Array.isArray(incoming.entry)) return;
+  if (incoming.object !== 'instagram' || !Array.isArray(incoming.entry)) {
+    await recordUnsupportedWebhookObject({ provider, object: incoming.object, entries: incoming.entry });
+    return;
+  }
   const accounts = await prisma.instagramAccount.findMany({
     where: { instagramId: { in: incoming.entry.map(e => e.id) }, provider, ...(workspaceId ? { workspaceId } : {}) },
     select: { id: true, instagramId: true, workspaceId: true },
