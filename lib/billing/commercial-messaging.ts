@@ -19,6 +19,16 @@ function workspace(context: InstagramContext) {
   return context.workspaceId;
 }
 
+/** Server-owned message stage, never a campaign payload or client-supplied ID.
+ * Keep the original context untouched so each stage is stable across retries. */
+export function withCommercialMessagePurpose<T extends InstagramContext>(context: T, purpose: string): T {
+  if (!isBillingEnabled()) return context;
+  if (typeof purpose !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(purpose)) throw new BillingError("COMMERCIAL_MESSAGE_PURPOSE_REQUIRED", 400);
+  if (typeof context.operationId !== "string" || !context.operationId.trim() || context.operationId.startsWith("manual:") || context.operationId.length + purpose.length + 1 > 512)
+    throw new BillingError("COMMERCIAL_MESSAGE_OPERATION_REQUIRED", 400);
+  return { ...context, operationId: `${context.operationId}:${purpose}` };
+}
+
 /** Public replies require usable account/access but consume no DM allocation. */
 export async function assertCommercialPublicReply(context: InstagramContext) {
   if (!isBillingEnabled()) return;
@@ -45,14 +55,12 @@ export async function executeCommercialMessage(input: {
   const requestId = manual ? z.uuid().safeParse(context.operationId.slice("manual:".length)) : null;
   if (manual && !requestId?.success) throw new BillingError("COMMERCIAL_MESSAGE_OPERATION_REQUIRED", 400);
   const operationId = requestId?.success ? `manual:${requestId.data.toLowerCase()}` : context.operationId;
-  // Automated operations retain their existing identity, including payload and
-  // kind (a proven button rejection may fall back to a separate plain call).
-  // A manual UUID identifies ONE immutable intent: changing body/account/target
-  // must conflict with that UUID rather than allocate a second send identity.
-  // Payload/target stay in process memory only; the ledger receives digests.
+  // The operation identifies ONE logical message independently of mutable
+  // content. Different server-owned stages must get explicit purposes. The
+  // immutable envelope stays in memory; only its fingerprint reaches storage.
   const intent = createHash("sha256").update(JSON.stringify({ version: 1, instagramId: input.instagramAccountId,
     operationId, kind: input.kind, target: input.targetId, payload: input.payload })).digest("hex");
-  const key = manual ? createHash("sha256").update(JSON.stringify({ version: 1, operationId })).digest("hex") : intent;
+  const key = createHash("sha256").update(JSON.stringify({ version: manual ? 1 : 2, operationId })).digest("hex");
   const replay = async (reservationId: string): Promise<MessageResult> => {
     try {
       const receipt = savedReceipt.safeParse(await readCommercialUsageReceipt(workspaceId, reservationId));
@@ -60,16 +68,12 @@ export async function executeCommercialMessage(input: {
       return { message_id: receipt.data.messageId, ...(receipt.data.recipientId ? { recipient_id: receipt.data.recipientId } : {}) };
     } catch { throw uncertain(); }
   };
-  const previous = manual
-    ? await findCommercialUsageOperation(workspaceId, "DM", `message:${key}`, 1, intent)
-    : await findCommercialUsageOperation(workspaceId, "DM", `message:${key}`, 1);
+  const previous = await findCommercialUsageOperation(workspaceId, "DM", `message:${key}`, 1, intent);
   if (previous?.status === "COMMITTED") return replay(previous.reservationId);
   if (previous && !["RESERVED", "REJECTED"].includes(previous.status)) throw uncertain();
   // Reject unusable/expired accounts before creating or rearming any hold.
   await assertCommercialAccountUsable(workspaceId, context.instagramId);
-  const reservation = manual
-    ? await reserveCommercialUsage(workspaceId, "DM", `message:${key}`, 1, intent)
-    : await reserveCommercialUsage(workspaceId, "DM", `message:${key}`, 1);
+  const reservation = await reserveCommercialUsage(workspaceId, "DM", `message:${key}`, 1, intent);
   if (reservation.mode === "legacy") return send();
   // Another worker may have committed between the lookup and reservation CAS.
   if (reservation.status === "COMMITTED") return replay(reservation.reservationId);

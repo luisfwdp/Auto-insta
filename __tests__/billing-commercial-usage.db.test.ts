@@ -17,7 +17,9 @@ import { rejectUnstartedCommercialUsage, findCommercialUsageOperation, reserveCo
 import { BILLING_PLANS, type BillingPlanId } from "../lib/billing/catalog";
 import { monthlyInvoicePeriod } from "../lib/billing/financial-policy";
 import { saoPauloDate } from "../lib/billing/config";
-import { executeCommercialMessage } from "../lib/billing/commercial-messaging";
+import { executeCommercialMessage, withCommercialMessagePurpose } from "../lib/billing/commercial-messaging";
+import { MetaApiError } from "../lib/meta/client";
+import { DeliveryUnconfirmedError } from "../lib/instagram/delivery-errors";
 
 const scope = "1eb34a1e-82b8-4a6f-a67a-202654136d47";
 let sql: Client, trialStartedAt: Date, trialEndsAt: Date;
@@ -28,6 +30,11 @@ async function reservation(workspaceId = "workspace-a", resource: CommercialUsag
 }
 async function usage(id: string) {
   return state.db.commercialUsageReservation.findUniqueOrThrow({ where: { id }, include: { bucket: true } });
+}
+async function messageFixture(operationId: string) {
+  await state.db.instagramAccount.create({ data: { workspaceId: "workspace-a", instagramId: "ig_message_fixture", username: "fixture_message", accessToken: "fixture" } });
+  return { context: { provider: "META" as const, workspaceId: "workspace-a", instagramId: "ig_message_fixture", accessToken: "fixture", operationId },
+    instagramAccountId: "ig_message_fixture", kind: "direct_plain" as const, targetId: "fixture-recipient", payload: { text: "fixture message" } };
 }
 async function makePaid(workspaceId = "workspace-a", planId: BillingPlanId = "pro-v1") {
   const date = saoPauloDate(new Date()), anchor = Number(date.slice(-2)), period = monthlyInvoicePeriod(date, anchor), plan = BILLING_PLANS[planId];
@@ -104,6 +111,81 @@ describe.skipIf(!url)("commercial usage allocation and dispatch", () => {
       await expect(findCommercialUsageOperation("workspace-a", "DM", key, amount, intent)).rejects.toMatchObject({ code: "USAGE_OPERATION_CONFLICT" });
     expect(await findCommercialUsageOperation("workspace-b", "DM", key, 1, fingerprint)).toBeNull();
     expect(await usage(row.reservationId!)).toEqual(before); expect(await state.db.commercialUsageReservation.count()).toBe(1);
+  });
+  it.each(["payload", "kind", "target", "account"])("does not dispatch the same automated operation twice when its %s changes while the first send is in flight", async changed => {
+    await state.db.instagramAccount.create({ data: { workspaceId: "workspace-a", instagramId: "ig_inflight", username: "fixture_inflight", accessToken: "fixture" } });
+    let releaseFirst!: () => void, firstEntered!: () => void;
+    const firstBlocked = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const entered = new Promise<void>(resolve => { firstEntered = resolve; });
+    let sendCount = 0;
+    const send = async () => {
+      const sequence = ++sendCount;
+      if (sequence === 1) { firstEntered(); await firstBlocked; }
+      return { message_id: `fixture-provider-receipt-${sequence}` };
+    };
+    const input = { context: { provider: "META" as const, workspaceId: "workspace-a", instagramId: "ig_inflight", accessToken: "fixture", operationId: "message:stable-job:stable-automation:stable-target" },
+      instagramAccountId: "ig_inflight", kind: "direct_plain" as const, targetId: "fixture-same-target", payload: { text: "original campaign message" } };
+    const first = executeCommercialMessage(input, send);
+    let second: { status: string; code?: string; httpStatus?: number }, observed: { sends: number; reservations: number };
+    try {
+      await entered;
+      const edited = { ...input,
+        ...(changed === "payload" ? { payload: { text: "edited campaign message" } } : {}),
+        ...(changed === "kind" ? { kind: "direct_button" as const } : {}),
+        ...(changed === "target" ? { targetId: "fixture-other-target" } : {}),
+        ...(changed === "account" ? { instagramAccountId: "ig_other_account", context: { ...input.context, instagramId: "ig_other_account" } } : {}),
+      };
+      second = await executeCommercialMessage(edited, send)
+        .then(() => ({ status: "fulfilled" }), error => ({ status: "rejected", code: error.code, httpStatus: error.httpStatus }));
+      observed = { sends: sendCount, reservations: await state.db.commercialUsageReservation.count() };
+    } finally { releaseFirst(); await first; }
+    expect(observed!).toEqual({ sends: 1, reservations: 1 });
+    expect(second!).toEqual({ status: "rejected", code: "USAGE_OPERATION_CONFLICT", httpStatus: 409 });
+    expect(await state.db.commercialUsageBucket.findFirstOrThrow()).toMatchObject({ consumed: BigInt("1"), reserved: BigInt("0") });
+  });
+  it("preserves an UNKNOWN automated operation when its campaign payload is edited instead of dispatching again", async () => {
+    const input = await messageFixture("job:unknown:automation:recipient"), send = vi.fn().mockRejectedValue(new Error("fixture lost response"));
+    await expect(executeCommercialMessage(input, send)).rejects.toBeInstanceOf(DeliveryUnconfirmedError);
+    await expect(executeCommercialMessage({ ...input, payload: { text: "edited after unknown outcome" } }, send)).rejects.toMatchObject({ code: "USAGE_OPERATION_CONFLICT", httpStatus: 409 });
+    await expect(executeCommercialMessage(input, send)).rejects.toBeInstanceOf(DeliveryUnconfirmedError);
+    expect(send).toHaveBeenCalledOnce(); expect(await state.db.commercialUsageReservation.count()).toBe(1);
+    expect(await state.db.commercialUsageReservation.findFirstOrThrow()).toMatchObject({ status: "DISPATCHING" });
+    expect(await state.db.commercialUsageBucket.findFirstOrThrow()).toMatchObject({ consumed: BigInt("0"), reserved: BigInt("1") });
+  });
+  it("delivers explicit acknowledgement and reveal purposes once each with one committed unit each", async () => {
+    const input = await messageFixture("job:recheck:automation:recipient"), originalOperationId = input.context.operationId;
+    const send = vi.fn().mockResolvedValueOnce({ message_id: "fixture-ack-receipt" }).mockResolvedValueOnce({ message_id: "fixture-reveal-receipt" });
+    const acknowledgement = { ...input, context: withCommercialMessagePurpose(input.context, "recheck_ack") };
+    const reveal = { ...input, context: withCommercialMessagePurpose(input.context, "reveal"), payload: { text: "fixture revealed message" } };
+    expect(await executeCommercialMessage(acknowledgement, send)).toEqual({ message_id: "fixture-ack-receipt" });
+    expect(await executeCommercialMessage(reveal, send)).toEqual({ message_id: "fixture-reveal-receipt" });
+    expect(await executeCommercialMessage(acknowledgement, send)).toEqual({ message_id: "fixture-ack-receipt" });
+    expect(await executeCommercialMessage(reveal, send)).toEqual({ message_id: "fixture-reveal-receipt" });
+    expect(input.context.operationId).toBe(originalOperationId); expect(send).toHaveBeenCalledTimes(2);
+    const rows = await state.db.commercialUsageReservation.findMany(); expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row).toMatchObject({ status: "COMMITTED", amount: BigInt("1"), intentFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(await state.db.commercialUsageBucket.findFirstOrThrow()).toMatchObject({ consumed: BigInt("2"), reserved: BigInt("0") });
+  });
+  it("charges only the confirmed fallback purpose after a template is authoritatively rejected", async () => {
+    const input = await messageFixture("job:template:automation:recipient"), rejection = new MetaApiError(100, undefined, undefined, "fixture template rejected");
+    const send = vi.fn().mockRejectedValueOnce(rejection).mockResolvedValueOnce({ message_id: "fixture-fallback-receipt" });
+    const template = { ...input, context: withCommercialMessagePurpose(input.context, "recheck_ack"), kind: "direct_button" as const };
+    await expect(executeCommercialMessage(template, send)).rejects.toBe(rejection);
+    expect(await state.db.commercialUsageBucket.findFirstOrThrow()).toMatchObject({ consumed: BigInt("0"), reserved: BigInt("0") });
+    const fallback = { ...input, context: withCommercialMessagePurpose(input.context, "recheck_ack_fallback") };
+    expect(await executeCommercialMessage(fallback, send)).toEqual({ message_id: "fixture-fallback-receipt" });
+    expect(await executeCommercialMessage(fallback, send)).toEqual({ message_id: "fixture-fallback-receipt" });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(await state.db.commercialUsageReservation.count({ where: { status: "REJECTED" } })).toBe(1);
+    expect(await state.db.commercialUsageReservation.count({ where: { status: "COMMITTED" } })).toBe(1);
+    expect(await state.db.commercialUsageBucket.findFirstOrThrow()).toMatchObject({ consumed: BigInt("1"), reserved: BigInt("0") });
+  });
+  it("preserves the same original context reference for commercial purposes when billing is off", async () => {
+    const context = { provider: "META" as const, instagramId: "fixture", accessToken: "fixture" };
+    vi.stubEnv("BILLING_ENABLED", "false");
+    expect(withCommercialMessagePurpose(context, "recheck_ack")).toBe(context);
+    expect(withCommercialMessagePurpose(context, "reveal")).toBe(context);
+    expect(await state.db.commercialUsageReservation.count()).toBe(0);
   });
   it("creates a cold owner-trial bucket safely from two different workspaces at once", async () => {
     const results = await Promise.allSettled([reservation("workspace-a", "DM", "cold-a"), reservation("workspace-b", "DM", "cold-b")]);

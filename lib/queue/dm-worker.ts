@@ -58,6 +58,8 @@ import { hashRecipientId } from "@/lib/tracking/server";
 
 import { ZernioApiError } from "@/lib/zernio/client";
 import { BillingError } from "@/lib/billing/config";
+import { withCommercialMessagePurpose } from "@/lib/billing/commercial-messaging";
+import { isBillingEnabled } from "@/lib/billing/trial";
 
 const BACKOFF_DELAYS = [5 * 60 * 1000, 15 * 60 * 1000, 45 * 60 * 1000];
 
@@ -220,7 +222,7 @@ async function sendRevealDirectMessage({
 }): Promise<void> {
   if (automation.trackedLinks.length === 0) {
     await sendDirectMessage({
-      context: accessToken,
+      context: withCommercialMessagePurpose(accessToken, "primary"),
       instagramAccountId: automation.instagramAccount.instagramId,
       userId: userId,
       message: renderMessageWithTracking({
@@ -247,7 +249,7 @@ async function sendRevealDirectMessage({
 
   try {
     await sendDirectMessageWithLinkButton({
-      context: accessToken,
+      context: withCommercialMessagePurpose(accessToken, "primary"),
       instagramAccountId: automation.instagramAccount.instagramId,
       userId: userId,
       text: bodyText,
@@ -264,7 +266,7 @@ async function sendRevealDirectMessage({
     );
     try {
       await sendDirectMessage({
-        context: accessToken,
+        context: withCommercialMessagePurpose(accessToken, "primary_fallback"),
         instagramAccountId: automation.instagramAccount.instagramId,
         userId: userId,
         message: buildInlineLinkFallback(
@@ -684,7 +686,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           trackedLinks: [],
         });
         await sendPrivateReplyWithButton({
-          context: accessToken,
+          context: withCommercialMessagePurpose(accessToken, "primary"),
           instagramAccountId: automation.instagramAccount.instagramId,
           commentId: commentId,
           text: openingText,
@@ -702,7 +704,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           commenterName,
         });
         await sendPrivateReplyWithButton({
-          context: accessToken,
+          context: withCommercialMessagePurpose(accessToken, "primary"),
           instagramAccountId: automation.instagramAccount.instagramId,
           commentId: commentId,
           text: promptText,
@@ -725,7 +727,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
 
         try {
           await sendPrivateReplyWithLinkButton({
-            context: accessToken,
+            context: withCommercialMessagePurpose(accessToken, "primary"),
             instagramAccountId: automation.instagramAccount.instagramId,
             commentId: commentId,
             text: bodyText,
@@ -751,7 +753,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           );
           try {
             await sendPrivateReply({
-              context: accessToken,
+              context: withCommercialMessagePurpose(accessToken, "primary_fallback"),
               instagramAccountId: automation.instagramAccount.instagramId,
               commentId: commentId,
               message: fallbackMessage,
@@ -769,7 +771,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           recipientToken: hashRecipientId(commenterId),
         });
         await sendPrivateReply({
-          context: accessToken,
+          context: withCommercialMessagePurpose(accessToken, "primary"),
           instagramAccountId: automation.instagramAccount.instagramId,
           commentId: commentId,
           message: dmMessage,
@@ -880,7 +882,7 @@ async function sendFollowRecheckAck({
     );
     if (first !== "OK") return;
     const send = () =>
-      sendDirectMessage({ context, instagramAccountId, userId, message });
+      sendDirectMessage({ context: withCommercialMessagePurpose(context, "recheck_ack"), instagramAccountId, userId, message });
     // Its own id: the tap's id is claimed later by the link or prompt that
     // the re-check sends, and claiming it here would suppress that message.
     // Without an id the Redis NX above is the only dedupe.
@@ -1078,7 +1080,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
           operationId,
           send: () =>
             sendDirectMessageWithButton({
-              context: accessToken,
+              context: withCommercialMessagePurpose(accessToken, "primary"),
               instagramAccountId: automation.instagramAccount.instagramId,
               userId: userId,
               text: promptText,
@@ -1269,7 +1271,7 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
 
   try {
     await sendDirectMessage({
-      context: accessToken,
+      context: withCommercialMessagePurpose(accessToken, "followup"),
       instagramAccountId: automation.instagramAccount.instagramId,
       userId: userId,
       message: renderMessageWithoutLink({
@@ -1457,51 +1459,67 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
     }
 
     try {
-      if (sendFollowPrompt) {
-        const promptText = renderMessageWithoutLink({
-          message:
-            automation.followPromptMessage ||
-            "Almost there! Follow me and tap the button below to grab your link 💛",
-          commenterName,
-        });
-        await sendDirectMessageWithButton({
-          context: accessToken,
-          instagramAccountId: automation.instagramAccount.instagramId,
-          userId: senderId,
-          text: promptText,
-          buttonTitle: automation.followPromptButtonLabel || "I'm following ✅",
-          payload: `followcheck:${automation.id}`,
-        });
-      } else {
-        await sendRevealDirectMessage({
-          accessToken: accessToken,
-          automation: automation,
-          userId: senderId,
-          commenterName: commenterName,
-          context: "message trigger",
-        });
-
-        // The link has been delivered, so the appreciation follow-up applies
-        // here exactly as it does after a button tap. Not scheduled behind the
-        // follow prompt — no link went out yet in that branch.
-        if (automation.followUpEnabled && automation.followUpMessage?.trim()) {
-          await getDMQueue().add(
-            FOLLOWUP_JOB_NAME,
-            {
-              instagramAccountId: automation.instagramAccount.instagramId,
-              accountConnectionId: automation.instagramAccountId,
-              userId: senderId,
-              automationId: automation.id,
-              commenterName,
-            },
-            {
-              delay: Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000,
-              jobId: `followup_${automation.id}_${senderId}`,
-            }
-          );
+      const send = async () => {
+        if (sendFollowPrompt) {
+          const promptText = renderMessageWithoutLink({
+            message:
+              automation.followPromptMessage ||
+              "Almost there! Follow me and tap the button below to grab your link 💛",
+            commenterName,
+          });
+          await sendDirectMessageWithButton({
+            context: withCommercialMessagePurpose(accessToken, "primary"),
+            instagramAccountId: automation.instagramAccount.instagramId,
+            userId: senderId,
+            text: promptText,
+            buttonTitle: automation.followPromptButtonLabel || "I'm following ✅",
+            payload: `followcheck:${automation.id}`,
+          });
+        } else {
+          await sendRevealDirectMessage({
+            accessToken: accessToken,
+            automation: automation,
+            userId: senderId,
+            commenterName: commenterName,
+            context: "message trigger",
+          });
         }
+      };
+      if (isBillingEnabled()) {
+        // One durable claim covers primary AND a proven template fallback.
+        // Queue IDs/configuration may change while a stalled send is in flight;
+        // the inbound message identity cannot create another provider effect.
+        const operationId = createHash("sha256").update(JSON.stringify([
+          "message", automation.workspaceId, automation.instagramAccountId, automation.id, messageId,
+        ])).digest("hex");
+        const delivered = await sendPostbackOnce({ operationId, send });
+        if (!delivered) {
+          await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
+          continue;
+        }
+      } else {
+        await send();
       }
 
+      // The link has been delivered, so the appreciation follow-up applies
+      // here exactly as it does after a button tap. Not scheduled behind the
+      // follow prompt — no link went out yet in that branch.
+      if (!sendFollowPrompt && automation.followUpEnabled && automation.followUpMessage?.trim()) {
+        await getDMQueue().add(
+          FOLLOWUP_JOB_NAME,
+          {
+            instagramAccountId: automation.instagramAccount.instagramId,
+            accountConnectionId: automation.instagramAccountId,
+            userId: senderId,
+            automationId: automation.id,
+            commenterName,
+          },
+          {
+            delay: Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000,
+            jobId: `followup_${automation.id}_${senderId}`,
+          }
+        );
+      }
       await prisma.dmLog.upsert({
         where: {
           automationId_commentId: {

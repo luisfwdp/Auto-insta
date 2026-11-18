@@ -149,6 +149,7 @@ import { hashRecipientId } from "@/lib/tracking/server";
 import { processInstagramWebhook } from "@/lib/queue/process-webhook";
 import { classifySendError } from "@/lib/instagram/delivery-errors";
 import { BillingError } from "@/lib/billing/config";
+import * as commercialMessaging from "@/lib/billing/commercial-messaging";
 
 const usagePeriodStart = new Date("2026-05-01T00:00:00.000Z");
 
@@ -1986,5 +1987,200 @@ describe("commercial denial before a DM send", () => {
     await getProcessor()(createMockJob());
     expect(mockPrisma.dmLog.update).toHaveBeenCalledWith(expect.objectContaining({ data: { publicReplyError: code, publicReplyDeliveryUnconfirmed: false } }));
     expect(mockSendPrivateReply).not.toHaveBeenCalled();
+  });
+});
+
+describe("stable commercial message purposes in worker flows", () => {
+  const messageJob = () => ({ name: "process-message", id: "stable_message_job", attemptsMade: 0,
+    data: { instagramAccountId: "ig_456", messageId: "stable_mid", messageText: "LINK", senderId: "commenter_999" } });
+  const links = [{ slug: "link", label: "Open", destinationUrl: "https://example.com" }];
+  let claims: Set<string>;
+  const gateway = () => vi.mocked(commercialMessaging.executeCommercialMessage);
+  const purposes = () => vi.mocked(commercialMessaging.withCommercialMessagePurpose);
+  beforeEach(() => {
+    vi.stubEnv("BILLING_ENABLED", "true");
+    claims = new Set();
+    mockPrisma.postbackDelivery.create.mockImplementation(async ({ data }: { data: { id: string } }) => {
+      if (claims.has(data.id)) throw { code: "P2002" };
+      claims.add(data.id); return data;
+    });
+    mockPrisma.postbackDelivery.delete.mockImplementation(async ({ where }: { where: { id: string } }) => { claims.delete(where.id); });
+    vi.spyOn(commercialMessaging, "executeCommercialMessage").mockImplementation(async (_input, send) => send());
+    vi.spyOn(commercialMessaging, "withCommercialMessagePurpose");
+    vi.spyOn(commercialMessaging, "assertCommercialPublicReply").mockResolvedValue(undefined);
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); delete process.env.FOLLOW_RECHECK_ACK_MESSAGE; });
+
+  it("uses a stable reveal stage for both plain and link-template variants", async () => {
+    const seen = new Map<string, string>();
+    gateway().mockImplementation(async (input, send) => {
+      const key = input.context.operationId!, fingerprint = JSON.stringify({ kind: input.kind, target: input.targetId, payload: input.payload });
+      const previous = seen.get(key);
+      if (previous && previous !== fingerprint) throw new BillingError("USAGE_OPERATION_CONFLICT");
+      seen.set(key, fingerprint); return send();
+    });
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true }]);
+    const processor = getProcessor();
+    mockSendDirectMessage.mockRejectedValueOnce(new MetaApiError(100, undefined, undefined, "Invalid recipient"));
+    await expect(processor(messageJob())).rejects.toBeInstanceOf(MetaApiError);
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true, trackedLinks: links, dmMessage: "Edited template" }]);
+    await expect(processor(messageJob())).rejects.toMatchObject({ name: "UnrecoverableError", message: "USAGE_OPERATION_CONFLICT" });
+    expect(gateway().mock.calls.map(([input]) => input.context.operationId)).toEqual([
+      "stable_message_job:auto_789:primary", "stable_message_job:auto_789:primary",
+    ]);
+    expect(mockSendDirectMessage).toHaveBeenCalledOnce(); expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+  });
+
+  it("uses a separate reveal fallback only after a proven template rejection", async () => {
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true, trackedLinks: links }]);
+    mockSendDirectMessageWithLinkButton.mockRejectedValueOnce(new MetaApiError(100, undefined, undefined, "Invalid button template"));
+    await getProcessor()(messageJob());
+    expect(gateway().mock.calls.map(([input]) => input.context.operationId)).toEqual([
+      "stable_message_job:auto_789:primary", "stable_message_job:auto_789:primary_fallback",
+    ]);
+    expect(mockSendDirectMessageWithLinkButton).toHaveBeenCalledOnce(); expect(mockSendDirectMessage).toHaveBeenCalledOnce();
+  });
+
+  it.each(["plain", "link", "opening", "follow_prompt"])("scopes the comment's %s message to its logical stage", async variant => {
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation,
+      ...(variant === "link" ? { trackedLinks: links } : {}),
+      ...(variant === "opening" ? { openingDmEnabled: true, openingDmMessage: "Opening", openingDmButtonLabel: "Open" } : {}),
+      ...(variant === "follow_prompt" ? { requireFollow: true } : {}),
+    }]);
+    if (variant === "follow_prompt") mockGetUserFollowStatus.mockResolvedValue(false);
+    await getProcessor()(createMockJob());
+    expect(gateway().mock.calls.map(([input]) => input.context.operationId)).toEqual([
+      `job_001:auto_789:primary`,
+    ]);
+  });
+
+  it("uses opening_fallback from the base context after a proven private template rejection", async () => {
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, trackedLinks: links }]);
+    mockSendPrivateReplyWithLinkButton.mockRejectedValueOnce(new MetaApiError(100, undefined, undefined, "Invalid button template"));
+    await getProcessor()(createMockJob());
+    expect(gateway().mock.calls.map(([input]) => input.context.operationId)).toEqual([
+      "job_001:auto_789:primary", "job_001:auto_789:primary_fallback",
+    ]);
+    expect(mockSendPrivateReplyWithLinkButton).toHaveBeenCalledOnce(); expect(mockSendPrivateReply).toHaveBeenCalledOnce();
+  });
+
+  it.each(["comment", "direct"])("never chooses a fallback purpose for an UNKNOWN %s delivery", async flow => {
+    const uncertain = classifySendError(new MetaApiError(1, undefined, undefined, "Unknown after send"));
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true, trackedLinks: links }]);
+    if (flow === "comment") mockSendPrivateReplyWithLinkButton.mockRejectedValueOnce(uncertain);
+    else mockSendDirectMessageWithLinkButton.mockRejectedValueOnce(uncertain);
+    await expect(getProcessor()(flow === "comment" ? createMockJob() : messageJob())).rejects.toMatchObject({ name: "UnrecoverableError" });
+    expect(purposes().mock.calls.map(([, purpose]) => purpose)).toEqual(["primary"]);
+    expect(mockSendPrivateReply).not.toHaveBeenCalled(); expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("separates acknowledgement from reveal without mutating their shared base operation", async () => {
+    process.env.FOLLOW_RECHECK_ACK_MESSAGE = "Checking your follow";
+    vi.mocked(getRedisConnection).mockReturnValue({ set: vi.fn(async () => "OK") } as never);
+    mockPrisma.automation.findFirst.mockResolvedValue({ ...mockAutomation, requireFollow: true });
+    mockGetUserFollowStatus.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const processor = getProcessor(), tap = createMockPostbackJob({ instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789" });
+    await processor(tap); await processor({ ...tap, data: { ...tap.data, followRecheckAttempt: 1 } });
+    expect(gateway().mock.calls.map(([input]) => input.context.operationId)).toEqual([
+      "postback_job_001:auto_789:recheck_ack", "postback_job_001:auto_789:primary",
+    ]);
+    expect(purposes().mock.calls.map(([input]) => input.operationId)).toEqual([
+      "postback_job_001:auto_789", "postback_job_001:auto_789",
+    ]);
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["postback", "message"])("uses the follow_prompt purpose for the %s follow gate", async flow => {
+    const automation = { ...mockAutomation, dmTriggerEnabled: true, requireFollow: true };
+    mockPrisma.automation.findFirst.mockResolvedValue(automation); mockPrisma.automation.findMany.mockResolvedValue([automation]);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    await getProcessor()(flow === "message" ? messageJob() : createMockPostbackJob({ instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open" }));
+    expect(gateway().mock.calls[0][0].context.operationId).toMatch(/:primary$/);
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledOnce();
+  });
+
+  it("uses a stable followup purpose for the delayed message", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue({ ...mockAutomation, followUpEnabled: true, followUpMessage: "Thanks" });
+    await getProcessor()({ name: "process-followup", id: "followup_job", attemptsMade: 0,
+      data: { automationId: "auto_789", instagramAccountId: "ig_456", userId: "commenter_999" } });
+    expect(gateway().mock.calls[0][0].context.operationId).toBe("followup_job:auto_789:followup");
+  });
+
+  it("preserves the original context reference and operation in OFF mode", async () => {
+    vi.stubEnv("BILLING_ENABLED", "false"); await getProcessor()(createMockJob());
+    expect(purposes()).toHaveBeenCalledOnce();
+    expect(purposes().mock.results[0].value).toBe(purposes().mock.calls[0][0]);
+    expect(gateway().mock.calls[0][0].context.operationId).toBe("job_001:auto_789");
+    expect(mockSendPrivateReply).toHaveBeenCalledOnce();
+  });
+
+  it("keeps one composed claim while a fallback is unknown, despite another worker and a changed follow branch", async () => {
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true, trackedLinks: links }]);
+    mockSendDirectMessageWithLinkButton.mockRejectedValueOnce(new MetaApiError(100, undefined, undefined, "Invalid button template"));
+    let rejectFallback!: (error: unknown) => void, entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    mockSendDirectMessage.mockImplementationOnce(() => { entered(); return new Promise((_resolve, reject) => { rejectFallback = reject; }); });
+    const processor = getProcessor(), first = processor(messageJob()); await started;
+    try {
+      // Different queue attempt and campaign/follow state, same inbound event.
+      mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true, requireFollow: true, dmMessage: "Edited" }]);
+      mockGetUserFollowStatus.mockResolvedValue(false);
+      await processor({ ...messageJob(), id: "stalled_duplicate_job" });
+      expect(mockSendDirectMessageWithButton).not.toHaveBeenCalled();
+      expect(mockSendDirectMessageWithLinkButton).toHaveBeenCalledOnce(); expect(mockSendDirectMessage).toHaveBeenCalledOnce();
+      expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalledExactlyOnceWith("workspace_123", usagePeriodStart);
+      expect(mockPrisma.postbackDelivery.create.mock.calls[0][0].data.id).toBe(mockPrisma.postbackDelivery.create.mock.calls[1][0].data.id);
+    } finally {
+      rejectFallback(classifySendError(new Error("fallback response lost")));
+      await expect(first).rejects.toMatchObject({ name: "UnrecoverableError" });
+    }
+    expect(claims.size).toBe(1); expect(mockPrisma.postbackDelivery.delete).not.toHaveBeenCalled();
+    await processor({ ...messageJob(), id: "another_attempt_after_unknown" });
+    expect(mockSendDirectMessageWithButton).not.toHaveBeenCalled();
+    expect(gateway().mock.calls.map(([input]) => input.context.operationId)).toEqual([
+      "stable_message_job:auto_789:primary", "stable_message_job:auto_789:primary_fallback",
+    ]);
+    expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalledTimes(2);
+    expect(mockReserveDMSlot).not.toHaveBeenCalled();
+  });
+
+  it("retains the composed claim after a confirmed send whose final log write failed", async () => {
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true }]);
+    mockPrisma.dmLog.upsert.mockRejectedValueOnce(new Error("final log write failed"));
+    const processor = getProcessor();
+    await expect(processor(messageJob())).rejects.toThrow("final log write failed");
+    expect(claims.size).toBe(1); expect(mockPrisma.postbackDelivery.delete).not.toHaveBeenCalled();
+    await processor({ ...messageJob(), id: "retry_after_log_failure" });
+    expect(mockSendDirectMessage).toHaveBeenCalledOnce();
+    expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalledExactlyOnceWith("workspace_123", usagePeriodStart);
+  });
+
+  it("releases a composed claim only when the gateway proves no send occurred", async () => {
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true }]);
+    gateway().mockRejectedValueOnce(new BillingError("COMMERCIAL_ACCESS_REQUIRED", 402));
+    const processor = getProcessor();
+    await expect(processor(messageJob())).rejects.toMatchObject({ name: "UnrecoverableError", message: "COMMERCIAL_ACCESS_REQUIRED" });
+    expect(claims.size).toBe(0); expect(mockPrisma.postbackDelivery.delete).toHaveBeenCalledOnce();
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    await processor({ ...messageJob(), id: "human_retry_after_upgrade" });
+    expect(claims.size).toBe(1); expect(mockSendDirectMessage).toHaveBeenCalledOnce();
+  });
+
+  it("adds no composed claim or new context identity to a legacy DM trigger", async () => {
+    vi.stubEnv("BILLING_ENABLED", "false");
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, dmTriggerEnabled: true }]);
+    await getProcessor()(messageJob());
+    expect(mockPrisma.postbackDelivery.create).not.toHaveBeenCalled(); expect(mockPrisma.postbackDelivery.delete).not.toHaveBeenCalled();
+    expect(gateway().mock.calls[0][0].context.operationId).toBe("stable_message_job:auto_789");
+    expect(purposes().mock.results[0].value).toBe(purposes().mock.calls[0][0]);
+    expect(mockSendDirectMessage).toHaveBeenCalledOnce();
+  });
+
+  it("leaves public replies outside DM purpose/quota handling", async () => {
+    const { sendCommentReply } = await import("@/lib/meta/client"); vi.mocked(sendCommentReply).mockResolvedValueOnce({ id: "public" });
+    mockPrisma.automation.findMany.mockResolvedValue([{ ...mockAutomation, publicReplyEnabled: true, publicReplyMessages: ["Reply"] }]);
+    mockPrisma.dmLog.findUnique.mockResolvedValue({ status: "SENT", publicReplySentAt: null, publicReplyDeliveryUnconfirmed: false });
+    await getProcessor()(createMockJob());
+    expect(sendCommentReply).toHaveBeenCalledOnce(); expect(purposes()).not.toHaveBeenCalled(); expect(gateway()).not.toHaveBeenCalled();
   });
 });
