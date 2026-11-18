@@ -1,0 +1,138 @@
+{
+  "success": true,
+  "checksPassed": 55,
+  "checks": [
+    "desktop:onboarding:empty:honest-progress",
+    "desktop:onboarding:accounts:honest-progress",
+    "desktop:onboarding:axe",
+    "desktop:onboarding:no-page-overflow",
+    "desktop:onboarding:campaign:honest-progress",
+    "desktop:onboarding:sent:honest-progress",
+    "desktop:error-hides-progress",
+    "desktop:speed-upload:axe",
+    "desktop:speed-upload:no-page-overflow",
+    "desktop:keyboard-file-picker",
+    "desktop:reduced-motion",
+    "desktop:not-ready-before-confirmation",
+    "desktop:busy-drop-no-duplicate",
+    "desktop:one-reservation-per-file",
+    "desktop:failed-put-not-confirmed",
+    "desktop:confirmation-original-asset",
+    "desktop:invalid-and-101-no-requests",
+    "desktop:valid-drop-completes-once",
+    "desktop:100-uploads-without-duplicates",
+    "desktop:upload-never-publishes",
+    "desktop:current-month-only",
+    "desktop:calendar:axe",
+    "desktop:calendar:no-page-overflow",
+    "desktop:next-month-events",
+    "desktop:reschedule-contract-and-timezone",
+    "desktop:cancel-contract-once",
+    "desktop:calendar-error-never-claims-empty",
+    "mobile:onboarding:empty:honest-progress",
+    "mobile:onboarding:accounts:honest-progress",
+    "mobile:onboarding:axe",
+    "mobile:onboarding:no-page-overflow",
+    "mobile:onboarding:campaign:honest-progress",
+    "mobile:onboarding:sent:honest-progress",
+    "mobile:error-hides-progress",
+    "mobile:speed-upload:axe",
+    "mobile:speed-upload:no-page-overflow",
+    "mobile:keyboard-file-picker",
+    "mobile:reduced-motion",
+    "mobile:not-ready-before-confirmation",
+    "mobile:busy-drop-no-duplicate",
+    "mobile:one-reservation-per-file",
+    "mobile:failed-put-not-confirmed",
+    "mobile:confirmation-original-asset",
+    "mobile:invalid-and-101-no-requests",
+    "mobile:valid-drop-completes-once",
+    "mobile:upload-never-publishes",
+    "mobile:current-month-only",
+    "mobile:calendar:axe",
+    "mobile:calendar:no-page-overflow",
+    "mobile:next-month-events",
+    "mobile:reschedule-contract-and-timezone",
+    "mobile:cancel-contract-once",
+    "mobile:calendar-error-never-claims-empty",
+    "no-external-provider-requests",
+    "no-page-errors"
+  ],
+  "accessibility": [
+    {
+      "screen": "onboarding",
+      "device": "desktop",
+      "violations": []
+    },
+    {
+      "screen": "speed-upload",
+      "device": "desktop",
+      "violations": []
+    },
+    {
+      "screen": "calendar",
+      "device": "desktop",
+      "violations": []
+    },
+    {
+      "screen": "onboarding",
+      "device": "mobile",
+      "violations": []
+    },
+    {
+      "screen": "speed-upload",
+      "device": "mobile",
+      "violations": []
+    },
+    {
+      "screen": "calendar",
+      "device": "mobile",
+      "violations": []
+    }
+  ],
+  "screenshots": [
+    "onboarding-desktop.png",
+    "speed-upload-desktop.png",
+    "upload-partial-failure-desktop.png",
+    "calendar-desktop.png",
+    "onboarding-mobile.png",
+    "speed-upload-mobile.png",
+    "upload-partial-failure-mobile.png",
+    "calendar-mobile.png"
+  ],
+  "viewports": {
+    "desktop": [
+      1440,
+      1080
+    ],
+    "mobile": [
+      390,
+      844
+    ]
+  },
+  "timezone": "America/Sao_Paulo",
+  "motion": "reduce",
+  "pageErrors": [],
+  "externalIO": "All outside-loopback requests aborted. No provider request attempted.",
+  "backend": "isolated Next.js fixture; API and signed-storage responses mocked; no production IO or real publication",
+  "sourceSha256": {
+    "components/publishing/media-uploader.tsx": "6934c578fa58f046258dd1ade8c1af0c42693a00eb5b69f0528b3d9e824685a4",
+    "components/publishing/programming-workspace.tsx": "ffd30b53d6773a2b6080a029dbcdf4fcbc6c2280729ec2d623c3a87250d4f315",
+    "components/publishing/speed-post-workspace.tsx": "c975145df84baf1d8d4513811d4dad34c035b0d3d5e6dd3425db5962a4e676aa",
+    "components/criaping-onboarding.tsx": "bce8a7b6f5c4682c3de9d6b6e44894c19e6ebb2a288d87b2ce2123a238b4996d",
+    "components/campaigns.module.css": "87f3dbf57d13a6aab914aa8c58701541ca25e0104b93fda0ee0f02e88c20552b",
+    "components/publishing/publishing.module.css": "b8a3e80cfaa94e4bbb1af4e5ef395d9851c0a1185b4dcdb9b7d8365fd508da77",
+    "lib/i18n/pt-BR.json": "6ba2a2208ab63e4e00678e99957b1f70b13e46376dd1a59845fba5abfd91ef1a",
+    "lib/i18n/zh-TW.json": "0d818d74d1862bf0f470341e1e58d8a60fd9923efbb18c05aaa98971ba98a526"
+  },
+  "composedMain": "557c60c0c4e10d13d66ebf888d80ae3e38107438",
+  "nativeTests": {
+    "passed": 1945,
+    "suites": 120,
+    "skipped": 0
+  },
+  "externalRequestsBlocked": 16,
+  "externalBlockedHosts": [
+    "va.vercel-scripts.com"
+  ]
+}

@@ -37,6 +37,20 @@
 .phone { --color-background:var(--cp-black); --color-surface:var(--cp-charcoal); --color-foreground:var(--cp-text); --color-muted:var(--cp-text-muted); --color-accent:var(--cp-neon); }
 .phone [class~="bg-accent"],.phone [class~="bg-accent"] * { color:var(--cp-black); }
 .phone [class~="text-zinc-500"] { color:var(--cp-text-muted); }
+.setup { display:grid; gap:1rem; padding:1.25rem; border:1px solid var(--cp-control-border); border-radius:var(--cp-radius-md); background:var(--cp-surface); }
+.setupSteps { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; list-style:none; }
+.setupSteps li { display:flex; gap:.75rem; align-items:center; min-width:0; }
+.setupSteps strong { display:block; font-size:.875rem; overflow-wrap:anywhere; }
+.setupSteps small { display:block; color:var(--cp-text-muted); margin-top:.2rem; }
+.stepNumber { display:grid; place-items:center; flex-shrink:0; width:2.5rem; height:2.5rem; border:1px solid var(--cp-control-border); border-radius:50%; color:var(--cp-text-muted); }
+.setupSteps [aria-current="step"] .stepNumber { border-color:var(--cp-neon); color:var(--cp-neon); }
+.setupSteps [data-complete="true"] .stepNumber { background:var(--cp-neon); color:var(--cp-black); border-color:var(--cp-neon); }
+.setupProgress { width:100%; height:.4rem; accent-color:var(--cp-neon); background:var(--cp-background); border:0; border-radius:1rem; overflow:hidden; }
+.setupProgress::-webkit-progress-bar { background:var(--cp-background); }
+.setupProgress::-webkit-progress-value { background:var(--cp-neon); transition:width 180ms ease; }
+.setupProgress::-moz-progress-bar { background:var(--cp-neon); }
+@media(max-width:640px) { .setupSteps { grid-template-columns:1fr; } }
+@media(prefers-reduced-motion:reduce) { .setupProgress::-webkit-progress-value { transition:none; } }
 @media(max-width:900px) { .filters,.columns { grid-template-columns:minmax(0,1fr); } }
 .wizard [hidden] { display:none !important; }
 /* Existing Tailwind inline tokens compile to literals; scoped overrides are
