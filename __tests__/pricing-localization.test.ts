@@ -33,6 +33,11 @@ describe("Portuguese-first pricing", () => {
     const html = await pricingHtml(enabled, selling);
     expect(html).toContain(createI18n("pt-BR").t("New subscriptions are temporarily unavailable."));
     for (const id of BILLING_PLAN_IDS) expect(html).not.toContain(new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(BILLING_PLANS[id].amountCents / 100));
+    if (!enabled) {
+      expect(html).not.toContain(createI18n("pt-BR").t("3 days free. No card required."));
+      expect(html).not.toContain(createI18n("pt-BR").t("Your trial starts when you activate it. No payment is required to register."));
+      expect(html).not.toContain('href="/login?mode=signup"');
+    }
   });
   it("offers Portuguese and English in the visible language control", () => {
     expect(switcher).toContain('value="pt-BR"'); expect(switcher).toContain('value="en"'); expect(switcher).not.toContain('value="zh-TW"');

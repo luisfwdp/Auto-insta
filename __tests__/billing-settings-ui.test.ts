@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { BillingSettings, TrialOnboarding } from "@/components/billing-settings";
+import { BillingSettings, TrialOnboarding, BillingWorkspaceChangedNotice } from "@/components/billing-settings";
 
 vi.mock("@/lib/i18n/provider", () => ({ useI18n: () => ({ locale: "en", t: (key: string, values?: Record<string, string | number>) => key.replace(/\{(\w+)\}/g, (all, name) => String(values?.[name] ?? all)) }) }));
 
@@ -20,9 +20,16 @@ describe("billing shell privacy and onboarding semantics", () => {
     expect(html).not.toContain("7900"); expect(html).not.toContain('type="submit"');
   });
   it("introduces the three-day card-free trial before offering any connection or payment", () => {
-    const html = renderToStaticMarkup(createElement(TrialOnboarding, { role: "OWNER" }));
+    const html = renderToStaticMarkup(createElement(TrialOnboarding, { role: "OWNER", workspaceId: "workspace-a" }));
     expect(html).toContain("3 days free. No card required."); expect(html).toContain("Loading billing details");
     expect(html).not.toContain('type="password"'); expect(html).not.toContain("Create secure Asaas checkout");
     expect(html).not.toContain('href="/settings"');
+  });
+  it.each(["/billing", "/onboarding"] as const)("shows only a hard reload action after the workspace pin fails: %s", href => {
+    const html = renderToStaticMarkup(createElement(BillingWorkspaceChangedNotice, { href }));
+    expect(html).toContain("Workspace changed. Reload this page before continuing.");
+    expect(html).toContain(`href="${href}"`); expect(html).toContain('role="alert"');
+    expect(html).not.toContain("<button"); expect(html).not.toContain("<form"); expect(html).not.toContain("Create secure Asaas checkout");
+    expect(html).not.toContain("Confirm renewal cancellation"); expect(html).not.toContain("Start your 3-day trial");
   });
 });

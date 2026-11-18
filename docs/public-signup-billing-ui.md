@@ -23,16 +23,22 @@ integrados nos PRs #97–#99. Não cria endpoints, provedores, planos ou migraç
   em sessionStorage do workspace. Sem armazenamento não há POST. Resultado
   ambíguo bloqueia nova compra; buscas conhecidas retomam apenas GET, com polling
   limitado. Nenhum redirecionamento ou retorno do Asaas concede acesso.
-- Limitação conhecida do contrato: resultado ambíguo sem ID de checkout exige
-  revisão operacional; esta interface não inventa endpoint de recuperação nem
-  repete automaticamente uma contratação. As garantias entre abas/dispositivos
-  são do backend, não do armazenamento do navegador.
+- Nesta UI, checkout ambíguo sem ID exige revisão operacional: o estado local não
+  guarda a oferta completa para retomá-lo. O POST do backend é idempotente por
+  requestId, mas esta interface não repete um checkout incerto. Cancelamento
+  incerto pode ser retomado por ação explícita, com o mesmo requestId original;
+  uma falha dessa retomada não apaga a intenção anterior. As garantias entre
+  abas/dispositivos são do backend, não do armazenamento do navegador.
 - Somente URLs HTTPS de checkout dos hosts exatos aprovados do Asaas são aceitas.
   Cookies, dados de cartão e credenciais do provedor não são enviados pela UI.
 - Cancelamento exige confirmação do proprietário e preserva o período pago
   registrado; o processamento financeiro permanece no backend/worker.
 - A seleção de workspace usa somente memberships retornadas pelo servidor e
   recarrega a página inteira, descartando estado cliente do tenant anterior.
+- Leituras e ações da UI enviam x-cria-workspace-id como precondição. O backend
+  compara com o contexto autenticado; divergência ou PIN ausente impede efeitos
+  financeiros. Uma aba antiga bloqueia ações e exige recarga, inclusive quando
+  a seleção mudou em outro dispositivo. O header nunca escolhe o tenant.
 - `/pricing` usa o catálogo versionado do servidor e oculta ofertas quando novas
   vendas estão pausadas. A home comercial só aparece com BILLING_ENABLED=true.
   O fluxo self-hosted existente continua disponível quando a cobrança está OFF.
@@ -45,8 +51,10 @@ verificado, teste real de entrega do link, credenciais e webhook Asaas separados
 por ambiente, checkout/pagamento/cancelamento Sandbox e saúde do worker.
 Nenhum teste local ou mock comprova cobrança real, publicação Meta ou entrega DM.
 
-O RLS #101 é uma dependência operacional para habilitar trial/cobrança em produção;
-a UI permanece compatível com BILLING_ENABLED=false antes dessa migração.
+O RLS #101 é uma dependência operacional para habilitar trial/cobrança em produção.
+O contrato de precondição #105 deve ser integrado antes deste PR de interface.
+A UI permanece compatível com BILLING_ENABLED=false antes da migração e não
+anuncia trial quando a flag está OFF.
 Para pausar novas vendas, use BILLING_SALES_ENABLED=false sem desligar enforcement,
 acesso pago ou recuperação financeira. Não remova políticas com operações em voo.
 Rollback da UI é revert do commit e novo deploy da versão aprovada, preservando

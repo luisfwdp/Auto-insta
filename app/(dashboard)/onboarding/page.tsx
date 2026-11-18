@@ -16,7 +16,7 @@ export default async function OnboardingPage({ searchParams }: { searchParams?: 
     const context = await getCurrentWorkspaceContext();
     if (!context) redirect("/login");
     const access = await prisma.$transaction(tx => loadCommercialEntitlement(tx, context.workspaceId, new Date()));
-    if (!access || access.status === "denied") return <TrialOnboarding role={context.role} onSuccessHref={destination} />;
+    if (!access || access.status === "denied") return <TrialOnboarding role={context.role} workspaceId={context.workspaceId} onSuccessHref={destination} />;
     if (template) redirect(destination);
   }
   if (!isFeatureEnabled("newDesign")) redirect("/dashboard");

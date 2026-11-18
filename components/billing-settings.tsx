@@ -5,7 +5,7 @@ import { useI18n } from "@/lib/i18n/provider";
 import { Button, Card } from "@/components/ui/primitives";
 import {
   billingRequest, billingStatusSchema, trialStatusSchema, billingPlansSchema, billingUsageSchema, checkoutSchema, cancellationSchema,
-  savedBillingSchema, createBrowserCheckout, createBrowserCancellation, pollBillingOperation, checkoutPending, checkoutClosed,
+  savedBillingSchema, createBrowserCheckout, createBrowserCancellation, resumeBrowserCancellation, isWorkspaceContextError, pollBillingOperation, checkoutPending, checkoutClosed,
   cancellationPending, safeAsaasCheckoutUrl, BillingBrowserError,
   type BillingRole, type BillingStatus, type BillingPlan, type BillingUsage, type Checkout, type Cancellation,
   type SavedBillingRequests, type PendingBillingRequest,
@@ -22,6 +22,14 @@ export function BillingSettings(props: { role: BillingRole; workspaceId: string 
   return <BillingWorkspace key={props.workspaceId} {...props} />;
 }
 
+export function BillingWorkspaceChangedNotice({ href }: { href: "/billing" | "/onboarding" }) {
+  const { t } = useI18n();
+  return <Card className="space-y-3 border border-[#494949] bg-[#1A1A1A] p-5 text-[#F5F5F5]">
+    <p role="alert">{t("Workspace changed. Reload this page before continuing.")}</p>
+    <a className="text-[#C7FF2F] underline" href={href}>{t("Reload this page")}</a>
+  </Card>;
+}
+
 function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceId: string }) {
   const { t, locale } = useI18n();
   const [status, setStatus] = useState<BillingStatus | null>(null), [plans, setPlans] = useState<BillingPlan[]>([]);
@@ -29,11 +37,23 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
   const [checkout, setCheckout] = useState<Checkout | null>(null), [cancellation, setCancellation] = useState<Cancellation | null>(null);
   const [consent, setConsent] = useState<string | null>(null), [cancelConsent, setCancelConsent] = useState(false);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(false), [forbidden, setForbidden] = useState(false), [storageReady, setStorageReady] = useState(false);
+  const [workspaceChanged, setWorkspaceChanged] = useState(false), [feedback, setFeedback] = useState<"generic" | "checkout_busy" | "configuration">("generic");
   const state = useRef(emptyRequests()), active = useRef<AbortController | null>(null), locked = useRef(false);
   const owner = role === "OWNER" && !forbidden, storageKey = `criaping:billing:${workspaceId}`;
   const alive = () => active.current !== null && !active.current.signal.aborted;
   const currency = (amount: number) => new Intl.NumberFormat(locale, { style: "currency", currency: "BRL" }).format(amount / 100);
   const when = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+
+  function reportFailure(failure: unknown) {
+    if (isWorkspaceContextError(failure)) {
+      setWorkspaceChanged(true); setConsent(null); setCancelConsent(false); active.current?.abort(); return;
+    }
+    setError(true);
+    if (failure instanceof BillingBrowserError) {
+      if (failure.status === 403 && failure.code !== "BILLING_SUSPENDED") setForbidden(true);
+      setFeedback(failure.code === "CHECKOUT_IN_PROGRESS" ? "checkout_busy" : failure.code === "BILLING_CONFIGURATION" ? "configuration" : "generic");
+    }
+  }
 
   function persist(kind: "checkout" | "cancellation", value: PendingBillingRequest | null) {
     const next = { ...state.current, [kind]: value };
@@ -42,13 +62,14 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
     if (alive()) setRequests(next);
   }
   async function refresh(signal = active.current?.signal) {
-    const result = await billingRequest("/api/billing/status", billingStatusSchema, { signal });
+    const result = await billingRequest("/api/billing/status", billingStatusSchema, { workspaceId, signal });
     if (!signal?.aborted) setStatus(result);
     if (result.enabled) {
       const values = await Promise.allSettled([
-        billingRequest("/api/billing/plans", billingPlansSchema, { signal }),
-        billingRequest("/api/billing/usage", billingUsageSchema, { signal }),
+        billingRequest("/api/billing/plans", billingPlansSchema, { workspaceId, signal }),
+        billingRequest("/api/billing/usage", billingUsageSchema, { workspaceId, signal }),
       ]);
+      for (const value of values) if (value.status === "rejected" && isWorkspaceContextError(value.reason)) throw value.reason;
       if (!signal?.aborted) {
         setPlans(values[0].status === "fulfilled" ? values[0].value.plans : []);
         setUsage(values[1].status === "fulfilled" ? values[1].value : null);
@@ -60,17 +81,17 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
     if (!reference.id) return;
     if (kind === "checkout") await pollBillingOperation("checkout", reference.id, checkoutSchema, value => {
       if (signal?.aborted) return; setCheckout(value); persist("checkout", checkoutClosed(value) ? null : reference);
-    }, { signal });
+    }, { workspaceId, signal });
     else await pollBillingOperation("cancel", reference.id, cancellationSchema, value => {
       if (signal?.aborted) return; setCancellation(value); persist("cancellation", value.status === "PROCESSED" ? null : reference);
-    }, { signal });
+    }, { workspaceId, signal });
     await refresh(signal);
   }
   async function run(operation: () => Promise<unknown>) {
-    if (locked.current) return;
+    if (locked.current || workspaceChanged || !alive()) return;
     locked.current = true; setBusy(true); setError(false);
     try { await operation(); }
-    catch (failure) { if (alive()) { setError(true); if (failure instanceof BillingBrowserError && failure.status === 403 && failure.code !== "BILLING_SUSPENDED") setForbidden(true); } }
+    catch (failure) { if (alive()) reportFailure(failure); }
     finally { locked.current = false; if (alive()) setBusy(false); }
   }
   useEffect(() => {
@@ -87,7 +108,7 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
           if (overview.enabled && saved.data.checkout?.id) await track("checkout", saved.data.checkout, controller.signal);
           if (saved.data.cancellation?.id) await track("cancellation", saved.data.cancellation, controller.signal);
         }
-      } catch { if (!controller.signal.aborted) setError(true); }
+      } catch (failure) { if (!controller.signal.aborted) reportFailure(failure); }
       finally { if (!controller.signal.aborted) setLoading(false); }
     })();
     return () => controller.abort();
@@ -96,6 +117,7 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, role]);
 
+  if (workspaceChanged) return <BillingWorkspaceChangedNotice href="/billing" />;
   const checkoutLink = checkout?.status === "OPEN" ? safeAsaasCheckoutUrl(checkout.url) : null;
   const alreadyPaid = status?.hasAccess === true && status.status !== "TRIALING";
   const buyEligible = status?.status !== undefined && ["TRIALING", "EXPIRED", "CANCELED"].includes(status.status) && !status.canCancelRenewal;
@@ -104,7 +126,7 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
   return <Card aria-busy={busy || loading} className="space-y-6 border border-[#494949] bg-[#1A1A1A] p-5 text-[#F5F5F5]">
     <div><h2 className="text-xl font-semibold">{t("Billing and subscription")}</h2><p className="mt-1 text-sm text-[#B5B5B5]">{t("Manage your trial, subscription and renewal.")}</p></div>
     {loading ? <p role="status" aria-busy="true">{t("Loading billing details")}</p> : null}
-    {error ? <p role="alert" className="text-sm text-red-300">{t(status ? "Billing action could not be completed. Refresh before trying again." : "Billing details are unavailable. Try again.")}</p> : null}
+    {error ? <p role="alert" className="text-sm text-red-300">{t(feedback === "checkout_busy" ? "Another checkout is already in progress. Review the existing checkout before starting a new purchase." : feedback === "configuration" ? "Billing is temporarily unavailable. No new checkout was created." : status ? "Billing action could not be completed. Refresh before trying again." : "Billing details are unavailable. Try again.")}</p> : null}
     {!owner ? <p className="text-sm text-[#B5B5B5]">{t("Only the workspace owner can start a trial or change billing.")}</p> : null}
     {status?.enabled === false ? <p>{t("Billing is not enabled for this workspace.")}</p> : null}
     {status?.status ? <div className="space-y-1 text-sm">
@@ -114,7 +136,7 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
       {status.paidThrough ? <p>{t("Paid period through {date}", { date: when(status.paidThrough) })}</p> : null}
     </div> : null}
     {trialAvailable ? <div className="space-y-2"><p>{t("3 days free. No card required.")}</p><Button disabled={busy || loading} onClick={() => void run(async () => {
-      await billingRequest("/api/billing/trial", trialStatusSchema, { method: "POST", signal: active.current?.signal }); await refresh();
+      await billingRequest("/api/billing/trial", trialStatusSchema, { workspaceId, method: "POST", signal: active.current?.signal }); await refresh();
     })}>{t("Start your 3-day trial")}</Button></div> : null}
 
     {status?.enabled ? <section className="space-y-3" aria-label={t("Usage this period")}>
@@ -142,7 +164,7 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
         <ul className="space-y-1 text-sm text-[#B5B5B5]"><li>{t("Instagram accounts: {count}", { count: plan.quotas.accounts })}</li><li>{t("Team members: {count}", { count: plan.quotas.members })}</li><li>{t("DMs per period: {count}", { count: plan.quotas.dms.toLocaleString(locale) })}</li><li>{t("Publications per period: {count}", { count: plan.quotas.publications.toLocaleString(locale) })}</li><li>{t("Storage included: {size}", { size: `${plan.quotas.storageBytes / 1_000_000_000} GB` })}</li></ul>
         {owner ? <><label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={consent === `${plan.id}:${plan.amountCents}`} disabled={!canBuy} onChange={event => setConsent(event.target.checked ? `${plan.id}:${plan.amountCents}` : null)} /><span>{t("I authorize a subscription charge now for {price} per month. This is optional during my free trial.", { price: currency(plan.amountCents) })}</span></label>
           <Button disabled={!canBuy || consent !== `${plan.id}:${plan.amountCents}`} onClick={() => void run(async () => {
-            const value = await createBrowserCheckout({ role, plan, consent: consent === `${plan.id}:${plan.amountCents}`, requestId: crypto.randomUUID(), previous: state.current.checkout,
+            const value = await createBrowserCheckout({ workspaceId, role, plan, consent: consent === `${plan.id}:${plan.amountCents}`, requestId: crypto.randomUUID(), previous: state.current.checkout,
               persist: pending => persist("checkout", pending), signal: active.current?.signal });
             if (!alive()) return; setCheckout(value); setConsent(null);
             if (checkoutPending(value)) await track("checkout", state.current.checkout!); else await refresh();
@@ -155,9 +177,18 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
       {requests.cancellation || status?.cancellationPending ? <>
         <p role="status">{t(cancellation?.status === "DEAD" || (requests.cancellation && !requests.cancellation.id) ? "Cancellation requires operational review." : "Renewal cancellation is being processed.")}</p>
         {requests.cancellation?.id ? <Button variant="secondary" disabled={busy || loading} onClick={() => void run(() => track("cancellation", requests.cancellation!))}>{t("Resume cancellation lookup")}</Button> : null}
+        {requests.cancellation && !requests.cancellation.id ? <>
+          <p className="text-sm">{t("Retry the same cancellation request. No new request will be created.")}</p>
+          <Button variant="secondary" disabled={busy || loading || !storageReady} onClick={() => void run(async () => {
+            const value = await resumeBrowserCancellation({ workspaceId, role, pending: state.current.cancellation!,
+              persist: pending => persist("cancellation", pending), signal: active.current?.signal });
+            if (!alive()) return; setCancellation(value);
+            if (cancellationPending(value)) await track("cancellation", state.current.cancellation!); else await refresh();
+          })}>{t("Retry cancellation request")}</Button>
+        </> : null}
       </> : <><label className="flex gap-2 text-sm"><input type="checkbox" checked={cancelConsent} onChange={event => setCancelConsent(event.target.checked)} disabled={busy || loading} />{t("I want to stop automatic renewal after the current paid period.")}</label>
         <Button variant="danger" disabled={busy || loading || !storageReady || !cancelConsent} onClick={() => void run(async () => {
-          const value = await createBrowserCancellation({ role, consent: cancelConsent, requestId: crypto.randomUUID(), previous: state.current.cancellation,
+          const value = await createBrowserCancellation({ workspaceId, role, consent: cancelConsent, requestId: crypto.randomUUID(), previous: state.current.cancellation,
             persist: pending => persist("cancellation", pending), signal: active.current?.signal });
           if (!alive()) return; setCancellation(value); setCancelConsent(false);
           if (cancellationPending(value)) await track("cancellation", state.current.cancellation!); else await refresh();
@@ -168,23 +199,36 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
   </Card>;
 }
 
-export function TrialOnboarding({ role, onSuccessHref = "/settings" }: { role: BillingRole; onSuccessHref?: string }) {
+export function TrialOnboarding(props: { role: BillingRole; workspaceId: string; onSuccessHref?: string }) {
+  return <TrialWorkspace key={props.workspaceId} {...props} />;
+}
+
+function TrialWorkspace({ role, workspaceId, onSuccessHref = "/settings" }: { role: BillingRole; workspaceId: string; onSuccessHref?: string }) {
   const { t } = useI18n(); const [status, setStatus] = useState<BillingStatus | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState(false);
-  const lock = useRef(false);
-  useEffect(() => { const controller = new AbortController(); void billingRequest("/api/billing/status", billingStatusSchema, { signal: controller.signal })
-    .then(value => { if (!controller.signal.aborted) setStatus(value); }).catch(() => { if (!controller.signal.aborted) setError(true); });
-    return () => controller.abort(); }, []);
+  const [workspaceChanged, setWorkspaceChanged] = useState(false), lock = useRef(false), active = useRef<AbortController | null>(null);
+  function reportFailure(failure: unknown) {
+    if (isWorkspaceContextError(failure)) { setWorkspaceChanged(true); active.current?.abort(); }
+    else setError(true);
+  }
+  useEffect(() => { const controller = new AbortController(); active.current = controller;
+    void billingRequest("/api/billing/status", billingStatusSchema, { workspaceId, signal: controller.signal })
+      .then(value => { if (!controller.signal.aborted) setStatus(value); })
+      .catch(failure => { if (!controller.signal.aborted) reportFailure(failure); });
+    return () => controller.abort(); }, [workspaceId]);
+  if (workspaceChanged) return <BillingWorkspaceChangedNotice href="/onboarding" />;
   const href = /^\/(?!\/)[^\\\x00-\x20]*$/.test(onSuccessHref) ? onSuccessHref : "/settings";
   return <Card aria-busy={busy || (!status && !error)} className="space-y-3 border border-[#494949] bg-[#1A1A1A] p-5 text-[#F5F5F5]">
     <h2 className="text-xl font-semibold">{t("3 days free. No card required.")}</h2>
     {!status && !error ? <p role="status">{t("Loading billing details")}</p> : null}
     {error ? <p role="alert">{t("Trial could not be started. No card was requested.")}</p> : null}
     {status?.hasAccess ? <><p>{t("Your trial is ready. Connect Instagram to continue.")}</p><a className="inline-block rounded bg-[#C7FF2F] px-4 py-2 font-semibold text-[#0B0B0B]" href={href}>{t("Connect Instagram")}</a></> : status?.enabled && status.status === "NOT_STARTED" && role === "OWNER" ? <Button disabled={busy} onClick={() => {
-      if (lock.current) return; lock.current = true; setBusy(true); setError(false);
+      if (lock.current || active.current?.signal.aborted) return; lock.current = true; setBusy(true); setError(false);
       void (async () => { try {
-        await billingRequest("/api/billing/trial", trialStatusSchema, { method: "POST" });
-        setStatus(await billingRequest("/api/billing/status", billingStatusSchema));
-      } catch { setError(true); } finally { lock.current = false; setBusy(false); } })();
+        await billingRequest("/api/billing/trial", trialStatusSchema, { workspaceId, method: "POST", signal: active.current?.signal });
+        const value = await billingRequest("/api/billing/status", billingStatusSchema, { workspaceId, signal: active.current?.signal });
+        if (!active.current?.signal.aborted) setStatus(value);
+      } catch (failure) { if (!active.current?.signal.aborted) reportFailure(failure); }
+      finally { lock.current = false; if (!active.current?.signal.aborted) setBusy(false); } })();
     }}>{t("Start your 3-day trial")}</Button> : status?.enabled === false ? <p>{t("Billing is not enabled for this workspace.")}</p> : status ? <><p>{t(role !== "OWNER" ? "Only the workspace owner can start a trial or change billing." : "Your trial has ended. Choose a subscription to continue.")}</p><a href="/billing" className="text-[#C7FF2F] underline">{t("See subscription plans")}</a></> : null}
   </Card>;
 }

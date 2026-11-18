@@ -765,5 +765,11 @@
   "Workspace access changed. Refresh the list.": "工作區存取權已變更，請查看更新後的清單。",
   "Choose a workspace": "選擇工作區",
   "Pricing - CRIA PING": "方案價格 — CRIA PING",
-  "Subscription plans and a 3-day card-free trial.": "訂閱方案與免信用卡的 3 天免費試用。"
+  "Subscription plans and a 3-day card-free trial.": "訂閱方案與免信用卡的 3 天免費試用。",
+  "Workspace changed. Reload this page before continuing.": "工作區已變更，請重新載入此頁後再繼續。",
+  "Reload this page": "重新載入此頁",
+  "Another checkout is already in progress. Review the existing checkout before starting a new purchase.": "已有結帳正在處理，請先查看現有請求，勿開始另一筆購買。",
+  "Billing is temporarily unavailable. No new checkout was created.": "訂閱目前暫時無法使用，未建立新的結帳。",
+  "Retry the same cancellation request. No new request will be created.": "重新提交同一個取消請求，不會建立新請求。",
+  "Retry cancellation request": "重新提交取消請求"
 }

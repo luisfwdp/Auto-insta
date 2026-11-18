@@ -51,8 +51,13 @@ export type SavedBillingRequests = z.infer<typeof savedBillingSchema>;
 export class BillingBrowserError extends Error {
   constructor(readonly code: string, readonly status = 503) { super("Billing action unavailable"); }
 }
-type RequestOptions = { signal?: AbortSignal; fetcher?: typeof fetch; method?: "GET" | "POST"; body?: unknown };
-export async function billingRequest<T>(path: string, schema: z.ZodType<T>, options: RequestOptions = {}): Promise<T> {
+const workspacePin = z.string().regex(/^[A-Za-z0-9_-]{1,200}$/);
+export function isWorkspaceContextError(error: unknown): boolean {
+  return error instanceof BillingBrowserError && ["WORKSPACE_CHANGED", "WORKSPACE_CONTEXT_REQUIRED"].includes(error.code);
+}
+type RequestOptions = { workspaceId: string; signal?: AbortSignal; fetcher?: typeof fetch; method?: "GET" | "POST"; body?: unknown };
+export async function billingRequest<T>(path: string, schema: z.ZodType<T>, options: RequestOptions): Promise<T> {
+  if (!workspacePin.safeParse(options.workspaceId).success) throw new BillingBrowserError("WORKSPACE_CONTEXT_REQUIRED", 400);
   if (!/^\/api\/billing\/(status|plans|usage|trial|checkout|cancel)(\?id=[a-fA-F0-9-]{36})?$/.test(path)) throw new BillingBrowserError("INVALID_REQUEST", 400);
   const controller = new AbortController(), abort = () => controller.abort();
   if (options.signal?.aborted) controller.abort();
@@ -60,7 +65,8 @@ export async function billingRequest<T>(path: string, schema: z.ZodType<T>, opti
   const timeout = setTimeout(abort, 35_000);
   try {
     const response = await (options.fetcher ?? fetch)(path, { method: options.method ?? "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
-      signal: controller.signal, ...(options.body !== undefined ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(options.body) } : {}) });
+      signal: controller.signal, headers: { "x-cria-workspace-id": options.workspaceId, ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}) },
+      ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}) });
     const body: unknown = await response.json();
     if (!response.ok) {
       const error = z.object({ error: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/) }).safeParse(body);
@@ -74,10 +80,11 @@ export async function billingRequest<T>(path: string, schema: z.ZodType<T>, opti
 export function checkoutPending(value: Checkout) { return value.status === "CREATING" || value.status === "UNKNOWN"; }
 export function checkoutClosed(value: Checkout) { return ["COMPLETED", "CANCELED", "EXPIRED", "REJECTED"].includes(value.status); }
 export function cancellationPending(value: Cancellation) { return ["PENDING", "PROCESSING", "RETRY"].includes(value.status); }
-type MutationOptions = { role: BillingRole; requestId: string; previous: PendingBillingRequest | null; consent: boolean;
+type MutationOptions = { workspaceId: string; role: BillingRole; requestId: string; previous: PendingBillingRequest | null; consent: boolean;
   persist: (pending: PendingBillingRequest | null) => void; signal?: AbortSignal; fetcher?: typeof fetch };
 function mutationIntent(input: MutationOptions) {
   if (input.role !== "OWNER") throw new BillingBrowserError("FORBIDDEN", 403);
+  if (!workspacePin.safeParse(input.workspaceId).success) throw new BillingBrowserError("WORKSPACE_CONTEXT_REQUIRED", 400);
   if (!input.consent || !z.uuid().safeParse(input.requestId).success || input.previous) throw new BillingBrowserError("REQUEST_BLOCKED", 409);
   input.persist({ requestId: input.requestId }); // Durable browser intent BEFORE the only POST.
 }
@@ -89,19 +96,39 @@ export async function createBrowserCheckout(input: MutationOptions & { plan: Bil
     input.persist(checkoutClosed(value) ? null : { requestId: input.requestId, id: value.id }); return value;
   } catch (error) {
     // Only explicit backend no-effect outcomes permit a NEW user action. Never
-    // clear ambiguous POST/network results or an existing checkout in progress.
+    // clear ambiguous POST/network results. CHECKOUT_IN_PROGRESS is a known
+    // no-effect conflict, not an unknown charge created by this request.
     if (error instanceof BillingBrowserError && ["FORBIDDEN", "UNAUTHORIZED", "INVALID_REQUEST", "OFFER_CHANGED", "TRIAL_NOT_STARTED",
-      "ALREADY_PAID", "SUBSCRIPTION_EXISTS", "FINANCIAL_SYNC_BUSY", "RATE_LIMITED", "PROVIDER_REJECTED", "BILLING_SUSPENDED", "BILLING_DISABLED", "BILLING_SALES_DISABLED"].includes(error.code)) input.persist(null);
+      "ALREADY_PAID", "SUBSCRIPTION_EXISTS", "FINANCIAL_SYNC_BUSY", "RATE_LIMITED", "PROVIDER_REJECTED", "BILLING_SUSPENDED", "BILLING_DISABLED", "BILLING_SALES_DISABLED",
+      "CHECKOUT_IN_PROGRESS", "BILLING_CONFIGURATION", "WORKSPACE_CONTEXT_REQUIRED", "WORKSPACE_CHANGED"].includes(error.code)) input.persist(null);
     throw error;
   }
 }
 export async function createBrowserCancellation(input: MutationOptions) {
   mutationIntent(input);
+  try { return await postCancellation(input); }
+  catch (error) {
+    if (error instanceof BillingBrowserError && ["FORBIDDEN", "UNAUTHORIZED", "INVALID_REQUEST", "NOT_SUBSCRIBED", "BILLING_DISABLED", "BILLING_CONFIGURATION",
+      "WORKSPACE_CONTEXT_REQUIRED", "WORKSPACE_CHANGED"].includes(error.code)) input.persist(null);
+    throw error;
+  }
+}
+async function postCancellation(input: Pick<MutationOptions, "workspaceId" | "requestId" | "persist" | "signal" | "fetcher">) {
   const value = await billingRequest("/api/billing/cancel", cancellationSchema, { ...input, method: "POST", body: { requestId: input.requestId } });
   input.persist(value.status === "PROCESSED" ? null : { requestId: input.requestId, id: value.id }); return value;
 }
+/** Explicit user action only. Reuse the original durable request identity; an
+ * error on this retry cannot disprove the outcome of the earlier attempt. */
+export async function resumeBrowserCancellation(input: Omit<MutationOptions, "requestId" | "previous" | "consent"> & { pending: PendingBillingRequest }) {
+  if (input.role !== "OWNER") throw new BillingBrowserError("FORBIDDEN", 403);
+  if (!workspacePin.safeParse(input.workspaceId).success) throw new BillingBrowserError("WORKSPACE_CONTEXT_REQUIRED", 400);
+  const pending = pendingSchema.safeParse(input.pending);
+  if (!pending.success || pending.data.id) throw new BillingBrowserError("REQUEST_BLOCKED", 409);
+  input.persist(pending.data);
+  return postCancellation({ ...input, requestId: pending.data.requestId });
+}
 export async function pollBillingOperation<T extends Checkout | Cancellation>(kind: "checkout" | "cancel", id: string, schema: z.ZodType<T>,
-  onValue: (value: T) => void, options: RequestOptions & { attempts?: number; wait?: (signal?: AbortSignal) => Promise<void> } = {}) {
+  onValue: (value: T) => void, options: RequestOptions & { attempts?: number; wait?: (signal?: AbortSignal) => Promise<void> }) {
   if (!z.uuid().safeParse(id).success) throw new BillingBrowserError("INVALID_REQUEST", 400);
   const attempts = options.attempts ?? 4;
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 4) throw new BillingBrowserError("INVALID_REQUEST", 400);

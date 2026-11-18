@@ -32,6 +32,12 @@ function formAction(node: unknown): ((body: FormData) => Promise<void>) | null {
   if (element.type === "form" && typeof element.props.action === "function") return element.props.action as (body: FormData) => Promise<void>;
   return formAction(element.props.children);
 }
+function visibleText(node: unknown): string {
+  if (typeof node === "string") return node;
+  if (Array.isArray(node)) return node.map(visibleText).join(" ");
+  if (node && typeof node === "object" && "props" in node) return visibleText((node as { props: { children?: unknown } }).props.children);
+  return "";
+}
 async function requestSignIn(params: { mode?: string; template?: string; callbackUrl?: string }) {
   const action = formAction(await Login({ searchParams: Promise.resolve(params) }));
   expect(action).toBeTypeOf("function"); const body = new FormData(); body.set("email", "new@example.test"); await action!(body);
@@ -52,6 +58,14 @@ describe("template registration preserves intent through the card-free trial", (
   });
   it("keeps the original template callback when commercial mode is disabled", async () => {
     state.enabled = false; expect(await requestSignIn({ template: slug })).toBe(destination);
+  });
+  it("does not advertise or promise a trial when billing is disabled", async () => {
+    state.enabled = false;
+    const copy = visibleText(await Login({ searchParams: Promise.resolve({ mode: "signup" }) }));
+    expect(copy).not.toContain("Start 3 days free without a card.");
+    expect(copy).not.toContain("Confirm your email, then activate your free trial.");
+    expect(copy).not.toContain("New here? Create an account");
+    expect(await requestSignIn({ mode: "signup" })).toBe("/dashboard");
   });
   it("keeps ordinary signup and existing explicit callback behavior", async () => {
     expect(await requestSignIn({ mode: "signup" })).toBe("/onboarding");

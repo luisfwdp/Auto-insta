@@ -11,7 +11,7 @@ import styles from "./pricing.module.css";
 
 export async function generateMetadata(): Promise<Metadata> {
   const { t } = await getI18n();
-  return { title: t("Pricing - CRIA PING"), description: t("Subscription plans and a 3-day card-free trial.") };
+  return { title: t("Pricing - CRIA PING"), description: t(isBillingEnabled() ? "Subscription plans and a 3-day card-free trial." : "New subscriptions are temporarily unavailable.") };
 }
 
 export default async function PricingPage() {
@@ -34,8 +34,8 @@ export default async function PricingPage() {
       <main className={styles.main}>
         <section className={styles.hero}>
           <span className={styles.eyebrow}>{t("Monthly subscriptions")}</span>
-          <h1>{t("Choose a plan after your free trial.")}</h1>
-          <p>{t("3 days free. No card required.")}</p>
+          <h1>{t(enabled ? "Choose a plan after your free trial." : "Pricing plans")}</h1>
+          <p>{t(enabled ? "3 days free. No card required." : "New subscriptions are temporarily unavailable.")}</p>
         </section>
         {selling ? <section className={styles.grid} aria-label={t("Pricing plans")}>
           {BILLING_PLAN_IDS.map(id => {
@@ -56,10 +56,10 @@ export default async function PricingPage() {
               <Link className={styles.cta} href="/login?mode=signup">{t("Get started free")}</Link>
             </article>;
           })}
-        </section> : <p className={styles.note} role="status">{t("New subscriptions are temporarily unavailable.")}</p>}
+        </section> : enabled ? <p className={styles.note} role="status">{t("New subscriptions are temporarily unavailable.")}</p> : null}
         <section className={styles.note}>
-          <p>{t("Your trial starts when you activate it. No payment is required to register.")}</p>
-          <p>{t("No automatic charge without a subscription.")}</p>
+          {enabled && <><p>{t("Your trial starts when you activate it. No payment is required to register.")}</p>
+          <p>{t("No automatic charge without a subscription.")}</p></>}
           <Link className={styles.cta} href={enabled ? "/login?mode=signup" : "/login"}>{enabled ? t("Get started free") : t("Sign in")}</Link>
         </section>
       </main>

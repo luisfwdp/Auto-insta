@@ -63,7 +63,8 @@ export default async function LoginPage({
   }
 
   const params = await searchParams;
-  const signup = params.mode === "signup";
+  const billingEnabled = isBillingEnabled();
+  const signup = billingEnabled && params.mode === "signup";
   const checkEmail = params.checkEmail === "1";
   const selectedTemplate = getCampaignTemplate(params.template);
   const templateCallbackUrl = selectedTemplate
@@ -170,9 +171,9 @@ export default async function LoginPage({
           )}
         </div>
         <div className="mt-6 space-y-3 text-center text-sm text-[#B5B5B5]">
-          <Link href={signup ? "/login" : "/login?mode=signup"} className="text-[#C7FF2F] hover:underline">
+          {billingEnabled && <Link href={signup ? "/login" : "/login?mode=signup"} className="text-[#C7FF2F] hover:underline">
             {signup ? t("Already have an account? Sign in") : t("New here? Create an account")}
-          </Link>
+          </Link>}
           <p><Link href="/privacy" className="hover:underline">{t("Privacy")}</Link>{" · "}<Link href="/terms" className="hover:underline">{t("Terms")}</Link></p>
         </div>
       </div>
