@@ -48,6 +48,9 @@ export async function inspectPrivateObject(storagePath: string, options = { comm
   const { url, serviceKey, bucket } = config();
   const response = await fetch(`${url}/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${objectPath(storagePath)}`, {
     headers: { ...headers(serviceKey), Range: "bytes=0-31" },
+    cache: "no-store",
+    redirect: "error",
+    signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) return null;
   const contentRange = response.headers.get("content-range");
@@ -56,7 +59,9 @@ export async function inspectPrivateObject(storagePath: string, options = { comm
   if (!Number.isSafeInteger(byteSize) || byteSize <= 0) return null;
   const reader = response.body?.getReader();
   const first = await reader?.read();
-  await reader?.cancel();
+  // A framework-retained tee branch can keep cancel() pending indefinitely.
+  // Request cancellation without making validated metadata wait for that branch.
+  void reader?.cancel().catch(() => undefined);
   return {
     byteSize,
     contentType: response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? null,
