@@ -263,6 +263,73 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     await makeRetryDue(item.id); await processBillingInbox(5, fake.provider);
     expect(await state.db.billingCheckout.count()).toBe(1); expect(billingStatusDTO(await paidState()).hasAccess).toBe(true); expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
   });
+  describe("events from other products sharing the Asaas account", () => {
+    const foreign = (link: BillingCheckout) => payment(link, { id: "pay_foreign", subscription: "sub_foreign", customer: "cus_foreign", checkoutSession: randomUUID() });
+    // BillingEvent.createdAt is immutable in SQL, so the clock moves forward instead.
+    async function age(id: string, ms = 10 * 60_000) { await makeRetryDue(id); vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + ms); }
+    async function untouched() {
+      expect(await state.db.billingPayment.count()).toBe(0); expect(await state.db.billingSubscription.count()).toBe(0);
+      expect((await paidState()).currentSubscriptionId).toBeNull(); expect(billingStatusDTO(await paidState()).hasAccess).toBe(false);
+    }
+
+    it("finishes an unbound provider event as FOREIGN_RESOURCE instead of dead-lettering it, even on its last attempt", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      const item = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" });
+      await age(item.id); await state.db.billingEvent.update({ where: { id: item.id }, data: { attempts: 11 } });
+      expect(await processBillingInbox(5, fake.provider)).toEqual({ processed: 1 });
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE", attempts: 12, leaseToken: null });
+      expect(await state.db.billingEvent.count({ where: { status: "DEAD" } })).toBe(0);
+      expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: own.id } })).status).toBe("OPEN");
+      await untouched(); expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+    });
+    it.each([
+      ["SUBSCRIPTION_CREATED", { subscriptionId: "sub_foreign" }],
+      ["CHECKOUT_PAID", { checkoutId: randomUUID() }],
+    ] as const)("classifies a foreign %s the same way", async (type, source) => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)], subscription(own, { id: "sub_foreign", customer: "cus_foreign", checkoutSession: randomUUID() }));
+      const item = await event(type, source); await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE" });
+      await untouched();
+    });
+    it("keeps retrying an unbound event during the grace period", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      const item = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" });
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "RESOURCE_NOT_BOUND" });
+    });
+    it.each(["CREATING", "UNKNOWN"] as const)("keeps reprocessing our own early webhook while a %s intent has no provider ID", async status => {
+      const providerId = randomUUID(), link = await checkout({ providerCheckoutId: null, status }), fake = gateway({ ...link, providerCheckoutId: providerId });
+      const item = await event("CHECKOUT_PAID", { checkoutId: providerId }); await age(item.id, 30 * 60_000);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "RESOURCE_NOT_BOUND" });
+      vi.useRealTimers(); await state.db.billingCheckout.update({ where: { id: link.id }, data: { providerCheckoutId: providerId, status: "OPEN" } });
+      await makeRetryDue(item.id); expect(await processBillingInbox(5, fake.provider)).toEqual({ processed: 1 });
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: null });
+      expect(billingStatusDTO(await paidState()).hasAccess).toBe(true); expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+    });
+    it("does not let an intent created after the event was received block the classification", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      const item = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" }); await age(item.id, 30 * 60_000);
+      await checkout({ workspaceId: "workspace-b", providerCheckoutId: null, status: "UNKNOWN", createdAt: new Date() });
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE" });
+    });
+    it("honors our checkout ID from the webhook payload even when the canonical GET has not linked it yet", async () => {
+      const link = await checkout(), fake = gateway(link, [payment(link, { subscription: null, checkoutSession: null })]);
+      const item = await ingestBillingEvent({ id: `evt_${randomUUID()}`, event: "PAYMENT_CONFIRMED", payment: { id: "pay_current", subscription: "sub_current", checkoutSession: link.providerCheckoutId } });
+      await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "RESOURCE_NOT_BOUND" });
+    });
+    it("never classifies internal recovery work as foreign", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)], subscription(own, { id: "sub_unbound", customer: "cus_foreign", checkoutSession: randomUUID() }));
+      const item = await state.db.billingEvent.create({ data: { environment: "sandbox", accountScope: scopeA, eventId: `recovery-sub:${randomUUID()}:1`, eventType: "INTERNAL_SUBSCRIPTION_RECONCILE", subscriptionId: "sub_unbound" } });
+      await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "RESOURCE_NOT_BOUND" });
+    });
+  });
   it("rolls back all financial effects on a native database failure and retries the durable event", async () => {
     const link = await checkout(), fake = gateway(link), item = await event("CHECKOUT_PAID", { checkoutId: link.providerCheckoutId! });
     await sql.query(`CREATE FUNCTION reconciliation_test_failure() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test-only failure'; END $$`);
