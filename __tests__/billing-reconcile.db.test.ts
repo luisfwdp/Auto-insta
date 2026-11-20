@@ -50,6 +50,8 @@ function gateway(checkout: BillingCheckout, records = [payment(checkout)], sub =
     cancelSubscription: vi.fn<Gateway["cancelSubscription"]>().mockRejectedValue(new Error("Unexpected financial mutation")),
     getPayment: vi.fn<Gateway["getPayment"]>(async id => { const row = ledger.get(id); if (!row) throw new AsaasError("REJECTED", 404); return clone(row); }),
     getSubscription: vi.fn<Gateway["getSubscription"]>(async () => clone(sub)),
+    getPaymentLinks: vi.fn<Gateway["getPaymentLinks"]>(async id => { const row = ledger.get(id); if (!row) throw new AsaasError("REJECTED", 404); return { id: row.id, subscription: row.subscription, checkoutSession: row.checkoutSession }; }),
+    getSubscriptionLinks: vi.fn<Gateway["getSubscriptionLinks"]>(async () => ({ id: sub.id, checkoutSession: sub.checkoutSession })),
     listPaymentsByCheckout: vi.fn<Gateway["listPaymentsByCheckout"]>(async () => page([...ledger.values()])),
     listPaymentsBySubscription: vi.fn<Gateway["listPaymentsBySubscription"]>(async () => page([...ledger.values()])),
   } satisfies Gateway;
@@ -291,6 +293,23 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
       await processBillingInbox(5, fake.provider);
       expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE" });
       await untouched();
+    });
+    it("classifies a foreign payment or subscription whose full state our strict schema rejects", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)], subscription(own, { id: "sub_foreign", customer: "cus_foreign", checkoutSession: randomUUID() }));
+      fake.provider.getPayment.mockRejectedValue(new AsaasError("INVALID_RESPONSE")); fake.provider.getSubscription.mockRejectedValue(new AsaasError("INVALID_RESPONSE"));
+      const paid = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" }), created = await event("SUBSCRIPTION_CREATED", { subscriptionId: "sub_foreign" });
+      await makeRetryDue(created.id); await age(paid.id);
+      expect(await processBillingInbox(5, fake.provider)).toEqual({ processed: 2 });
+      for (const id of [paid.id, created.id]) expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE" });
+      expect(fake.provider.getPayment).not.toHaveBeenCalled(); expect(fake.provider.getSubscription).not.toHaveBeenCalled();
+      await untouched();
+    });
+    it("still fails closed when our own bound payment has a state the strict schema rejects", async () => {
+      const link = await checkout(), fake = gateway(link); fake.provider.getPayment.mockRejectedValue(new AsaasError("INVALID_RESPONSE"));
+      const item = await event("PAYMENT_CONFIRMED", { paymentId: "pay_current" }); await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "INVALID_RESPONSE" });
+      expect(fake.provider.getPayment).toHaveBeenCalledWith("pay_current"); await untouched();
     });
     it("keeps retrying an unbound event during the grace period", async () => {
       const own = await checkout(), fake = gateway(own, [foreign(own)]);

@@ -38,6 +38,17 @@ const paymentPageResponse = z.object({
   offset: z.number().int().nonnegative().max(2_147_483_647), limit: z.number().int().min(1).max(20),
   data: z.array(paymentResponse).max(20),
 });
+// Ownership lookup only: the account is shared with other products, whose valid
+// resources may carry states/values our financial schema rejects. Only link IDs are
+// parsed (still strictly). Our own resources are re-read with the strict schemas
+// before any financial decision.
+const paymentLinksResponse = z.object({
+  id: paymentId, subscription: subscriptionId.nullish().transform(value => value ?? null),
+  checkoutSession: checkoutSession.nullish().transform(value => value ?? null),
+});
+const subscriptionLinksResponse = z.object({ id: subscriptionId, checkoutSession: checkoutSession.nullish().transform(value => value ?? null) });
+export type AsaasPaymentLinksDTO = z.infer<typeof paymentLinksResponse>;
+export type AsaasSubscriptionLinksDTO = z.infer<typeof subscriptionLinksResponse>;
 export type AsaasPaymentDTO = z.infer<typeof paymentResponse>;
 export type AsaasSubscriptionDTO = z.infer<typeof subscriptionResponse>;
 export type AsaasPaymentPageDTO = z.infer<typeof paymentPageResponse>;
@@ -172,6 +183,20 @@ export function createAsaasClient(env: Readonly<Record<string, string | undefine
     if (subscription.id !== id) throw new AsaasError("INVALID_RESPONSE");
     return subscription;
   }
+  /** Links only; never use the result as financial state. */
+  async function getPaymentLinks(id: string): Promise<AsaasPaymentLinksDTO> {
+    if (!paymentId.safeParse(id).success) throw new AsaasError("INVALID_REQUEST");
+    const payment = await read(`/payments/${encodeURIComponent(id)}`, paymentLinksResponse);
+    if (payment.id !== id) throw new AsaasError("INVALID_RESPONSE");
+    return payment;
+  }
+  /** Links only; never use the result as financial state. */
+  async function getSubscriptionLinks(id: string): Promise<AsaasSubscriptionLinksDTO> {
+    if (!subscriptionId.safeParse(id).success) throw new AsaasError("INVALID_REQUEST");
+    const subscription = await read(`/subscriptions/${encodeURIComponent(id)}`, subscriptionLinksResponse);
+    if (subscription.id !== id) throw new AsaasError("INVALID_RESPONSE");
+    return subscription;
+  }
   // Exactly one bounded page. Callers must inspect hasMore; no result is silently truncated.
   async function listPaymentsByCheckout(id: string, options: { offset?: number; limit?: number } = {}): Promise<AsaasPaymentPageDTO> {
     const page = pagination.safeParse(options);
@@ -217,5 +242,5 @@ export function createAsaasClient(env: Readonly<Record<string, string | undefine
       return result.data;
     } catch { throw new AsaasError("UNKNOWN_OUTCOME"); }
   }
-  return { createHostedCheckout, getPayment, getSubscription, listPaymentsByCheckout, listPaymentsBySubscription, cancelSubscription };
+  return { createHostedCheckout, getPayment, getSubscription, getPaymentLinks, getSubscriptionLinks, listPaymentsByCheckout, listPaymentsBySubscription, cancelSubscription };
 }

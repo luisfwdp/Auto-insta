@@ -33,6 +33,8 @@ function gateway() {
     createHostedCheckout: vi.fn<Gateway["createHostedCheckout"]>().mockResolvedValue({ id: providerCheckoutId, url: hostedUrl }),
     getPayment: vi.fn<Gateway["getPayment"]>().mockRejectedValue(new Error("Unexpected payment lookup")),
     getSubscription: vi.fn<Gateway["getSubscription"]>().mockResolvedValue(canonicalSubscription()),
+    getPaymentLinks: vi.fn<Gateway["getPaymentLinks"]>().mockRejectedValue(new Error("Unexpected payment lookup")),
+    getSubscriptionLinks: vi.fn<Gateway["getSubscriptionLinks"]>().mockRejectedValue(new Error("Unexpected subscription lookup")),
     listPaymentsByCheckout: vi.fn<Gateway["listPaymentsByCheckout"]>().mockResolvedValue({ data: [], hasMore: false, totalCount: 0, offset: 0, limit: 20 }),
     listPaymentsBySubscription: vi.fn<Gateway["listPaymentsBySubscription"]>().mockResolvedValue({ data: [], hasMore: false, totalCount: 0, offset: 0, limit: 20 }),
     cancelSubscription: vi.fn<Gateway["cancelSubscription"]>().mockResolvedValue({ id: "sub_authorized", deleted: true }),

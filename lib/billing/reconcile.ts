@@ -148,7 +148,9 @@ export async function reconcileBillingResource(source: { paymentId?: string; sub
   let bound: BillingSubscription | null = null, checkout: BillingCheckout | null = null;
   const keys: ResourceKeys = { paymentIds: [], subscriptionIds: [], checkoutIds: [] };
   if (source.paymentId) {
-    const payment = await read(() => gateway.getPayment(source.paymentId!));
+    // Link-only read: another product's valid payment must not fail our strict
+    // schema before we know it is not ours. syncCheckout re-reads it strictly.
+    const payment = await read(() => gateway.getPaymentLinks(source.paymentId!));
     keys.paymentIds.push(payment.id);
     if (payment.subscription) keys.subscriptionIds.push(payment.subscription);
     if (payment.checkoutSession) keys.checkoutIds.push(payment.checkoutSession);
@@ -158,7 +160,7 @@ export async function reconcileBillingResource(source: { paymentId?: string; sub
     keys.subscriptionIds.push(source.subscriptionId);
     bound = await prisma.billingSubscription.findUnique({ where: { environment_accountScope_providerSubscriptionId: { ...scope, providerSubscriptionId: source.subscriptionId } } });
     if (!bound) {
-      const subscription = await read(() => gateway.getSubscription(source.subscriptionId!));
+      const subscription = await read(() => gateway.getSubscriptionLinks(source.subscriptionId!));
       if (subscription.checkoutSession) keys.checkoutIds.push(subscription.checkoutSession);
       if (subscription.checkoutSession) checkout = await prisma.billingCheckout.findUnique({ where: { environment_accountScope_providerCheckoutId: { ...scope, providerCheckoutId: subscription.checkoutSession } } });
     }

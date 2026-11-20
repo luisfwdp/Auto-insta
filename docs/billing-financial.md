@@ -59,7 +59,11 @@ provider's full path/query after the September2026 URL changes.
    retrying. The unresolved-intent query precedes the key re-check so an ID saved
    in between is still seen. INTERNAL_ recovery events are never classified foreign.
    An unresolved UNKNOWN intent therefore keeps unbound events on the retry/DEAD
-   path until an operator reconciles it. FOREIGN_RESOURCE only skips a trigger; it
+   path until an operator reconciles it. The ownership lookup reads only the link
+   IDs of a payment/subscription (still strictly validated), so another product's
+   valid resource with a status/value our financial schema rejects is not stuck in
+   `INVALID_RESPONSE`. Our own resources are always re-read with the strict schema
+   before any decision and still fail closed. FOREIGN_RESOURCE only skips a trigger; it
    writes no ledger/access state, and every CRIA PING decision is still rebuilt from
    complete canonical reads by its own events and recovery. No schema change.
 3. Resolve checkout→payment→subscription through canonical scoped Asaas GETs.

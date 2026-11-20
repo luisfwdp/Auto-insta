@@ -188,6 +188,30 @@ describe("Asaas read-only reconciliation", () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json(body));
     await expect(createAsaasClient(env, fetcher).getSubscription(subscription.id)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   });
+  it("reads only ownership links, tolerating another product's financial state our strict schema rejects", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ ...payment, status: "UNKNOWN_FUTURE_STATUS", value: 149.291, dueDate: undefined, deleted: undefined, customer: "other" }))
+      .mockResolvedValueOnce(Response.json({ ...subscription, cycle: "DAILY", status: "UNKNOWN", value: 1.001 }));
+    const client = createAsaasClient(env, fetcher);
+    expect(await client.getPaymentLinks(payment.id)).toEqual({ id: payment.id, subscription: payment.subscription, checkoutSession: checkoutId });
+    expect(await client.getSubscriptionLinks(subscription.id)).toEqual({ id: subscription.id, checkoutSession: checkoutId });
+    expect(fetcher.mock.calls.map(([url, init]) => [url, init.method])).toEqual([[`https://api-sandbox.asaas.com/v3/payments/${payment.id}`, "GET"], [`https://api-sandbox.asaas.com/v3/subscriptions/${subscription.id}`, "GET"]]);
+  });
+  it.each([
+    { ...payment, id: "pay_other" }, { ...payment, subscription: "other_1" }, { ...payment, checkoutSession: "not-a-uuid" },
+  ])("still fails closed on mismatched or malformed payment links %#", async body => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json(body));
+    await expect(createAsaasClient(env, fetcher).getPaymentLinks(payment.id)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+  it.each([{ ...subscription, id: "sub_other" }, { ...subscription, checkoutSession: "not-a-uuid" }])("still fails closed on mismatched or malformed subscription links %#", async body => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json(body));
+    await expect(createAsaasClient(env, fetcher).getSubscriptionLinks(subscription.id)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+  it("rejects unsafe IDs for link reads before network access", async () => {
+    const fetcher = vi.fn(), client = createAsaasClient(env, fetcher);
+    await expect(client.getPaymentLinks("pay_x/../../subscriptions")).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    await expect(client.getSubscriptionLinks("sub_x?access_token=leak")).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("normalizes absent optional associations without inventing provider relationships", async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ ...payment, subscription: undefined, checkoutSession: undefined, value: 0 }));
     expect(await createAsaasClient(env, fetcher).getPayment(payment.id)).toMatchObject({ subscription: null, checkoutSession: null, valueCents: 0 });
