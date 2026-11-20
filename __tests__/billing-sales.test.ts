@@ -22,7 +22,8 @@ const hostedUrl = "https://sandbox.asaas.com/checkoutSession/show?id=fake-owner-
 const input: CheckoutRequest = { requestId: id, planId: "pro-v1", expectedAmountCents: 14900, acceptImmediateCharge: true };
 function gateway() {
   return { createHostedCheckout: vi.fn<Gateway["createHostedCheckout"]>(), getPayment: vi.fn<Gateway["getPayment"]>(),
-    getSubscription: vi.fn<Gateway["getSubscription"]>(), listPaymentsByCheckout: vi.fn<Gateway["listPaymentsByCheckout"]>(),
+    getSubscription: vi.fn<Gateway["getSubscription"]>(), getPaymentLinks: vi.fn<Gateway["getPaymentLinks"]>(),
+    getSubscriptionLinks: vi.fn<Gateway["getSubscriptionLinks"]>(), listPaymentsByCheckout: vi.fn<Gateway["listPaymentsByCheckout"]>(),
     listPaymentsBySubscription: vi.fn<Gateway["listPaymentsBySubscription"]>(), cancelSubscription: vi.fn<Gateway["cancelSubscription"]>() } satisfies Gateway;
 }
 

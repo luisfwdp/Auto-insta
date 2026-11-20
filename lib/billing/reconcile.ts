@@ -8,6 +8,26 @@ import { claimBillingEvents, finishBillingEvent, renewBillingEvent } from "./inb
 
 type Gateway = ReturnType<typeof createAsaasClient>;
 
+/** Every provider key the lookup used, including links read by canonical GET. */
+type ResourceKeys = { paymentIds: string[]; subscriptionIds: string[]; checkoutIds: string[] };
+
+/** Unbound is retried by default: CRIA PING's own webhook may arrive before its link is saved.
+ * "REJECTED" marks a link read that returned 404, keeping the provider code for operators.
+ */
+export class ResourceNotBoundError extends BillingError {
+  constructor(readonly keys: ResourceKeys, code: "RESOURCE_NOT_BOUND" | "REJECTED" = "RESOURCE_NOT_BOUND") { super(code, 503); this.name = "ResourceNotBoundError"; }
+}
+
+/** Only a 404 means "not visible in this account"; 400/401/403 are our own faults and stay retry/DEAD. */
+function isProviderNotFound(error: unknown) {
+  return error instanceof AsaasError && error.code === "REJECTED" && error.httpStatus === 404;
+}
+
+// The Asaas account (and its account-wide webhook) is shared with other products.
+// Their events are skipped as FOREIGN_RESOURCE, never DEAD, only after this grace.
+export const FOREIGN_RESOURCE_GRACE_MS = 5 * 60_000;
+const CLOCK_SKEW_MS = 5 * 60_000;
+
 /** All pages or no financial decision; never silently accept a truncated ledger. */
 async function allPages(read: (options: { offset: number; limit: number }) => Promise<AsaasPaymentPageDTO>) {
   const result: AsaasPaymentDTO[] = [];
@@ -133,19 +153,38 @@ export async function reconcileBillingResource(source: { paymentId?: string; sub
   const scope = getBillingProviderScope(), gateway = provider ?? createAsaasClient();
   const read = async <T>(request: () => Promise<T>) => { await heartbeat?.(); const value = await request(); await heartbeat?.(); return value; };
   let bound: BillingSubscription | null = null, checkout: BillingCheckout | null = null;
+  const keys: ResourceKeys = { paymentIds: [], subscriptionIds: [], checkoutIds: [] };
   if (source.paymentId) {
-    const payment = await read(() => gateway.getPayment(source.paymentId!));
+    // Link-only read: another product's valid payment must not fail our strict
+    // schema before we know it is not ours. syncCheckout re-reads it strictly.
+    // A 404 hides the canonical links: classification then relies on the
+    // webhook payload keys and the local checks, exactly as for any unbound event.
+    const payment = await read(() => gateway.getPaymentLinks(source.paymentId!)).catch(error => {
+      if (isProviderNotFound(error)) throw new ResourceNotBoundError({ ...keys, paymentIds: [source.paymentId!] }, "REJECTED");
+      throw error;
+    });
+    keys.paymentIds.push(payment.id);
+    if (payment.subscription) keys.subscriptionIds.push(payment.subscription);
+    if (payment.checkoutSession) keys.checkoutIds.push(payment.checkoutSession);
     if (payment.subscription) bound = await prisma.billingSubscription.findUnique({ where: { environment_accountScope_providerSubscriptionId: { ...scope, providerSubscriptionId: payment.subscription } } });
     if (!bound && payment.checkoutSession) checkout = await prisma.billingCheckout.findUnique({ where: { environment_accountScope_providerCheckoutId: { ...scope, providerCheckoutId: payment.checkoutSession } } });
   } else if (source.subscriptionId) {
+    keys.subscriptionIds.push(source.subscriptionId);
     bound = await prisma.billingSubscription.findUnique({ where: { environment_accountScope_providerSubscriptionId: { ...scope, providerSubscriptionId: source.subscriptionId } } });
     if (!bound) {
-      const subscription = await read(() => gateway.getSubscription(source.subscriptionId!));
+      const subscription = await read(() => gateway.getSubscriptionLinks(source.subscriptionId!)).catch(error => {
+        if (isProviderNotFound(error)) throw new ResourceNotBoundError(keys, "REJECTED");
+        throw error;
+      });
+      if (subscription.checkoutSession) keys.checkoutIds.push(subscription.checkoutSession);
       if (subscription.checkoutSession) checkout = await prisma.billingCheckout.findUnique({ where: { environment_accountScope_providerCheckoutId: { ...scope, providerCheckoutId: subscription.checkoutSession } } });
     }
-  } else if (source.checkoutId) checkout = await prisma.billingCheckout.findUnique({ where: { environment_accountScope_providerCheckoutId: { ...scope, providerCheckoutId: source.checkoutId } } });
+  } else if (source.checkoutId) {
+    keys.checkoutIds.push(source.checkoutId);
+    checkout = await prisma.billingCheckout.findUnique({ where: { environment_accountScope_providerCheckoutId: { ...scope, providerCheckoutId: source.checkoutId } } });
+  }
   if (bound) checkout = await prisma.billingCheckout.findFirst({ where: { id: bound.checkoutId, workspaceId: bound.workspaceId, ...scope } });
-  if (!checkout) throw new BillingError("RESOURCE_NOT_BOUND", 503);
+  if (!checkout) throw new ResourceNotBoundError(keys);
   if (!bound) bound = await prisma.billingSubscription.findFirst({ where: { checkoutId: checkout.id, workspaceId: checkout.workspaceId, ...scope } });
   const token = await claimBillingSync(checkout.workspaceId);
   try { await syncCheckout(checkout, gateway, token, bound ?? undefined, source.paymentId, source.terminal, source.recoverExpiredOpen, heartbeat); }
@@ -160,6 +199,33 @@ function sourceFor(event: BillingEvent) {
     ...(event.eventType === "INTERNAL_CHECKOUT_RECONCILE" ? { recoverExpiredOpen: true } : {}),
     ...(event.eventType === "CHECKOUT_CANCELED" ? { terminal: "CANCELED" as const } : event.eventType === "CHECKOUT_EXPIRED" ? { terminal: "EXPIRED" as const } : {}) };
   return null;
+}
+
+/** Conservative classification of an unbound provider event as another product's.
+ * It only skips a trigger: no ledger/access write happens here, and every CRIA PING
+ * decision is still rebuilt from complete canonical reads by its own events/recovery.
+ * Our intent row is committed BEFORE the only checkout POST (invariant 1), so an
+ * event for our own checkout always has a local row: either with providerCheckoutId
+ * (found by the key re-check) or still CREATING/UNKNOWN without it (blocks here).
+ * The unresolved-intent query MUST precede the key re-check: an ID saved between
+ * the reconcile lookup and this check is then still seen by the re-check.
+ */
+async function isForeignBillingResource(event: BillingEvent, keys: ResourceKeys, now = new Date()) {
+  if (!/^(PAYMENT|SUBSCRIPTION|CHECKOUT)_/.test(event.eventType)) return false;
+  if (now.getTime() - event.createdAt.getTime() < FOREIGN_RESOURCE_GRACE_MS) return false;
+  const scope = getBillingProviderScope();
+  const unresolved = await prisma.billingCheckout.findFirst({ where: { ...scope, providerCheckoutId: null, status: { in: ["CREATING", "UNKNOWN"] },
+    createdAt: { lte: new Date(event.createdAt.getTime() + CLOCK_SKEW_MS) } }, select: { id: true } });
+  if (unresolved) return false;
+  const unique = (values: (string | null)[]) => [...new Set(values.filter((value): value is string => !!value))];
+  const paymentIds = unique([event.paymentId, ...keys.paymentIds]), subscriptionIds = unique([event.subscriptionId, ...keys.subscriptionIds]);
+  const checkoutIds = unique([event.checkoutId, ...keys.checkoutIds]);
+  const [payment, subscription, checkout] = await Promise.all([
+    paymentIds.length ? prisma.billingPayment.findFirst({ where: { ...scope, providerPaymentId: { in: paymentIds } }, select: { id: true } }) : null,
+    subscriptionIds.length ? prisma.billingSubscription.findFirst({ where: { ...scope, providerSubscriptionId: { in: subscriptionIds } }, select: { id: true } }) : null,
+    checkoutIds.length ? prisma.billingCheckout.findFirst({ where: { ...scope, providerCheckoutId: { in: checkoutIds } }, select: { id: true } }) : null,
+  ]);
+  return !payment && !subscription && !checkout;
 }
 
 export async function processBillingInbox(limit = 5, provider?: Gateway) {
@@ -179,6 +245,11 @@ export async function processBillingInbox(limit = 5, provider?: Gateway) {
       });
       if (await finishBillingEvent(event.id, event.leaseToken!, "processed")) processed++;
     } catch (error) {
+      // Counted as processed: the event is finished, and its fixed code is the audit trail.
+      if (error instanceof ResourceNotBoundError && await isForeignBillingResource(event, error.keys).catch(() => false)) {
+        if (await finishBillingEvent(event.id, event.leaseToken!, "ignored", "FOREIGN_RESOURCE")) processed++;
+        continue;
+      }
       const code = error instanceof BillingError || error instanceof AsaasError || error instanceof FinancialPolicyError ? error.code : "RECONCILIATION_UNAVAILABLE";
       await finishBillingEvent(event.id, event.leaseToken!, "retry", code);
     }

@@ -50,6 +50,8 @@ function gateway(checkout: BillingCheckout, records = [payment(checkout)], sub =
     cancelSubscription: vi.fn<Gateway["cancelSubscription"]>().mockRejectedValue(new Error("Unexpected financial mutation")),
     getPayment: vi.fn<Gateway["getPayment"]>(async id => { const row = ledger.get(id); if (!row) throw new AsaasError("REJECTED", 404); return clone(row); }),
     getSubscription: vi.fn<Gateway["getSubscription"]>(async () => clone(sub)),
+    getPaymentLinks: vi.fn<Gateway["getPaymentLinks"]>(async id => { const row = ledger.get(id); if (!row) throw new AsaasError("REJECTED", 404); return { id: row.id, subscription: row.subscription, checkoutSession: row.checkoutSession }; }),
+    getSubscriptionLinks: vi.fn<Gateway["getSubscriptionLinks"]>(async () => ({ id: sub.id, checkoutSession: sub.checkoutSession })),
     listPaymentsByCheckout: vi.fn<Gateway["listPaymentsByCheckout"]>(async () => page([...ledger.values()])),
     listPaymentsBySubscription: vi.fn<Gateway["listPaymentsBySubscription"]>(async () => page([...ledger.values()])),
   } satisfies Gateway;
@@ -262,6 +264,119 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     await state.db.billingCheckout.update({ where: { id: link.id }, data: { providerCheckoutId: providerId, status: "OPEN" } });
     await makeRetryDue(item.id); await processBillingInbox(5, fake.provider);
     expect(await state.db.billingCheckout.count()).toBe(1); expect(billingStatusDTO(await paidState()).hasAccess).toBe(true); expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+  });
+  describe("events from other products sharing the Asaas account", () => {
+    const foreign = (link: BillingCheckout) => payment(link, { id: "pay_foreign", subscription: "sub_foreign", customer: "cus_foreign", checkoutSession: randomUUID() });
+    // BillingEvent.createdAt is immutable in SQL, so the clock moves forward instead.
+    async function age(id: string, ms = 10 * 60_000) { await makeRetryDue(id); vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + ms); }
+    async function untouched() {
+      expect(await state.db.billingPayment.count()).toBe(0); expect(await state.db.billingSubscription.count()).toBe(0);
+      expect((await paidState()).currentSubscriptionId).toBeNull(); expect(billingStatusDTO(await paidState()).hasAccess).toBe(false);
+    }
+
+    it("finishes an unbound provider event as FOREIGN_RESOURCE instead of dead-lettering it, even on its last attempt", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      const item = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" });
+      await age(item.id); await state.db.billingEvent.update({ where: { id: item.id }, data: { attempts: 11 } });
+      expect(await processBillingInbox(5, fake.provider)).toEqual({ processed: 1 });
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE", attempts: 12, leaseToken: null });
+      expect(await state.db.billingEvent.count({ where: { status: "DEAD" } })).toBe(0);
+      expect((await state.db.billingCheckout.findUniqueOrThrow({ where: { id: own.id } })).status).toBe("OPEN");
+      await untouched(); expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+    });
+    it.each([
+      ["SUBSCRIPTION_CREATED", { subscriptionId: "sub_foreign" }],
+      ["CHECKOUT_PAID", { checkoutId: randomUUID() }],
+    ] as const)("classifies a foreign %s the same way", async (type, source) => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)], subscription(own, { id: "sub_foreign", customer: "cus_foreign", checkoutSession: randomUUID() }));
+      const item = await event(type, source); await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE" });
+      await untouched();
+    });
+    it("classifies a foreign payment or subscription whose full state our strict schema rejects", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)], subscription(own, { id: "sub_foreign", customer: "cus_foreign", checkoutSession: randomUUID() }));
+      fake.provider.getPayment.mockRejectedValue(new AsaasError("INVALID_RESPONSE")); fake.provider.getSubscription.mockRejectedValue(new AsaasError("INVALID_RESPONSE"));
+      const paid = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" }), created = await event("SUBSCRIPTION_CREATED", { subscriptionId: "sub_foreign" });
+      await makeRetryDue(created.id); await age(paid.id);
+      expect(await processBillingInbox(5, fake.provider)).toEqual({ processed: 2 });
+      for (const id of [paid.id, created.id]) expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE" });
+      expect(fake.provider.getPayment).not.toHaveBeenCalled(); expect(fake.provider.getSubscription).not.toHaveBeenCalled();
+      await untouched();
+    });
+    it("still fails closed when our own bound payment has a state the strict schema rejects", async () => {
+      const link = await checkout(), fake = gateway(link); fake.provider.getPayment.mockRejectedValue(new AsaasError("INVALID_RESPONSE"));
+      const item = await event("PAYMENT_CONFIRMED", { paymentId: "pay_current" }); await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "INVALID_RESPONSE" });
+      expect(fake.provider.getPayment).toHaveBeenCalledWith("pay_current"); await untouched();
+    });
+    it("classifies a foreign payment or subscription that the provider no longer finds (404)", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      fake.provider.getSubscriptionLinks.mockRejectedValue(new AsaasError("REJECTED", 404));
+      const gone = await event("PAYMENT_DELETED", { paymentId: "pay_gone" }), sub = await event("SUBSCRIPTION_DELETED", { subscriptionId: "sub_gone" });
+      await makeRetryDue(sub.id); await age(gone.id);
+      expect(await processBillingInbox(5, fake.provider)).toEqual({ processed: 2 });
+      for (const id of [gone.id, sub.id]) expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE" });
+      await untouched();
+    });
+    it("keeps the provider REJECTED code while a 404 event is inside the grace period", async () => {
+      const own = await checkout(), fake = gateway(own);
+      const item = await event("PAYMENT_DELETED", { paymentId: "pay_gone" });
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "REJECTED" });
+    });
+    it("keeps retrying a 404 for our own payment identified by the webhook payload", async () => {
+      const link = await checkout(), fake = gateway(link, []);
+      const item = await ingestBillingEvent({ id: `evt_${randomUUID()}`, event: "PAYMENT_DELETED", payment: { id: "pay_current", subscription: "sub_current", checkoutSession: link.providerCheckoutId } });
+      await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "REJECTED" });
+    });
+    it.each([400, 401, 403])("never classifies a provider HTTP %s as foreign", async status => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      fake.provider.getPaymentLinks.mockRejectedValue(new AsaasError("REJECTED", status));
+      const item = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" }); await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "REJECTED" });
+    });
+    it("keeps retrying an unbound event during the grace period", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      const item = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" });
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "RESOURCE_NOT_BOUND" });
+    });
+    it.each(["CREATING", "UNKNOWN"] as const)("keeps reprocessing our own early webhook while a %s intent has no provider ID", async status => {
+      const providerId = randomUUID(), link = await checkout({ providerCheckoutId: null, status }), fake = gateway({ ...link, providerCheckoutId: providerId });
+      const item = await event("CHECKOUT_PAID", { checkoutId: providerId }); await age(item.id, 30 * 60_000);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "RESOURCE_NOT_BOUND" });
+      vi.useRealTimers(); await state.db.billingCheckout.update({ where: { id: link.id }, data: { providerCheckoutId: providerId, status: "OPEN" } });
+      await makeRetryDue(item.id); expect(await processBillingInbox(5, fake.provider)).toEqual({ processed: 1 });
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: null });
+      expect(billingStatusDTO(await paidState()).hasAccess).toBe(true); expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+    });
+    it("does not let an intent created after the event was received block the classification", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      const item = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" }); await age(item.id, 30 * 60_000);
+      await checkout({ workspaceId: "workspace-b", providerCheckoutId: null, status: "UNKNOWN", createdAt: new Date() });
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE" });
+    });
+    it("honors our checkout ID from the webhook payload even when the canonical GET has not linked it yet", async () => {
+      const link = await checkout(), fake = gateway(link, [payment(link, { subscription: null, checkoutSession: null })]);
+      const item = await ingestBillingEvent({ id: `evt_${randomUUID()}`, event: "PAYMENT_CONFIRMED", payment: { id: "pay_current", subscription: "sub_current", checkoutSession: link.providerCheckoutId } });
+      await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "RESOURCE_NOT_BOUND" });
+    });
+    it("never classifies internal recovery work as foreign", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)], subscription(own, { id: "sub_unbound", customer: "cus_foreign", checkoutSession: randomUUID() }));
+      const item = await state.db.billingEvent.create({ data: { environment: "sandbox", accountScope: scopeA, eventId: `recovery-sub:${randomUUID()}:1`, eventType: "INTERNAL_SUBSCRIPTION_RECONCILE", subscriptionId: "sub_unbound" } });
+      await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "RESOURCE_NOT_BOUND" });
+    });
   });
   it("rolls back all financial effects on a native database failure and retries the durable event", async () => {
     const link = await checkout(), fake = gateway(link), item = await event("CHECKOUT_PAID", { checkoutId: link.providerCheckoutId! });

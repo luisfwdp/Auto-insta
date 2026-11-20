@@ -89,19 +89,22 @@ export async function renewBillingEvent(id: string, token: string, now = new Dat
   return updated.count === 1;
 }
 
-/** A stale worker cannot finish, retry or discard a new owner's claim. */
-export async function finishBillingEvent(id: string, token: string, outcome: "processed" | "retry" | "dead", errorCode?: string, now = new Date()) {
+/** A stale worker cannot finish, retry or discard a new owner's claim.
+ * "ignored" is terminal like "processed" (never DEAD, even on the last attempt)
+ * but keeps its fixed code, e.g. FOREIGN_RESOURCE, as the audit trail.
+ */
+export async function finishBillingEvent(id: string, token: string, outcome: "processed" | "ignored" | "retry" | "dead", errorCode?: string, now = new Date()) {
   validTime(now);
-  if (!z.uuid().safeParse(id).success || !z.uuid().safeParse(token).success || !["processed", "retry", "dead"].includes(outcome)) throw new BillingError("INVALID_REQUEST", 400);
+  if (!z.uuid().safeParse(id).success || !z.uuid().safeParse(token).success || !["processed", "ignored", "retry", "dead"].includes(outcome)) throw new BillingError("INVALID_REQUEST", 400);
   const scope = getBillingProviderScope();
   const where = { id, ...scope, status: "PROCESSING" as const, leaseToken: token, leaseUntil: { gt: now } };
   const row = await prisma.billingEvent.findFirst({ where });
   if (!row) return false;
   const code = errorCode && /^[A-Z][A-Z0-9_]{0,63}$/.test(errorCode) ? errorCode : "BILLING_PROCESSING_FAILED";
-  const status = outcome === "processed" ? "PROCESSED" : outcome === "dead" || row.attempts >= MAX_ATTEMPTS ? "DEAD" : "RETRY";
+  const status = outcome === "processed" || outcome === "ignored" ? "PROCESSED" : outcome === "dead" || row.attempts >= MAX_ATTEMPTS ? "DEAD" : "RETRY";
   const delay = Math.min(3_600_000, 1000 * 2 ** Math.min(row.attempts - 1, 12));
   const updated = await prisma.billingEvent.updateMany({ where, data: { status, leaseToken: null, leaseUntil: null,
-    lastErrorCode: status === "PROCESSED" ? null : code,
+    lastErrorCode: outcome === "processed" ? null : code,
     ...(status === "RETRY" ? { nextAttemptAt: new Date(now.getTime() + delay) } : {}),
   } });
   return updated.count === 1;

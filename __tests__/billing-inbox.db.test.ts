@@ -188,6 +188,14 @@ describe.skipIf(!url)("durable Asaas billing inbox", () => {
     expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "DEAD", attempts: 12 });
     expect(await claimBillingEvents(20, new Date(now.getTime() + 86400000))).toEqual([]);
   });
+  it("finishes an ignored event on its last attempt as PROCESSED with its fixed code, never DEAD", async () => {
+    const item = await ingestBillingEvent(event());
+    await state.db.billingEvent.update({ where: { id: item.id }, data: { attempts: 11 } });
+    const now = new Date(Date.now() + 1000), [claimed] = await claimBillingEvents(1, now);
+    expect(await finishBillingEvent(claimed.id, claimed.leaseToken!, "ignored", "FOREIGN_RESOURCE", now)).toBe(true);
+    expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "PROCESSED", attempts: 12, lastErrorCode: "FOREIGN_RESOURCE", leaseToken: null });
+    expect(await claimBillingEvents(20, new Date(now.getTime() + 86400000))).toEqual([]);
+  });
   it("dead-letters exhausted crash recovery without increment overflow", async () => {
     const item = await ingestBillingEvent(event());
     await state.db.billingEvent.update({ where: { id: item.id }, data: { attempts: 12, status: "PROCESSING", leaseToken: randomUUID(), leaseUntil: new Date(0) } });

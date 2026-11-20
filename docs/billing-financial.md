@@ -46,6 +46,30 @@ provider's full path/query after the September2026 URL changes.
 2. Inbox IDs are unique per environment/account/event. Duplicate conflicts do not
    overwrite the first event. Recoverable CAS leases, bounded retries and durable
    DEAD states protect crashes. Arrival order/callback URLs are not financial proof.
+   The Asaas account, and therefore its account-wide webhook, is shared with other
+   products of the same owner. An unbound provider event (PAYMENT_/SUBSCRIPTION_/
+   CHECKOUT_) is retried as `RESOURCE_NOT_BOUND`, because our own webhook can arrive
+   before the provider checkout ID is saved. It is finished as PROCESSED with the
+   fixed code `FOREIGN_RESOURCE` (never DEAD, no alert) only when all hold: it has
+   been in the inbox for at least 5 minutes; no scoped CREATING/UNKNOWN intent
+   without a provider checkout ID was created before it (5-minute clock margin);
+   and afterwards no local checkout/subscription/payment matches any key from the
+   webhook payload or the canonical GET. Since the intent is committed before the
+   only POST (invariant 1), our own early event always meets a local row and keeps
+   retrying. The unresolved-intent query precedes the key re-check so an ID saved
+   in between is still seen. INTERNAL_ recovery events are never classified foreign.
+   An unresolved UNKNOWN intent therefore keeps unbound events on the retry/DEAD
+   path until an operator reconciles it. The ownership lookup reads only the link
+   IDs of a payment/subscription (still strictly validated), so another product's
+   valid resource with a status/value our financial schema rejects is not stuck in
+   `INVALID_RESPONSE`. Our own resources are always re-read with the strict schema
+   before any decision and still fail closed. A link read answered with HTTP 404
+   (resource not visible in this account) is treated as unbound under the same
+   rules, keeping the code `REJECTED` while it retries; classification then relies
+   on the webhook payload keys. HTTP 400/401/403 are our own faults and are never
+   classified foreign. FOREIGN_RESOURCE only skips a trigger; it
+   writes no ledger/access state, and every CRIA PING decision is still rebuilt from
+   complete canonical reads by its own events and recovery. No schema change.
 3. Resolve checkout→payment→subscription through canonical scoped Asaas GETs.
    Match customer/value/monthly cycle and the immutable server quote. Two complete
    passes must agree: totals, offsets, hasMore, IDs and snapshots cannot silently
@@ -90,7 +114,9 @@ Scoped DEAD event/command counts produce the deduplicated fixed
 `BILLING_DEAD_LETTER` alert while other jobs continue. A backlog of only DEAD work
 is not reported as a successful activity summary; recovery clears the alert state.
 
-DEAD events/commands require operator review. Inspect their fixed error code and
+Foreign events of other products sharing the account are visible as
+`status = PROCESSED, lastErrorCode = FOREIGN_RESOURCE` and count as processed in
+the summary; they need no action. DEAD events/commands require operator review. Inspect their fixed error code and
 the matching provider account, invoice and local immutable intent; do not reset
 UNKNOWN or replay a financial POST just to clear the queue. Preserve records.
 Do not delete a workspace with financial history; the restrictive foreign keys
