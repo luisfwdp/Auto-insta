@@ -11,9 +11,16 @@ type Gateway = ReturnType<typeof createAsaasClient>;
 /** Every provider key the lookup used, including links read by canonical GET. */
 type ResourceKeys = { paymentIds: string[]; subscriptionIds: string[]; checkoutIds: string[] };
 
-/** Unbound is retried by default: CRIA PING's own webhook may arrive before its link is saved. */
+/** Unbound is retried by default: CRIA PING's own webhook may arrive before its link is saved.
+ * "REJECTED" marks a link read that returned 404, keeping the provider code for operators.
+ */
 export class ResourceNotBoundError extends BillingError {
-  constructor(readonly keys: ResourceKeys) { super("RESOURCE_NOT_BOUND", 503); this.name = "ResourceNotBoundError"; }
+  constructor(readonly keys: ResourceKeys, code: "RESOURCE_NOT_BOUND" | "REJECTED" = "RESOURCE_NOT_BOUND") { super(code, 503); this.name = "ResourceNotBoundError"; }
+}
+
+/** Only a 404 means "not visible in this account"; 400/401/403 are our own faults and stay retry/DEAD. */
+function isProviderNotFound(error: unknown) {
+  return error instanceof AsaasError && error.code === "REJECTED" && error.httpStatus === 404;
 }
 
 // The Asaas account (and its account-wide webhook) is shared with other products.
@@ -150,7 +157,12 @@ export async function reconcileBillingResource(source: { paymentId?: string; sub
   if (source.paymentId) {
     // Link-only read: another product's valid payment must not fail our strict
     // schema before we know it is not ours. syncCheckout re-reads it strictly.
-    const payment = await read(() => gateway.getPaymentLinks(source.paymentId!));
+    // A 404 hides the canonical links: classification then relies on the
+    // webhook payload keys and the local checks, exactly as for any unbound event.
+    const payment = await read(() => gateway.getPaymentLinks(source.paymentId!)).catch(error => {
+      if (isProviderNotFound(error)) throw new ResourceNotBoundError({ ...keys, paymentIds: [source.paymentId!] }, "REJECTED");
+      throw error;
+    });
     keys.paymentIds.push(payment.id);
     if (payment.subscription) keys.subscriptionIds.push(payment.subscription);
     if (payment.checkoutSession) keys.checkoutIds.push(payment.checkoutSession);
@@ -160,7 +172,10 @@ export async function reconcileBillingResource(source: { paymentId?: string; sub
     keys.subscriptionIds.push(source.subscriptionId);
     bound = await prisma.billingSubscription.findUnique({ where: { environment_accountScope_providerSubscriptionId: { ...scope, providerSubscriptionId: source.subscriptionId } } });
     if (!bound) {
-      const subscription = await read(() => gateway.getSubscriptionLinks(source.subscriptionId!));
+      const subscription = await read(() => gateway.getSubscriptionLinks(source.subscriptionId!)).catch(error => {
+        if (isProviderNotFound(error)) throw new ResourceNotBoundError(keys, "REJECTED");
+        throw error;
+      });
       if (subscription.checkoutSession) keys.checkoutIds.push(subscription.checkoutSession);
       if (subscription.checkoutSession) checkout = await prisma.billingCheckout.findUnique({ where: { environment_accountScope_providerCheckoutId: { ...scope, providerCheckoutId: subscription.checkoutSession } } });
     }

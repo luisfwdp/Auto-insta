@@ -63,7 +63,11 @@ provider's full path/query after the September2026 URL changes.
    IDs of a payment/subscription (still strictly validated), so another product's
    valid resource with a status/value our financial schema rejects is not stuck in
    `INVALID_RESPONSE`. Our own resources are always re-read with the strict schema
-   before any decision and still fail closed. FOREIGN_RESOURCE only skips a trigger; it
+   before any decision and still fail closed. A link read answered with HTTP 404
+   (resource not visible in this account) is treated as unbound under the same
+   rules, keeping the code `REJECTED` while it retries; classification then relies
+   on the webhook payload keys. HTTP 400/401/403 are our own faults and are never
+   classified foreign. FOREIGN_RESOURCE only skips a trigger; it
    writes no ledger/access state, and every CRIA PING decision is still rebuilt from
    complete canonical reads by its own events and recovery. No schema change.
 3. Resolve checkout→payment→subscription through canonical scoped Asaas GETs.

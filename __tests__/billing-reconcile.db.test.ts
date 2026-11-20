@@ -311,6 +311,35 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
       expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "INVALID_RESPONSE" });
       expect(fake.provider.getPayment).toHaveBeenCalledWith("pay_current"); await untouched();
     });
+    it("classifies a foreign payment or subscription that the provider no longer finds (404)", async () => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      fake.provider.getSubscriptionLinks.mockRejectedValue(new AsaasError("REJECTED", 404));
+      const gone = await event("PAYMENT_DELETED", { paymentId: "pay_gone" }), sub = await event("SUBSCRIPTION_DELETED", { subscriptionId: "sub_gone" });
+      await makeRetryDue(sub.id); await age(gone.id);
+      expect(await processBillingInbox(5, fake.provider)).toEqual({ processed: 2 });
+      for (const id of [gone.id, sub.id]) expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "PROCESSED", lastErrorCode: "FOREIGN_RESOURCE" });
+      await untouched();
+    });
+    it("keeps the provider REJECTED code while a 404 event is inside the grace period", async () => {
+      const own = await checkout(), fake = gateway(own);
+      const item = await event("PAYMENT_DELETED", { paymentId: "pay_gone" });
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "REJECTED" });
+    });
+    it("keeps retrying a 404 for our own payment identified by the webhook payload", async () => {
+      const link = await checkout(), fake = gateway(link, []);
+      const item = await ingestBillingEvent({ id: `evt_${randomUUID()}`, event: "PAYMENT_DELETED", payment: { id: "pay_current", subscription: "sub_current", checkoutSession: link.providerCheckoutId } });
+      await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "REJECTED" });
+    });
+    it.each([400, 401, 403])("never classifies a provider HTTP %s as foreign", async status => {
+      const own = await checkout(), fake = gateway(own, [foreign(own)]);
+      fake.provider.getPaymentLinks.mockRejectedValue(new AsaasError("REJECTED", status));
+      const item = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" }); await age(item.id);
+      await processBillingInbox(5, fake.provider);
+      expect(await state.db.billingEvent.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "RETRY", lastErrorCode: "REJECTED" });
+    });
     it("keeps retrying an unbound event during the grace period", async () => {
       const own = await checkout(), fake = gateway(own, [foreign(own)]);
       const item = await event("PAYMENT_RECEIVED", { paymentId: "pay_foreign" });
