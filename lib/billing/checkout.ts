@@ -7,6 +7,7 @@ import { BILLING_PLANS, BILLING_PLAN_IDS } from "./catalog";
 import { BillingError, getBillingProviderScope, saoPauloDate } from "./config";
 import { isBillingEnabled } from "./trial";
 import { isBillingSalesEnabled } from "./sales";
+import { createPulsoCheckoutClient } from "./pulso-checkout";
 import { reconcileBillingResource } from "./reconcile";
 
 export const checkoutRequest = z.object({
@@ -32,6 +33,7 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
   if (input.expectedAmountCents !== plan.amountCents) throw new BillingError("OFFER_CHANGED");
   const gateway = provider ?? createAsaasClient();
   getAsaasCheckoutOrigin();
+  const createHostedCheckout = createPulsoCheckoutClient(scope.environment) ?? gateway.createHostedCheckout;
   // Validate encryption configuration before any financial mutation could happen.
   encryptToken("billing-readiness");
   const now = new Date();
@@ -75,7 +77,7 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
   const row = reservation.row;
   let result: Awaited<ReturnType<typeof gateway.createHostedCheckout>> | undefined;
   try {
-    result = await gateway.createHostedCheckout({ reference: row.id, name: `PING CHAT — ${plan.name}`, amountCents: row.amountCents, firstChargeDate: row.firstChargeDate });
+    result = await createHostedCheckout({ reference: row.id, name: `PING CHAT — ${plan.name}`, amountCents: row.amountCents, firstChargeDate: row.firstChargeDate });
     const encryptedUrl = encryptToken(result.url);
     const saved = await prisma.billingCheckout.updateMany({ where: { id: row.id, workspaceId, status: { in: ["CREATING", "UNKNOWN"] }, OR: [{ providerCheckoutId: null }, { providerCheckoutId: result.id }] }, data: { providerCheckoutId: result.id, checkoutUrlCiphertext: encryptedUrl, status: "OPEN", lastErrorCode: null } });
     if (saved.count !== 1) throw new BillingError("CHECKOUT_CONFLICT");

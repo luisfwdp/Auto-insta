@@ -55,7 +55,7 @@ export type AsaasPaymentPageDTO = z.infer<typeof paymentPageResponse>;
 const cancellationResponse = z.object({ id: subscriptionId, deleted: z.literal(true) });
 export type AsaasSubscriptionCancellationDTO = z.infer<typeof cancellationResponse>;
 
-async function readBoundedJson(response: Response): Promise<unknown> {
+export async function readBoundedJson(response: Response): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error();
   const decoder = new TextDecoder();
@@ -92,27 +92,26 @@ export function getAsaasCheckoutOrigin(env: Readonly<Record<string, string | und
   } catch { throw new AsaasError("CONFIGURATION"); }
 }
 
+// Preserve Asaas's returned path/query verbatim and accept only exact environment origins.
+export function checkedAsaasCheckoutLink(link: string, mode: "sandbox" | "production") {
+  const payerOrigins = mode === "production" ? ["https://asaas.com", "https://www.asaas.com"] : ["https://sandbox.asaas.com"];
+  if (link.length > 2048 || [...link].some(char => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127)
+    || link.includes("\\") || link.includes("#")) throw new Error();
+  const parsed = new URL(link);
+  const authority = /^https:\/\/([^/?#]+)/i.exec(link)?.[1];
+  if (parsed.protocol !== "https:" || !authority || authority.includes("@") || parsed.username || parsed.password
+    || parsed.hash || parsed.port || !payerOrigins.includes(parsed.origin)) throw new Error();
+  return link;
+}
+
 /** Fixed hosts only. Secrets remain in a closure and cannot enter JSON DTOs. */
 export function createAsaasClient(env: Readonly<Record<string, string | undefined>> = process.env, fetcher: typeof fetch = fetch) {
-  const mode = env.ASAAS_ENVIRONMENT;
+  const configuredMode = env.ASAAS_ENVIRONMENT;
   const key = env.ASAAS_API_KEY;
-  if ((mode !== "sandbox" && mode !== "production") || !key || key.length < 32 || /[\r\n]/.test(key)) throw new AsaasError("CONFIGURATION");
+  if ((configuredMode !== "sandbox" && configuredMode !== "production") || !key || key.length < 32 || /[\r\n]/.test(key)) throw new AsaasError("CONFIGURATION");
+  const mode = configuredMode;
   const api = mode === "production" ? "https://api.asaas.com/v3" : "https://api-sandbox.asaas.com/v3";
   const payerOrigin = mode === "production" ? "https://asaas.com" : "https://sandbox.asaas.com";
-  const payerOrigins = mode === "production" ? ["https://asaas.com", "https://www.asaas.com"] : ["https://sandbox.asaas.com"];
-
-  // Asaas's 2026-09-25 public-URL change includes Checkout 2.0. Preserve the
-  // returned path/query verbatim, while accepting only exact environment origins.
-  // docs.asaas.com/changelog/alteração-na-estrutura-de-urls-públicas-do-asaas
-  function checkedCheckoutLink(link: string) {
-    if (link.length > 2048 || [...link].some(char => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127)
-      || link.includes("\\") || link.includes("#")) throw new Error();
-    const parsed = new URL(link);
-    const authority = /^https:\/\/([^/?#]+)/i.exec(link)?.[1];
-    if (parsed.protocol !== "https:" || !authority || authority.includes("@") || parsed.username || parsed.password
-      || parsed.hash || parsed.port || !payerOrigins.includes(parsed.origin)) throw new Error();
-    return link;
-  }
 
   async function createHostedCheckout(input: HostedCheckoutInput) {
     const parsed = checkoutInput.safeParse(input);
@@ -146,7 +145,7 @@ export function createAsaasClient(env: Readonly<Record<string, string | undefine
       // An invalid present link is an uncertain POST outcome, not a reason to
       // reconstruct/retry. The documented id-only canonical URL is a fallback
       // exclusively for responses that omit link. Neither URL grants paid access.
-      const url = result.data.link === undefined ? `${payerOrigin}/checkoutSession/show?id=${encodeURIComponent(result.data.id)}` : checkedCheckoutLink(result.data.link);
+      const url = result.data.link === undefined ? `${payerOrigin}/checkoutSession/show?id=${encodeURIComponent(result.data.id)}` : checkedAsaasCheckoutLink(result.data.link, mode);
       return { id: result.data.id, url };
     } catch { throw new AsaasError("UNKNOWN_OUTCOME"); }
   }

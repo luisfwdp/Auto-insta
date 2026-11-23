@@ -165,6 +165,29 @@ financial records. Do not roll a paid installation back to a worker without bill
 maintenance indefinitely; preserve cancellation processing or carry out a reviewed
 provider-side operational plan. Never drop financial/trial tables to roll back.
 
+## Direct checkout through Pulso
+
+Register `ping-chat` in the Pulso instance for the environment being deployed. Set
+`PULSO_CHECKOUT_ORIGIN`, `PULSO_CHECKOUT_ENVIRONMENT`, `PULSO_APP_TOKEN`, and the
+dedicated `PULSO_PROTECTION_BYPASS` for protected deployments in the web project's
+server environment. Set `PULSO_CHECKOUT_ENABLED=true` once the checks below pass.
+
+With the flag enabled, new direct checkouts use Pulso's `/api/checkouts`, with the
+Ping Chat checkout ID as the order ID. The existing Ping Chat Asaas webhook and
+worker must remain configured for canonical payment reconciliation and cancellation.
+Pulso records receipts using its own Asaas webhook. The app registration in Pulso
+can omit a callback URL because Ping Chat receives Asaas events directly.
+
+Compare `GET /v3/wallets/` using each deployment's own Asaas credential. The
+wallet ID and provider environment must match. In Sandbox, confirm that a paid
+recurring checkout appears under `ping-chat` in Pulso and that Ping Chat grants
+access after Asaas reconciliation. Verify a renewal, cancellation and refund.
+Repeat the wallet comparison after an account or credential change.
+
+If creation times out, look up the original `orderId` under the `ping-chat` app
+in Pulso and confirm its provider ID in Asaas before resolving the Ping Chat
+intent. Disabling the flag restores direct Asaas creation for new checkouts.
+
 ## Official references
 
 - [Checkout and callbacks](https://docs.asaas.com/reference/criar-novo-checkout)
@@ -173,3 +196,4 @@ provider-side operational plan. Never drop financial/trial tables to roll back.
 - [Remove subscription](https://docs.asaas.com/reference/remover-assinatura)
 - [Webhook idempotence](https://docs.asaas.com/docs/how-to-implement-idempotence-in-webhooks)
 - [Provider URL changes](https://docs.asaas.com/changelog/altera%C3%A7%C3%A3o-na-estrutura-de-urls-p%C3%BAblicas-do-asaas)
+- [Retrieve Asaas wallet ID](https://docs.asaas.com/reference/recuperar-walletid)
