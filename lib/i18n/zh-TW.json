@@ -431,7 +431,7 @@
   "Waiting": "等待中",
   "Waiting for next reel": "等待下一則 Reels",
   "We could not load your real data. Nothing estimated was shown.": "無法載入您的真實資料，因此未顯示任何估算值。",
-  "We send the link only after they tap the button and Instagram confirms the follow. If it can't be verified, we send it anyway.": "對方點擊按鈕且 Instagram 確認已追蹤後，才傳送連結。若無法驗證追蹤狀態，仍會傳送連結。",
+  "We send the link only when Instagram confirms the follow. If verification is unavailable, the link stays protected and they can try again with the button.": "只有 Instagram 確認對方已追蹤時，才會傳送連結。若暫時無法驗證，連結仍受保護，對方可以點擊按鈕再試一次。",
   "We sent you a secure sign-in link. Open it on this device to continue.": "安全登入連結已寄到你的信箱，請在這台裝置上開啟。若未看到郵件，請檢查垃圾郵件資料夾。",
   "Webhook Failures": "Webhook 接收錯誤",
   "Webhook configured. Choose an Instagram account for PING CHAT:": "Webhook 已設定，請選擇要在 PING CHAT 使用的 Instagram 帳號：",
