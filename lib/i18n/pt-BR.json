@@ -431,7 +431,7 @@
   "Waiting": "Aguardando",
   "Waiting for next reel": "Aguardando o próximo reel",
   "We could not load your real data. Nothing estimated was shown.": "Não foi possível carregar seus dados reais. Nenhuma estimativa foi exibida.",
-  "We send the link only after they tap the button and Instagram confirms the follow. If it can't be verified, we send it anyway.": "Só enviamos o link depois que a pessoa toca no botão e o Instagram confirma que ela está seguindo. Se não for possível verificar, enviamos mesmo assim.",
+  "We send the link only when Instagram confirms the follow. If verification is unavailable, the link stays protected and they can try again with the button.": "Só enviamos o link quando o Instagram confirma que a pessoa segue a conta. Se não for possível verificar, o link continua protegido e ela pode tentar de novo pelo botão.",
   "We sent you a secure sign-in link. Open it on this device to continue.": "Enviamos um link de acesso seguro. Abra-o neste dispositivo para continuar.",
   "Webhook Failures": "Falhas de webhook",
   "Webhook configured. Choose an Instagram account for PING CHAT:": "Webhook configurado. Escolha uma conta do Instagram para o PING CHAT:",
