@@ -20,7 +20,9 @@ depois de o provedor confirmar que a pessoa segue a conta. A afirmação no bot�
 
 O fallback de leitura não envia pedido nem link sem confirmação. Um botão
 `reveal:` enviado antes de a exigência ser habilitada passa pela mesma validação
-atual da campanha. A política vale para Meta e para o resultado normalizado do
+atual da campanha. Sem confirmação, esse primeiro clique recebe o pedido para
+seguir imediatamente; somente o botão do pedido inicia as reconsultas. A política
+vale para Meta e para o resultado normalizado do
 provedor legado: resultado desconhecido não equivale a seguidor.
 
 O diagnóstico distingue “Follow gate rejected a button tap”, para `false`, de

@@ -1000,7 +1000,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
       // who tap it simply don't follow yet — so they get the follow prompt
       // right away. Only the prompt's own button earns the delayed re-check;
       // holding an opening tap for it left people staring at a silent chat.
-      if (!fromOpeningDm) {
+      if (isFollowCheck && !fromOpeningDm) {
         // A `false` on a button tap: give the follow time to register and look
         // again, rather than rejecting someone who just followed.
         //

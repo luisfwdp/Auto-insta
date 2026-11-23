@@ -1585,6 +1585,23 @@ describe("durable Zernio postback delivery", () => {
 describe("DM Worker — follow-gate re-check", () => {
   const gated = { ...mockAutomation, requireFollow: true, trackedLinks: [] };
 
+  it.each([false, null])("prompts immediately on the first legacy reveal tap without a follow claim (%s)", async follows => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(follows);
+
+    await getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "reveal:auto_789",
+    }));
+
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledWith(
+      "decrypted_token", "ig_456", "commenter_999", expect.any(String), expect.any(String), "followcheck:auto_789");
+    expect(mockQueueAdd).not.toHaveBeenCalled();
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+    expect(mockReserveWorkspaceDMSend).not.toHaveBeenCalled();
+    expect(mockPrisma.operationalEvent.create).not.toHaveBeenCalled();
+  });
+
   it.each([false, null])("does not let an older reveal button bypass the current follow requirement (%s)", async follows => {
     mockPrisma.automation.findFirst.mockResolvedValue(gated);
     mockGetUserFollowStatus.mockResolvedValue(follows);
