@@ -658,10 +658,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         context: accessToken,
         recipientId: commenterId,
       });
-      sendFollowPrompt =
-        accessToken.provider === "ZERNIO"
-          ? alreadyFollows === false
-          : alreadyFollows !== true;
+      sendFollowPrompt = alreadyFollows !== true;
     }
 
     let claimed;
@@ -982,13 +979,11 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     ]))
     .digest("hex");
 
-  // Follow-gate: before revealing the link, verify the user follows. On a
-  // `followcheck:` tap a non-follower gets the prompt again (no quota spent);
-  // on a read fallback a non-follower is silently skipped — the gate must not
-  // be bypassable by just reading the DM and waiting. On a tap, following or
-  // unverifiable (null) falls through and delivers the link — fail-open so a
-  // real follower is never trapped.
-  if ((isFollowCheck || fallback) && automation.requireFollow) {
+  // Every reveal path must honor the current requirement, including buttons
+  // sent before it was enabled. A tap is consent to check, not proof of a follow:
+  // only an explicit true may unlock the link. Unknown status uses the same
+  // bounded rechecks and retry button as a follow that has not registered yet.
+  if (automation.requireFollow) {
     const follows = await getUserFollowStatus({
       context: accessToken,
       recipientId: userId,
@@ -998,7 +993,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     // "User consent is required", i.e. null), so failing open here handed the
     // link to anyone who read the opening DM and waited, follower or not.
     if (fallback && follows !== true) return;
-    if (follows === false) {
+    if (follows !== true) {
       if (fallback) return;
 
       // A tap on an opening-DM button is not a claim to follow — most people
@@ -1047,22 +1042,23 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
           return;
         }
 
-        // Last `false`: they are genuinely not following. Record it — this
-        // branch used to return without writing anything at all, so a gate that
-        // turned people away left no trace and its rejection rate could not be
-        // measured, only guessed at from complaints.
+        // Distinguish a confirmed non-follow from an unavailable check. Neither
+        // releases the link; the retry button remains usable on a later tap.
         await prisma.operationalEvent
           .create({
             data: {
               workspaceId: automation.workspaceId,
               source: "WORKER",
               level: "INFO",
-              message: "Follow gate rejected a button tap",
+              message: follows === false
+                ? "Follow gate rejected a button tap"
+                : "Follow gate could not verify a button tap",
               payload: {
                 automationId: automation.id,
                 automationName: automation.name,
-                userId,
-                commenterName,
+                ...(follows === false
+                  ? { userId, commenterName }
+                  : { reason: "UNVERIFIED_FOLLOW_STATUS" }),
               },
             },
           })
@@ -1419,21 +1415,15 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
 
     // Follow gate: anyone not confirmed as a follower gets the prompt instead of
     // the link, with the same `followcheck:` button that re-verifies on tap.
-    // `null` (unverifiable) prompts too — this is first contact, exactly like a
-    // comment, so it follows processComment's fail-closed rule rather than the
-    // postback path's fail-open one. Fail-open is only safe after a tap, where
-    // the user has already claimed to follow; here it would hand the link to
-    // anyone whose status the API happens not to resolve.
+    // `null` (unverifiable) prompts too: claiming to follow never substitutes
+    // for a positive provider check, on first contact or a later button tap.
     let sendFollowPrompt = false;
     if (automation.requireFollow) {
       const follows = await getUserFollowStatus({
         context: accessToken,
         recipientId: senderId,
       });
-      sendFollowPrompt =
-        accessToken.provider === "ZERNIO"
-          ? follows === false
-          : follows !== true;
+      sendFollowPrompt = follows !== true;
     }
 
     const usage = await reserveWorkspaceDMSend(automation.workspaceId);
