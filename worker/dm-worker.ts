@@ -9,6 +9,7 @@ import { createPublishingWorker } from "@/lib/queue/publishing-worker";
 import { enqueueDuePublications } from "@/lib/queue/publishing";
 import { auditMetaWebhookSubscriptions } from "@/lib/ops/meta-webhook-audit";
 import { startBillingMaintenance } from "@/lib/billing/worker";
+import { sendTrialEndedNotices } from "@/lib/email/trial-ended";
 import { applyRetention } from "@/lib/privacy/retention";
 import os from "node:os";
 
@@ -126,6 +127,22 @@ async function runRetention() {
 const retentionBootTimer = setTimeout(() => void runRetention(), 60_000);
 const retentionTimer = setInterval(() => void runRetention(), RETENTION_INTERVAL_MS);
 
+// Tells a workspace owner once when a trial ended without a paid plan, since
+// sends stop being admitted from that moment. No-op unless billing and email
+// are configured on the worker.
+const TRIAL_NOTICE_INTERVAL_MS = 60 * 60_000;
+async function notifyEndedTrials() {
+  try {
+    const result = await sendTrialEndedNotices();
+    if (result && (result.sent || result.failed)) console.log("[DM Worker] Trial ended notices:", result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[DM Worker] Trial ended notices failed:", message);
+  }
+}
+const trialNoticeBootTimer = setTimeout(() => void notifyEndedTrials(), 90_000);
+const trialNoticeTimer = setInterval(() => void notifyEndedTrials(), TRIAL_NOTICE_INTERVAL_MS);
+
 async function shutdown(signal: string) {
   console.log(`[DM Worker] ${signal} received, closing worker`);
   clearInterval(heartbeatTimer);
@@ -135,6 +152,8 @@ async function shutdown(signal: string) {
   clearInterval(webhookAuditTimer);
   clearTimeout(retentionBootTimer);
   clearInterval(retentionTimer);
+  clearTimeout(trialNoticeBootTimer);
+  clearInterval(trialNoticeTimer);
   await Promise.all([worker.close(), publishingWorker.close(), billingMaintenance.stop()]);
   process.exit(0);
 }
