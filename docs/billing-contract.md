@@ -114,3 +114,13 @@ trials during rollback. No destructive down migration is supplied.
 - [Subscription retrieval](https://docs.asaas.com/reference/recuperar-uma-unica-assinatura)
 - [Checkout webhooks](https://docs.asaas.com/docs/eventos-para-checkout)
 - [Retries and idempotency](https://docs.asaas.com/docs/retries-e-idempot%C3%AAncia)
+
+### Indicações da Batida Mídia
+
+O link de indicação guarda o código em um cookie restrito ao checkout. Ao
+contratar em um workspace autorizado, a primeira criação de checkout indicado
+usa a Batida e o Pulso para registrar a atribuição. O processamento monetário
+e a liberação de acesso do Ping Chat consultam a mesma conta Asaas já
+configurada para o workspace. Configure `BATIDA_AFFILIATE_CHECKOUT_SECRET`
+somente com a Batida apontando para o mesmo ambiente e a mesma conta Asaas.
+Retomadas seguem o fluxo de reuso e conciliação do checkout existente.
