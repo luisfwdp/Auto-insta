@@ -11,7 +11,7 @@ import styles from "./pricing.module.css";
 
 export async function generateMetadata(): Promise<Metadata> {
   const { t } = await getI18n();
-  return { title: t("Pricing - CRIA PING"), description: t(isBillingEnabled() ? "Subscription plans and a 3-day card-free trial." : "New subscriptions are temporarily unavailable.") };
+  return { title: t("Pricing - PING CHAT"), description: t(isBillingEnabled() ? "Subscription plans and a 3-day card-free trial." : "New subscriptions are temporarily unavailable.") };
 }
 
 export default async function PricingPage() {

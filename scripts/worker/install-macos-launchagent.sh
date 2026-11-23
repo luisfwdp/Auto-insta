@@ -60,4 +60,4 @@ PLIST
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "Worker started. Logs: tail -f $LOG"
-echo "Check: curl -s https://auto-insta-pi.vercel.app/api/health  (worker.healthy should be true within ~30s)"
+echo "Check: curl -s https://www.pingchatbr.app/api/health  (worker.healthy should be true within ~30s)"

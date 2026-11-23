@@ -86,7 +86,7 @@ export default function Sidebar({
                   priority
                   className="h-auto w-[168px]"
                 />
-              ) : "OpenReply"}
+              ) : "PING CHAT"}
             </Link>
             <button type="button" onClick={onClose} className="min-h-11 min-w-11 rounded border border-[#828282] lg:hidden" aria-label={t("Close menu")}>×</button>
           </div>

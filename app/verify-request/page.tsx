@@ -5,7 +5,7 @@ import styles from "../login/auth-page.module.css";
 export async function generateMetadata() {
   const { t } = await getI18n();
   return {
-    title: t("Check your email - CRIA PING"),
+    title: t("Check your email - PING CHAT"),
     description: t("A sign-in link was sent to your email."),
   };
 }

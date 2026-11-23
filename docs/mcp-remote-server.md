@@ -6,9 +6,9 @@ passwords or Meta access tokens.
 
 ## Production URLs
 
-- MCP Streamable HTTP: `https://auto-insta-pi.vercel.app/api/mcp`
-- Protected resource metadata: `https://auto-insta-pi.vercel.app/.well-known/oauth-protected-resource/mcp`
-- Authorization server metadata: `https://auto-insta-pi.vercel.app/.well-known/oauth-authorization-server`
+- MCP Streamable HTTP: `https://www.pingchatbr.app/api/mcp`
+- Protected resource metadata: `https://www.pingchatbr.app/.well-known/oauth-protected-resource/mcp`
+- Authorization server metadata: `https://www.pingchatbr.app/.well-known/oauth-authorization-server`
 
 The deployment URL is derived from `NEXTAUTH_URL`; use the matching host in staging.
 

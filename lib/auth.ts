@@ -8,7 +8,7 @@ import { sendWelcomeEmail } from "@/lib/email/welcome";
 
 type AdapterPrismaClient = Parameters<typeof PrismaAdapter>[0];
 
-const emailFrom = process.env.EMAIL_FROM ?? "OpenReply <login@example.com>";
+const emailFrom = process.env.EMAIL_FROM ?? "PING CHAT <login@example.com>";
 export const EMAIL_PROVIDER_ID = "resend";
 
 export const authConfig = {
