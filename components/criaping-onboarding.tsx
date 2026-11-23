@@ -48,7 +48,7 @@ export default function CriapingOnboarding({ metaConfigured }: { metaConfigured:
   const completed = steps.filter(step => step.complete).length;
   const currentStep = steps.findIndex(step => !step.complete);
   return <div className={styles.page}>
-    <header><h1>{t("Welcome to CRIA PING")}</h1><p>{t("Your first campaign starts here.")}</p></header>
+    <header><h1>{t("Welcome to PING CHAT")}</h1><p>{t("Your first campaign starts here.")}</p></header>
     <Link className={styles.link} href="/dashboard">{t("Back to dashboard")}</Link>
     {!loading && error === null && <section className={styles.setup} aria-labelledby="setup-progress">
       <div className={styles.header}><h2 id="setup-progress">{t("Workspace setup")}</h2><span className={styles.muted}>{t("{completed} of {total} steps completed", { completed, total: steps.length })}</span></div>

@@ -18,7 +18,7 @@ const SETUP_DOCS_URL = `${GITHUB_URL}/blob/main/docs/setup.md`;
 export async function generateMetadata() {
   const { t } = await getI18n();
   return {
-    title: t("Sign in - CRIA PING"),
+    title: t("Sign in - PING CHAT"),
     description: t("Sign in to manage Instagram comment-to-DM campaigns."),
   };
 }
@@ -39,14 +39,14 @@ export default async function LoginPage({
       <div className="min-h-screen flex items-center justify-center px-6">
         <div className="w-full max-w-md text-center">
           <h1 className="text-2xl font-semibold text-foreground">
-            OpenReply
+            PING CHAT
           </h1>
           <div className="panel rounded p-8 mt-8 shadow-black/40">
             <h2 className="text-lg font-semibold text-foreground">
               {t("Sign-in is off on this demo")}
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-muted">
-              {t("This is the public demo — it doesn’t create real accounts or send DMs. To use OpenReply for real, clone it and run your own instance with your own Meta app and domain.")}
+              {t("This is the public demo — it doesn’t create real accounts or send DMs. To use PING CHAT for real, clone it and run your own instance with your own Meta app and domain.")}
             </p>
             <a
               href={SETUP_DOCS_URL}

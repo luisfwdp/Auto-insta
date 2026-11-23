@@ -53,7 +53,7 @@ export default function CriapingDashboard({ stats, loading, error, selectedAccou
   return <div className="space-y-8 font-[family-name:var(--cp-font-body)]">
     <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#C7FF2F]">CRIA PING</p>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#C7FF2F]">PING CHAT</p>
         <h1 className="font-[family-name:var(--cp-font-heading)] text-3xl font-bold tracking-tight sm:text-4xl">
           {t("Hello, {name}!", { name: stats.userName ?? t("there") })}
         </h1>
