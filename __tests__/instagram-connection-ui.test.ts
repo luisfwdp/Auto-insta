@@ -100,8 +100,8 @@ describe("Instagram connection interface", () => {
     expect(html).not.toContain(rawReason);
   });
 
-  it("distinguishes a commercial-access block from a workspace-role denial", () => {
-    navigation.params = new URLSearchParams({ instagram: "forbidden", reason: "billing_required" });
+  it.each(["forbidden", "failed"])("distinguishes a %s commercial-access block from a workspace-role denial", status => {
+    navigation.params = new URLSearchParams({ instagram: status, reason: "billing_required" });
     const html = renderToStaticMarkup(createElement(InstagramConnectNotice));
 
     expect(html).toContain("Check your trial or subscription");
@@ -117,6 +117,16 @@ describe("Instagram connection interface", () => {
 
   it.each([null, "permission_denied", "billing_required_extra"])("keeps role-denial feedback for unrelated reasons (%s)", reason => {
     expect(resolveInstagramConnectFeedback("forbidden", reason)?.title).toBe("Not permitted");
+  });
+
+  it("explains a callback account limit without retrying OAuth or blaming Meta", () => {
+    navigation.params = new URLSearchParams({ instagram: "failed", reason: "plan_limit" });
+    const html = renderToStaticMarkup(createElement(InstagramConnectNotice));
+    expect(html).toContain("Instagram account limit reached");
+    expect(html).toContain('href="/billing"');
+    expect(html).not.toContain('href="/api/instagram/connect"');
+    expect(html).not.toContain("Instagram connection failed");
+    expect(html).not.toContain("plan_limit");
   });
 
   it("renders an assertive alert for an incomplete OAuth return", () => {

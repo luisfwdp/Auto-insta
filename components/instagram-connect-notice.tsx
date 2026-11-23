@@ -63,7 +63,7 @@ export function resolveInstagramConnectFeedback(
   reason: string | null,
 ): InstagramConnectFeedback | null {
   if (!status || status === "misconfigured") return null;
-  if (status === "forbidden" && reason === "billing_required") {
+  if ((status === "forbidden" || status === "failed") && reason === "billing_required") {
     return {
       tone: "warning",
       title: "Check your trial or subscription",
@@ -73,6 +73,15 @@ export function resolveInstagramConnectFeedback(
     };
   }
   if (status !== "failed") return MESSAGES[status] ?? null;
+  if (reason === "plan_limit") {
+    return {
+      tone: "warning",
+      title: "Instagram account limit reached",
+      detail: "Your trial or plan has reached its Instagram account limit. Review usage and subscription options in Billing and subscription.",
+      action: "Billing and subscription",
+      actionHref: "/billing",
+    };
+  }
 
   const normalized = (reason ?? "").toLowerCase();
   if (normalized.includes("no instagram account was shared") || normalized.includes("professional account")) {
