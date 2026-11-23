@@ -63,6 +63,15 @@ export function resolveInstagramConnectFeedback(
   reason: string | null,
 ): InstagramConnectFeedback | null {
   if (!status || status === "misconfigured") return null;
+  if (status === "forbidden" && reason === "billing_required") {
+    return {
+      tone: "warning",
+      title: "Check your trial or subscription",
+      detail: "Connecting or reconnecting Instagram requires an active trial or subscription for this workspace. Check Billing and subscription.",
+      action: "Billing and subscription",
+      actionHref: "/billing",
+    };
+  }
   if (status !== "failed") return MESSAGES[status] ?? null;
 
   const normalized = (reason ?? "").toLowerCase();

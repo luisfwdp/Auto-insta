@@ -100,6 +100,25 @@ describe("Instagram connection interface", () => {
     expect(html).not.toContain(rawReason);
   });
 
+  it("distinguishes a commercial-access block from a workspace-role denial", () => {
+    navigation.params = new URLSearchParams({ instagram: "forbidden", reason: "billing_required" });
+    const html = renderToStaticMarkup(createElement(InstagramConnectNotice));
+
+    expect(html).toContain("Check your trial or subscription");
+    expect(html).toContain('href="/billing"');
+    expect(html).not.toContain("Only workspace owners and admins");
+    expect(html).not.toContain('href="/api/instagram/connect"');
+    expect(html).not.toContain("billing_required");
+
+    const roleDenial = resolveInstagramConnectFeedback("forbidden", null);
+    expect(roleDenial?.title).toBe("Not permitted");
+    expect(roleDenial?.actionHref).toBeUndefined();
+  });
+
+  it.each([null, "permission_denied", "billing_required_extra"])("keeps role-denial feedback for unrelated reasons (%s)", reason => {
+    expect(resolveInstagramConnectFeedback("forbidden", reason)?.title).toBe("Not permitted");
+  });
+
   it("renders an assertive alert for an incomplete OAuth return", () => {
     navigation.params = new URLSearchParams({ instagram: "invalid" });
     const html = renderToStaticMarkup(createElement(InstagramConnectNotice));
