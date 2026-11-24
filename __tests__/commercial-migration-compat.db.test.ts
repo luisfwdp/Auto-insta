@@ -10,14 +10,18 @@ import { beforeAll, afterAll, describe, expect, it } from "vitest";
 
 const url = process.env.TEST_DATABASE_URL, schema = `commercial_rollout_${randomBytes(5).toString("hex")}`;
 const candidate = "20261118040000_commercial_usage";
+const lifetimeCandidate = "20261123233000_workspace_lifetime_access";
+const root = path.join(__dirname, "..", "prisma", "migrations");
+const migrationNames = readdirSync(root, { withFileTypes: true }).filter(file => file.isDirectory()).map(file => file.name).sort();
 let sql: Client, db: PrismaClient;
 
 describe.skipIf(!url)("commercial additive migration ordering", () => {
   beforeAll(async () => {
     sql = new Client({ connectionString: url }); await sql.connect();
     await sql.query(`CREATE SCHEMA "${schema}"`); await sql.query(`SET search_path TO "${schema}"`);
-    const root = path.join(__dirname, "..", "prisma", "migrations");
-    for (const name of readdirSync(root, { withFileTypes: true }).filter(file => file.isDirectory() && file.name !== candidate).map(file => file.name).sort())
+    // Reproduce chronological deployment, not a schema with later migrations
+    // applied before their missing enum/table dependencies.
+    for (const name of migrationNames.filter(name => name < candidate))
       await sql.query(readFileSync(path.join(root, name, "migration.sql"), "utf8"));
     db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, max: 2, options: `-c search_path=${schema}` }, { schema }) });
     await sql.query(`INSERT INTO "User" ("id","email","updatedAt") VALUES ('rollout-owner','rollout-owner@example.test',NOW())`);
@@ -36,11 +40,22 @@ describe.skipIf(!url)("commercial additive migration ordering", () => {
     const old = await sql.query(`SELECT u."id",u."email",u."name",u."image",s."id" AS "sessionId",w."name" AS "workspaceName"
       FROM "User" u JOIN "Session" s ON s."userId"=u."id" JOIN "Workspace" w ON w."ownerId"=u."id"`);
     await sql.query(readFileSync(path.join(__dirname, "..", "prisma", "migrations", candidate, "migration.sql"), "utf8"));
+    for (const name of migrationNames.filter(name => name > candidate && name < lifetimeCandidate))
+      await sql.query(readFileSync(path.join(root, name, "migration.sql"), "utf8"));
     const session = await adapter.getSessionAndUser!("local-disposable-session-only");
     expect(session?.user.id).toBe("rollout-owner"); expect(session?.session.userId).toBe("rollout-owner");
     expect(await db.user.findUnique({ where: { id: "rollout-owner" }, select: { activeWorkspaceId: true } })).toEqual({ activeWorkspaceId: null });
     const after = await sql.query(`SELECT u."id",u."email",u."name",u."image",s."id" AS "sessionId",w."name" AS "workspaceName"
       FROM "User" u JOIN "Session" s ON s."userId"=u."id" JOIN "Workspace" w ON w."ownerId"=u."id"`);
     expect(after.rows).toEqual(old.rows);
+    const trialStartedAt = new Date(), trialEndsAt = new Date(trialStartedAt.getTime() + 72 * 3600000);
+    await db.workspaceBilling.create({ data: { workspaceId: "rollout-workspace", trialStartedAt, trialEndsAt } });
+    // Old scalar projections and authentication still work; the new license
+    // loader requires its own additive migration before deployment.
+    const billingBefore = await db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "rollout-workspace" } });
+    await expect(db.workspaceBilling.findUnique({ where: { workspaceId: "rollout-workspace" }, include: { lifetimeAccess: true } })).rejects.toMatchObject({ code: "P2021" });
+    await sql.query(readFileSync(path.join(root, lifetimeCandidate, "migration.sql"), "utf8"));
+    expect(await db.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "rollout-workspace" }, include: { lifetimeAccess: true } })).toEqual({ ...billingBefore, lifetimeAccess: null });
+    expect((await adapter.getSessionAndUser!("local-disposable-session-only"))?.user.id).toBe("rollout-owner");
   });
 });
