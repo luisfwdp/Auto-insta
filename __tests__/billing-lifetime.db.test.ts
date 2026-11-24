@@ -24,6 +24,12 @@ async function asRole<T>(role: string, run: () => Promise<T>) {
   await sql.query(`SET ROLE "${role}"`);
   try { return await run(); } finally { await sql.query("RESET ROLE"); }
 }
+function administrativeGrant(ownerId = "owner-a") {
+  return readFileSync(path.join(__dirname, "..", "docs/workspace-lifetime-grant.sql"), "utf8")
+    .replaceAll("public.", `"${schema}".`)
+    .replaceAll("WORKSPACE_ID_REPLACE_AFTER_REVIEW", "workspace-b")
+    .replaceAll("OWNER_ID_REPLACE_AFTER_REVIEW", ownerId);
+}
 describe.skipIf(!url)("administrative lifetime license and runtime RLS", () => {
   beforeAll(async () => {
     sql = new Client({ connectionString: url }); await sql.connect();
@@ -165,6 +171,23 @@ describe.skipIf(!url)("administrative lifetime license and runtime RLS", () => {
     await expect(reserveCommercialStorageAsset("workspace-a", input, 30000000000)).resolves.toMatchObject({ workspaceId: "workspace-a" });
     await expect(reserveCommercialStorageAsset("workspace-a", input, 1)).rejects.toMatchObject({ code: "COMMERCIAL_STORAGE_LIMIT" });
     await expect(reserveCommercialStorageAsset("workspace-b", input, 1)).rejects.toMatchObject({ code: "COMMERCIAL_ACCESS_DENIED" });
+  });
+  it("applies the reviewed administrative template idempotently without editing trial or financial history", async () => {
+    const before = await admin.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-b" } });
+    await sql.query(administrativeGrant()); await sql.query(administrativeGrant());
+    expect(await readLifetimeBillingStatus("workspace-b")).toEqual({ status: "LIFETIME", hasAccess: true, planId: "agency-v1" });
+    expect(await admin.workspaceLifetimeAccess.count({ where: { workspaceId: "workspace-b" } })).toBe(1);
+    expect(await admin.workspaceBilling.findUniqueOrThrow({ where: { workspaceId: "workspace-b" } })).toEqual(before);
+    expect(await admin.billingCheckout.count()).toBe(0); expect(await admin.billingPayment.count()).toBe(0);
+    await admin.workspaceLifetimeAccess.update({ where: { workspaceId: "workspace-b" }, data: { revokedAt: new Date(), revokedBy: "fixture-operator", revocationReason: "Authorized rollback" } });
+    await expect(sql.query(administrativeGrant())).rejects.toThrow("Existing license differs"); await sql.query("ROLLBACK");
+    expect(await readLifetimeBillingStatus("workspace-b")).toBeNull();
+  });
+  it("refuses stale-owner and active-checkout administrative grants before any license is inserted", async () => {
+    await expect(sql.query(administrativeGrant("owner-b"))).rejects.toThrow("Workspace owner changed"); await sql.query("ROLLBACK");
+    await admin.billingCheckout.create({ data: { workspaceId: "workspace-b", environment: "sandbox", accountScope: "12000000-0000-4000-8000-000000000001", requestId: randomUUID(), planId: "essential-v1", amountCents: 7900, firstChargeDate: "2026-11-23", billingAnchorDay: 23 } });
+    await expect(sql.query(administrativeGrant())).rejects.toThrow("Resolve financial or administrative state"); await sql.query("ROLLBACK");
+    expect(await admin.workspaceLifetimeAccess.count({ where: { workspaceId: "workspace-b" } })).toBe(0);
   });
   it("requires complete grant and revocation audit evidence at the database boundary", async () => {
     for (const data of [{ revokedAt: new Date() }, { revokedAt: new Date(), revokedBy: "operator" }, { reason: " " }, { planId: "unknown" }]) {
