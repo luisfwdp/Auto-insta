@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import { isBillingEnabled } from "@/lib/billing/trial";
+import { evaluateLifetimeAccess } from "@/lib/billing/lifetime";
 import { emailSettings, sendEmail, textToHtml } from "./send";
 
 /**
@@ -44,13 +45,17 @@ export async function sendTrialEndedNotices(now = new Date()): Promise<TrialNoti
       trialEndsAt: { lte: now, gt: new Date(now.getTime() - TRIAL_ENDED_LOOKBACK_MS) },
       paidThrough: null,
     },
-    select: { workspaceId: true, workspace: { select: { owner: { select: { email: true } } } } },
+    select: { workspaceId: true, status: true, lifetimeAccess: true,
+      workspace: { select: { id: true, ownerId: true, owner: { select: { email: true } } } } },
     orderBy: { trialEndsAt: "asc" },
     take: MAX_NOTICES_PER_RUN,
   });
 
   const result: TrialNoticeResult = { candidates: ended.length, sent: 0, failed: 0 };
   for (const billing of ended) {
+    // A licensed workspace keeps an expired TRIALING record but still has
+    // access, so telling its owner that campaigns stopped would be false.
+    if (evaluateLifetimeAccess(billing.workspace, billing, now)) continue;
     const email = billing.workspace.owner.email;
     if (!email) continue;
     const already = await prisma.operationalEvent.findFirst({

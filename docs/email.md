@@ -55,7 +55,8 @@ e-mail, uma única vez, com o link para `/billing`
   `NEXTAUTH_URL` (ou `AUTH_URL`) **definidos no worker**. Sem eles, não faz nada.
   `EMAIL_REPLY_TO` é opcional.
 - Considera testes encerrados nos últimos 3 dias, ainda `TRIALING` e sem
-  `paidThrough`.
+  `paidThrough`. Workspaces com licença vitalícia válida são ignorados, porque
+  continuam com acesso.
 - O controle de "já avisado" é um `OperationalEvent` com a mensagem
   `Trial ended notice sent`, sem o endereço de e-mail. Se o provedor recusar o
   envio, nada é gravado e a próxima rodada tenta de novo.

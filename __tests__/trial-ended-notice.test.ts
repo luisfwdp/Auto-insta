@@ -11,7 +11,14 @@ import { MIN_RETENTION_DAYS } from "@/lib/privacy/retention";
 
 const fetchMock = vi.fn();
 const now = new Date("2026-11-23T12:00:00.000Z");
-const row = (workspaceId: string, email: string | null) => ({ workspaceId, workspace: { owner: { email } } });
+const row = (workspaceId: string, email: string | null, lifetimeAccess: unknown = null) => ({
+  workspaceId, status: "TRIALING", lifetimeAccess, workspace: { id: workspaceId, ownerId: "owner_1", owner: { email } },
+});
+const grant = (workspaceId: string, extra: Record<string, unknown> = {}) => ({
+  id: "7a1d2c3e-4b5f-4a6b-8c7d-9e0f1a2b3c4d", workspaceId, ownerId: "owner_1", planId: "agency-v1",
+  grantedAt: new Date("2026-11-22T00:00:00.000Z"), grantedBy: "operator", reason: "approved", approvalReference: "ref-1",
+  revokedAt: null, ...extra,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -81,6 +88,21 @@ describe("trial ended notice", () => {
     mocks.billingFindMany.mockResolvedValue([row("ws_1", null), row("ws_2", "b@example.test")]);
     expect(await sendTrialEndedNotices(now)).toEqual({ candidates: 2, sent: 1, failed: 0 });
     expect(mocks.eventCreate.mock.calls[0][0].data.workspaceId).toBe("ws_2");
+  });
+
+  it("does not tell a licensed workspace that its campaigns stopped", async () => {
+    mocks.billingFindMany.mockResolvedValue([row("ws_1", "owner@example.test", grant("ws_1"))]);
+    expect(await sendTrialEndedNotices(now)).toEqual({ candidates: 1, sent: 0, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.eventCreate).not.toHaveBeenCalled();
+  });
+
+  it("still notifies when the license is revoked or belongs to another owner", async () => {
+    mocks.billingFindMany.mockResolvedValue([
+      row("ws_1", "a@example.test", grant("ws_1", { revokedAt: new Date("2026-11-22T12:00:00.000Z") })),
+      row("ws_2", "b@example.test", grant("ws_2", { ownerId: "owner_other" })),
+    ]);
+    expect(await sendTrialEndedNotices(now)).toEqual({ candidates: 2, sent: 2, failed: 0 });
   });
 
   it("keeps the lookback shorter than the minimum retention of its marker", () => {
