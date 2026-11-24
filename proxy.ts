@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isTrustedBrowserOrigin } from "@/lib/api/origin";
+import { requestIp } from "@/lib/api/request-ip";
+import { requestLimitResponse, type RequestLimitPolicy } from "@/lib/api/request-rate-limit";
 
 // Every page under app/(dashboard). The layout there already refuses requests
 // without a session; this redirect only keeps the page the user asked for in
@@ -28,13 +30,25 @@ function hasSessionCookie(request: NextRequest): boolean {
   );
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   if (pathname.startsWith("/api/") && !isTrustedBrowserOrigin(request)) {
     return NextResponse.json(
       { success: false, error: "Forbidden" },
       { status: 403 }
     );
+  }
+  // Provider callbacks and cron keep their own signature/token/body guards.
+  // Do not let a shared provider IP or a Redis outage starve valid webhooks.
+  const provider = pathname === "/api/webhook" || pathname === "/api/billing/webhook"
+    || pathname.startsWith("/api/zernio/webhook/") || pathname.startsWith("/api/cron/");
+  let policy: RequestLimitPolicy | undefined;
+  if (request.method === "POST" && (pathname === "/login" || pathname === "/api/auth/signin/resend")) policy = "authRequest";
+  else if (pathname === "/api/auth/callback/resend") policy = "authVerify";
+  else if (pathname.startsWith("/api/") && !provider) policy = "api";
+  if (policy) {
+    const denied = await requestLimitResponse(policy, requestIp(request.headers));
+    if (denied) return denied;
   }
   const isProtected = PROTECTED_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)

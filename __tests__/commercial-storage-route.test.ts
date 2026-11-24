@@ -1,3 +1,4 @@
+vi.mock("@/lib/api/request-rate-limit", () => ({ requestLimitResponse: vi.fn(async () => null) }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 const state = vi.hoisted(() => ({ enabled: true, authenticated: true, role: "OWNER" }));
@@ -12,18 +13,31 @@ vi.mock("@/lib/billing/commercial-storage", async importOriginal => ({ ...await 
   confirmCommercialMediaUpload: commercial.confirm, deleteCommercialMedia: commercial.remove }));
 import { POST, PATCH, DELETE } from "../app/api/publishing/media/route";
 import { CommercialStorageError } from "../lib/billing/commercial-storage";
+import { requestLimitResponse } from "../lib/api/request-rate-limit";
 const input = { filename: "image.jpg", mimeType: "image/jpeg", byteSize: 1 };
 const asset = { id: "asset_a", workspaceId: "workspace_a", filename: "image.jpg", mimeType: "image/jpeg", mediaType: "IMAGE", byteSize: 1, storagePath: "workspace_a/asset_a.jpg", status: "UPLOADING", _count: { publications: 0 } };
 const signedUpload = { uploadUrl: "https://storage.example.test/upload?token=fake", token: "fake" };
 const req = (method: string, body?: unknown) => new NextRequest(`https://app.example.test/api/publishing/media${method === "DELETE" ? "?id=asset_a" : ""}`, { method,
   headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 beforeEach(() => {
+  vi.mocked(requestLimitResponse).mockReset().mockResolvedValue(null);
   vi.clearAllMocks(); state.enabled = true; state.authenticated = true; state.role = "OWNER";
   commercial.prepare.mockResolvedValue({ asset, signedUpload }); commercial.confirm.mockResolvedValue({ valid: true, asset: { ...asset, status: "READY", byteSize: 500 } }); commercial.remove.mockResolvedValue(undefined);
   old.sign.mockResolvedValue(signedUpload); old.create.mockResolvedValue(asset); old.find.mockResolvedValue(asset); old.update.mockResolvedValue({ ...asset, status: "READY" });
   old.inspect.mockResolvedValue({ byteSize: 500, contentType: "image/jpeg", prefix: new Uint8Array([255,216,255]) }); old.remove.mockResolvedValue(undefined);
 });
 describe("publishing media commercial route", () => {
+  it("rejects an exhausted workspace budget before signing a URL or changing storage", async () => {
+    vi.mocked(requestLimitResponse).mockResolvedValue(new Response(JSON.stringify({ error: "RATE_LIMITED" }), { status: 429 }) as never);
+    expect((await POST(req("POST", input))).status).toBe(429);
+    for (const operation of Object.values(commercial)) expect(operation).not.toHaveBeenCalled();
+    for (const operation of Object.values(old)) expect(operation).not.toHaveBeenCalled();
+  });
+  it("hides arbitrary legacy signer errors", async () => {
+    state.enabled = false; old.sign.mockRejectedValue(new Error("private-storage-credential"));
+    const response = await POST(req("POST", input)); expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain("private-storage-credential");
+  });
   it("delegates even one declared byte to capped admission and marks signed responses private/no-store", async () => {
     const response = await POST(req("POST", input)); expect(response.status).toBe(201);
     expect(commercial.prepare).toHaveBeenCalledWith("workspace_a", input); expect(response.headers.get("Cache-Control")).toBe("private, no-store");

@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ enabled: true, newDesign: true }));
-const mocks = vi.hoisted(() => ({ signIn: vi.fn(), context: vi.fn(), access: vi.fn(), transaction: vi.fn(), redirect: vi.fn() }));
+const mocks = vi.hoisted(() => ({ signIn: vi.fn(), context: vi.fn(), access: vi.fn(), transaction: vi.fn(), redirect: vi.fn(), limit: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ EMAIL_PROVIDER_ID: "resend", signIn: mocks.signIn }));
 vi.mock("next-auth", () => ({ AuthError: class AuthError extends Error {} }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers({ host: "app.example.test" }) }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/lib/i18n/server", () => ({ getI18n: async () => ({ t: (key: string) => key }) }));
 vi.mock("@/lib/env", () => ({ isPublicDemoHost: async () => false, isEmailAllowedToSignIn: () => true, getMissingInstagramOAuthEnv: () => [] }));
-vi.mock("@/lib/api/auth-rate-limit", () => ({ checkMagicLinkRateLimit: async () => ({ allowed: true }) }));
+vi.mock("@/lib/api/auth-rate-limit", () => ({ checkMagicLinkRateLimit: mocks.limit }));
 vi.mock("@/components/demo-notice", () => ({ DemoNotice: () => null }));
 vi.mock("@/lib/billing/trial", () => ({ isBillingEnabled: () => state.enabled }));
 vi.mock("@/lib/billing/commercial-access", () => ({ loadCommercialEntitlement: mocks.access }));
@@ -50,9 +50,23 @@ beforeEach(() => {
   mocks.transaction.mockImplementation(async operation => operation({ fixture: true }));
   mocks.redirect.mockImplementation((href: string) => { throw new Redirect(href); });
   mocks.signIn.mockResolvedValue(undefined);
+  mocks.limit.mockReset().mockResolvedValue({ allowed: true });
 });
 
 describe("template registration preserves intent through the card-free trial", () => {
+  it("counts malformed addresses inside the Server Action before rejecting them", async () => {
+    const action = formAction(await Login({ searchParams: Promise.resolve({}) }));
+    const form = new FormData(); form.set("email", "not-an-email");
+    await expect(action!(form)).rejects.toMatchObject({ location: "/login?checkEmail=1" });
+    expect(mocks.limit).toHaveBeenCalledOnce(); expect(mocks.signIn).not.toHaveBeenCalled();
+  });
+  it("does not invoke signIn when the action's server limiter is unavailable", async () => {
+    mocks.limit.mockRejectedValue(new Error("private-redis-secret"));
+    const action = formAction(await Login({ searchParams: Promise.resolve({}) }));
+    const form = new FormData(); form.set("email", "person@example.test");
+    await expect(action!(form)).rejects.toMatchObject({ location: "/login?checkEmail=1" });
+    expect(mocks.signIn).not.toHaveBeenCalled();
+  });
   it.each([undefined, "signup"])("routes a validated template through onboarding with signup mode %s", async mode => {
     expect(await requestSignIn({ mode, template: slug })).toBe(`/onboarding?template=${slug}`);
   });

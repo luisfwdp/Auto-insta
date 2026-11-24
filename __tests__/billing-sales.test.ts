@@ -1,3 +1,4 @@
+vi.mock("@/lib/api/request-rate-limit", () => ({ consumeRequestLimit: vi.fn(async () => ({ allowed: true, retryAfter: 60 })) }));
 /** Sales-circuit contract; all persistence/provider boundaries are mocked. */
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

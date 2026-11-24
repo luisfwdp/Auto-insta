@@ -75,15 +75,18 @@ export default async function LoginPage({
 
   async function sendMagicLink(formData: FormData) {
     "use server";
-    const parsed = z.email().max(254).safeParse(String(formData.get("email") ?? "").trim().toLowerCase());
-    if (!parsed.success) redirect(checkEmailUrl);
-    const email = parsed.data;
+    const candidate = String(formData.get("email") ?? "").trim().toLowerCase();
+    // The action must enforce its own limit even if invoked outside /login.
+    // Invalid addresses count too; no security decision depends on the UI.
     const limit = await checkMagicLinkRateLimit({
       headers: await headers(),
-      email,
+      email: candidate.slice(0, 254),
     }).catch(() => ({ allowed: false as const, retryAfter: 60 }));
 
     if (!limit.allowed) redirect(checkEmailUrl);
+    const parsed = z.email().max(254).safeParse(candidate);
+    if (!parsed.success) redirect(checkEmailUrl);
+    const email = parsed.data;
 
     // Keep the browser response identical for allowed and unknown addresses.
     // The signIn callback repeats this check when the magic link is consumed.

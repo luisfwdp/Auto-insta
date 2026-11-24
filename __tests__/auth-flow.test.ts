@@ -1,3 +1,4 @@
+vi.mock("@/lib/api/request-rate-limit", () => ({ requestLimitResponse: vi.fn(async () => null) }));
 /**
  * Sign-in flow guarantees the first production login relies on: the allowlist
  * decides who gets a magic link, new users get a workspace, magic links and
@@ -142,7 +143,7 @@ describe("login redirect for dashboard pages", () => {
   it("sends a signed-out visitor to /login with a relative callbackUrl", async () => {
     const { proxy } = await import("../proxy");
     for (const page of pages) {
-      const response = proxy(new NextRequest(`https://app.example${page}/x`));
+      const response = await proxy(new NextRequest(`https://app.example${page}/x`));
       const location = new URL(response.headers.get("location")!);
       expect(location.pathname).toBe("/login");
       expect(location.searchParams.get("callbackUrl")).toBe(`${page}/x`);
@@ -154,6 +155,6 @@ describe("login redirect for dashboard pages", () => {
     const request = new NextRequest("https://app.example/campaigns", {
       headers: { cookie: "__Secure-authjs.session-token=abc" },
     });
-    expect(proxy(request).headers.get("location")).toBeNull();
+    expect((await proxy(request)).headers.get("location")).toBeNull();
   });
 });

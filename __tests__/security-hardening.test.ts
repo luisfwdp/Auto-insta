@@ -1,5 +1,6 @@
+vi.mock("@/lib/api/request-rate-limit", () => ({ requestLimitResponse: vi.fn(async () => null) }));
 import { readFile } from "node:fs/promises";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import nextConfig from "../next.config";
 import { proxy } from "../proxy";
@@ -71,8 +72,8 @@ describe("magic-link brute-force protection", () => {
 });
 
 describe("browser origin allowlist", () => {
-  it("rejects cross-origin API writes without reflecting the Origin", () => {
-    const response = proxy(
+  it("rejects cross-origin API writes without reflecting the Origin", async () => {
+    const response = await proxy(
       new NextRequest("https://app.example/api/automations", {
         method: "POST",
         headers: { origin: "https://attacker.example" },
@@ -82,8 +83,8 @@ describe("browser origin allowlist", () => {
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
-  it("allows same-origin API writes", () => {
-    const response = proxy(
+  it("allows same-origin API writes", async () => {
+    const response = await proxy(
       new NextRequest("https://app.example/api/automations", {
         method: "POST",
         headers: { origin: "https://app.example" },
@@ -92,8 +93,8 @@ describe("browser origin allowlist", () => {
     expect(response.status).toBe(200);
   });
 
-  it("rejects cookie-authenticated writes that omit Origin", () => {
-    const response = proxy(
+  it("rejects cookie-authenticated writes that omit Origin", async () => {
+    const response = await proxy(
       new NextRequest("https://app.example/api/automations", {
         method: "POST",
         headers: { cookie: "__Secure-authjs.session-token=browser-session" },
@@ -102,8 +103,8 @@ describe("browser origin allowlist", () => {
     expect(response.status).toBe(403);
   });
 
-  it("allows server-to-server writes without Origin or a session cookie", () => {
-    const response = proxy(
+  it("allows server-to-server writes without Origin or a session cookie", async () => {
+    const response = await proxy(
       new NextRequest("https://app.example/api/webhook", {
         method: "POST",
       })

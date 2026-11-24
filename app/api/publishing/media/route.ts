@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db/client";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 import { ALLOWED_MEDIA, confirmAssetSchema, createAssetSchema } from "@/lib/publishing/schemas";
 import { createSignedUpload, deletePrivateObject, inspectPrivateObject, matchesDeclaredMedia, mediaStoragePath } from "@/lib/publishing/storage";
+import { requestLimitResponse } from "@/lib/api/request-rate-limit";
 
 export const runtime = "nodejs";
 
@@ -17,9 +18,14 @@ function commercialError(error: unknown) {
   });
 }
 
-async function access() {
+async function access(write = false) {
   const context = await getCurrentWorkspaceContext();
   if (!context) return { response: NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 }) };
+  if (write) {
+    if (!canManageWorkspace(context.role)) return { response: NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 }) };
+    const denied = await requestLimitResponse("media", context.workspaceId);
+    if (denied) return { response: denied };
+  }
   return { context };
 }
 
@@ -38,7 +44,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const result = await access();
+  const result = await access(true);
   if (result.response) return result.response;
   if (!canManageWorkspace(result.context!.role)) return NextResponse.json({ success: false, error: "Only owners and admins can upload media" }, { status: 403 });
 
@@ -68,13 +74,13 @@ export async function POST(request: NextRequest) {
       select: { id: true, filename: true, mimeType: true, mediaType: true, byteSize: true, status: true },
     });
     return NextResponse.json({ success: true, data: { asset, signedUpload } }, { status: 201 });
-  } catch (error) {
-    return NextResponse.json({ success: false, error: error instanceof Error ? error.message : "Unable to prepare upload" }, { status: 503 });
+  } catch {
+    return NextResponse.json({ success: false, error: "Unable to prepare upload" }, { status: 503 });
   }
 }
 
 export async function PATCH(request: NextRequest) {
-  const result = await access();
+  const result = await access(true);
   if (result.response) return result.response;
   if (!canManageWorkspace(result.context!.role)) return NextResponse.json({ success: false, error: "Only owners and admins can confirm media" }, { status: 403 });
   const parsed = confirmAssetSchema.safeParse(await request.json().catch(() => null));
@@ -112,7 +118,7 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const result = await access();
+  const result = await access(true);
   if (result.response) return result.response;
   if (!canManageWorkspace(result.context!.role)) return NextResponse.json({ success: false, error: "Only owners and admins can delete media" }, { status: 403 });
   const id = request.nextUrl.searchParams.get("id");
