@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ enabled: true, configured: true,
   context: null as { workspaceId: string; userId: string; role: "OWNER" | "ADMIN" | "MEMBER" } | null,
-  getContext: vi.fn(), checkout: vi.fn(), readCheckout: vi.fn(), cancel: vi.fn(), readCancel: vi.fn(), trial: vi.fn(), status: vi.fn(), overview: vi.fn(), usage: vi.fn(), db: vi.fn() }));
+  getContext: vi.fn(), checkout: vi.fn(), readCheckout: vi.fn(), cancel: vi.fn(), readCancel: vi.fn(), trial: vi.fn(), status: vi.fn(), overview: vi.fn(), lifetime: vi.fn(), usage: vi.fn(), db: vi.fn() }));
 vi.mock("@/lib/db/client", () => ({ prisma: new Proxy({}, { get() { state.db(); throw new Error("Unexpected DB access"); } }) }));
 vi.mock("@/lib/workspace-access", () => ({ getCurrentWorkspaceContext: () => state.getContext(), canManageBilling: (role: string) => role === "OWNER" }));
 vi.mock("@/lib/billing/config", async original => ({ ...await original<typeof import("../lib/billing/config")>(), hasBillingProviderScope: () => state.configured }));
@@ -12,6 +12,7 @@ vi.mock("@/lib/billing/checkout", async original => ({ ...await original<typeof 
 vi.mock("@/lib/billing/cancellation", () => ({ requestSubscriptionCancellation: (...args: unknown[]) => state.cancel(...args), readCancellation: (...args: unknown[]) => state.readCancel(...args) }));
 vi.mock("@/lib/billing/overview", () => ({ readBillingOverview: (...args: unknown[]) => state.overview(...args) }));
 vi.mock("@/lib/billing/commercial-overview", () => ({ readCommercialUsageOverview: (...args: unknown[]) => state.usage(...args) }));
+vi.mock("@/lib/billing/commercial-access", () => ({ readLifetimeBillingStatus: (...args: unknown[]) => state.lifetime(...args) }));
 import { POST as trialPOST } from "../app/api/billing/trial/route";
 import { POST as checkoutPOST, GET as checkoutGET } from "../app/api/billing/checkout/route";
 import { POST as cancelPOST, GET as cancelGET } from "../app/api/billing/cancel/route";
@@ -26,7 +27,7 @@ function request(name: string, method: "POST" | "GET", pin?: string) {
 }
 const writes = [["trial", trialPOST], ["checkout", checkoutPOST], ["cancel", cancelPOST]] as const;
 const reads = [["checkout", checkoutGET], ["cancel", cancelGET], ["status", statusGET], ["usage", usageGET]] as const;
-const services = () => [state.checkout, state.readCheckout, state.cancel, state.readCancel, state.trial, state.status, state.overview, state.usage, state.db];
+const services = () => [state.checkout, state.readCheckout, state.cancel, state.readCancel, state.trial, state.status, state.overview, state.lifetime, state.usage, state.db];
 async function failure(response: Response, status: number, code: string) {
   expect(response.status).toBe(status); expect(response.headers.get("cache-control")).toContain("no-store");
   expect(await response.json()).toEqual({ success: false, error: code });
@@ -39,6 +40,7 @@ beforeEach(() => {
   state.checkout.mockReset().mockResolvedValue(checkout); state.readCheckout.mockReset().mockResolvedValue(checkout);
   state.cancel.mockReset().mockResolvedValue({ id, status: "PENDING" }); state.readCancel.mockReset().mockResolvedValue({ id, status: "PENDING" });
   for (const call of [state.trial, state.status, state.overview, state.usage]) call.mockReset().mockResolvedValue({ hasAccess: true, status: "TRIALING" });
+  state.lifetime.mockReset().mockResolvedValue(null);
   vi.stubEnv("NEXTAUTH_URL", origin); vi.stubEnv("AUTH_URL", ""); vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected provider access"));
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
@@ -83,4 +85,21 @@ it("preserves cancellation during commercial rollback but still enforces the wor
 });
 it.each(["status", "usage"])("keeps %s readable by workspace members with a matching pin", async name => {
   state.context!.role = "MEMBER"; const response = await (name === "status" ? statusGET : usageGET)(request(name, "GET", "workspace-a")); expect(response.status).toBe(200);
+});
+it.each(["OWNER", "ADMIN", "MEMBER"] as const)("projects a lifetime license only for the server workspace (%s)", async role => {
+  state.context!.role = role;
+  state.overview.mockResolvedValue({ status: "EXPIRED", hasAccess: false, trialEndsAt: "2026-01-01T00:00:00Z", canCancelRenewal: true });
+  state.lifetime.mockResolvedValue({ status: "LIFETIME", hasAccess: true, planId: "agency-v1" });
+  const response = await statusGET(request("status", "GET", "workspace-a"));
+  expect(response.status).toBe(200);
+  expect((await response.json()).data).toMatchObject({ status: "LIFETIME", hasAccess: true, planId: "agency-v1", canCancelRenewal: true });
+  expect(state.lifetime).toHaveBeenCalledWith("workspace-a");
+});
+it("does not require a payment provider to project an authorized lifetime license", async () => {
+  state.configured = false;
+  state.status.mockResolvedValue({ status: "EXPIRED", hasAccess: false });
+  state.lifetime.mockResolvedValue({ status: "LIFETIME", hasAccess: true, planId: "agency-v1" });
+  const response = await statusGET(request("status", "GET", "workspace-a"));
+  expect((await response.json()).data).toMatchObject({ status: "LIFETIME", hasAccess: true });
+  expect(state.overview).not.toHaveBeenCalled();
 });

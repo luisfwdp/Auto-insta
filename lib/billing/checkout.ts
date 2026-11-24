@@ -8,6 +8,7 @@ import { BillingError, getBillingProviderScope, saoPauloDate } from "./config";
 import { isBillingEnabled } from "./trial";
 import { isBillingSalesEnabled } from "./sales";
 import { reconcileBillingResource } from "./reconcile";
+import { evaluateLifetimeAccess } from "./lifetime";
 
 export const checkoutRequest = z.object({
   requestId: z.uuid(), planId: z.enum(BILLING_PLAN_IDS),
@@ -37,9 +38,13 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
   const now = new Date();
   const reservation = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT "workspaceId" FROM "WorkspaceBilling" WHERE "workspaceId" = ${workspaceId} FOR UPDATE`;
-    const billing = await tx.workspaceBilling.findUnique({ where: { workspaceId }, include: { currentSubscription: true } });
+    const billing = await tx.workspaceBilling.findUnique({ where: { workspaceId }, include: { currentSubscription: true, lifetimeAccess: true } });
     if (!billing) throw new BillingError("TRIAL_NOT_STARTED");
     if (billing.status === "SUSPENDED") throw new BillingError("BILLING_SUSPENDED", 403);
+    if (billing.lifetimeAccess) {
+      const workspace = await tx.workspace.findUnique({ where: { id: workspaceId }, select: { id: true, ownerId: true } });
+      if (workspace && evaluateLifetimeAccess(workspace, billing, now)) throw new BillingError("LIFETIME_ACCESS_ACTIVE", 409);
+    }
     const previous = await tx.billingCheckout.findUnique({ where: { workspaceId_requestId: { workspaceId, requestId: input.requestId } } });
     if (previous) {
       if (previous.planId !== input.planId || previous.amountCents !== plan.amountCents || previous.environment !== scope.environment || previous.accountScope !== scope.accountScope) throw new BillingError("REQUEST_CONFLICT");

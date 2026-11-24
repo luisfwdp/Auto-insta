@@ -14,6 +14,7 @@ const negatives = ["anon", "authenticated", "service_role", "untrusted"].map(rol
 const roles = [backend, ...negatives];
 const tables = ["WorkspaceBilling", "TrialRedemption", "BillingCheckout", "BillingSubscription", "BillingPayment", "BillingEvent", "BillingCommand", "CommercialUsageBucket", "CommercialUsageReservation"];
 const migrationName = "20261118140000_backend_billing_rls";
+const lifetimeMigrationName = "20261123233000_workspace_lifetime_access";
 const migration = readFileSync(path.join(__dirname, "..", "prisma/migrations", migrationName, "migration.sql"), "utf8");
 const state = vi.hoisted(() => ({ db: undefined as unknown as PrismaClient }));
 vi.mock("@/lib/db/client", () => ({ get prisma() { return state.db; } }));
@@ -54,7 +55,14 @@ describe.skipIf(!url)("trusted backend billing RLS policies", () => {
       await sql.query(`CREATE SCHEMA "${schema}"`); createdSchemas.push(schema); await sql.query(`SET search_path TO "${schema}"`);
       const root = path.join(__dirname, "..", "prisma/migrations");
       for (const name of readdirSync(root, { withFileTypes: true }).filter(x => x.isDirectory()).map(x => x.name).sort()) {
-        if (name !== migrationName) await sql.query(readFileSync(path.join(root, name, "migration.sql"), "utf8"));
+        if (name !== migrationName) {
+          let source = readFileSync(path.join(root, name, "migration.sql"), "utf8");
+          if (name === lifetimeMigrationName) {
+            source = source.replaceAll("pingchat_runtime", backend);
+            for (const [i, role] of ["anon", "authenticated", "service_role"].entries()) source = source.replaceAll(`'${role}'`, `'${negatives[i]}'`);
+          }
+          await sql.query(source);
+        }
       }
       const admin = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, options: `-c search_path=${schema}` }, { schema }) }); admins.push(admin);
       state.db = admin;
@@ -64,6 +72,9 @@ describe.skipIf(!url)("trusted backend billing RLS policies", () => {
       await sql.query(`GRANT USAGE ON SCHEMA "${schema}" TO ${roles.map(role => `"${role}"`).join(",")}`);
       // Reproduce existing trusted runtime DML ACLs; the migration adds no grants.
       await sql.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA "${schema}" TO "${backend}"`);
+      // Lifetime licenses are administrative, unlike the nine mutable billing
+      // tables under test. Restore the new table's read-only runtime contract.
+      await sql.query(`REVOKE INSERT,UPDATE,DELETE ON "WorkspaceLifetimeAccess" FROM "${backend}"`);
       for (const role of negatives) await sql.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ${tables.map(table => `"${table}"`).join(",")} TO "${role}"`);
       if (index === 1) await sql.query(fixtureMigration());
       runtimes.push(new PrismaClient({ adapter: new PrismaPg({ connectionString: url, max: 10, options: `-c search_path=${schema} -c role=${backend}` }, { schema }) }));
@@ -128,7 +139,7 @@ describe.skipIf(!url)("trusted backend billing RLS policies", () => {
     });
   });
   it("adds exactly nine role-specific policies without changing ACL, ownership, RLS or role attributes", async () => {
-    const policies = (await sql.query(`SELECT tablename,roles::text[] AS roles,cmd,qual,with_check FROM pg_policies WHERE schemaname=$1 ORDER BY tablename`, [schemas[1]])).rows;
+    const policies = (await sql.query(`SELECT tablename,roles::text[] AS roles,cmd,qual,with_check FROM pg_policies WHERE schemaname=$1 AND tablename=ANY($2::text[]) ORDER BY tablename`, [schemas[1], tables])).rows;
     expect(policies).toHaveLength(9);
     expect(policies.map(row => row.tablename).sort()).toEqual([...tables].sort());
     for (const policy of policies) expect(policy).toMatchObject({ roles: [backend], cmd: "ALL", qual: "true", with_check: "true" });
@@ -162,7 +173,7 @@ describe.skipIf(!url)("trusted backend billing RLS policies", () => {
   it("is a no-op when the configured backend role does not exist", async () => {
     await sql.query(`SET search_path TO "${schemas[0]}"`);
     await sql.query(fixtureMigration(`missing_backend_${suffix}`));
-    expect((await sql.query(`SELECT * FROM pg_policies WHERE schemaname=$1`, [schemas[0]])).rowCount).toBe(0);
+    expect((await sql.query(`SELECT * FROM pg_policies WHERE schemaname=$1 AND tablename=ANY($2::text[])`, [schemas[0], tables])).rowCount).toBe(0);
   });
   it("supports rollback by dropping only policies while preserving financial rows and RLS", async () => {
     await sql.query(`SET search_path TO "${schemas[0]}"`);
