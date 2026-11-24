@@ -59,7 +59,7 @@ Linha de base verificada nesta sessão: `vitest` 26 arquivos / 322 testes passan
 | **Campanhas** | Palavra-chave → DM; um post, qualquer post ou "próximo reel"; palavra inteira/parcial; DM inicial com botão (abertura de janela); até 2 botões de link rastreado; resposta pública com variações; follow-up com atraso; gatilho por DM/resposta a Story; duplicar; importar CSV; templates | `components/campaign-builder.tsx`, `app/api/automations/*`, `lib/templates/*` |
 | **Comentários** | Webhook `comments` + reconciliador para comentários perdidos; filtro de autocomentário; deduplicação "uma resposta privada por comentário" entre campanhas | `lib/queue/process-webhook.ts`, `lib/queue/dm-worker.ts:500` |
 | **DMs** | Caixa de entrada (leitura/resposta dentro da janela de 24h, cache); logs de DM com motivo; recuperação de conversa; postback durável | `app/(dashboard)/inbox`, `lib/instagram/read-inbox.ts`, `docs/conversation-recovery.md` |
-| **Follow gate** | Pede para seguir, verifica `is_user_follow_business` no toque do botão, re-pergunta, *fail-open* em erro | `lib/queue/dm-worker.ts:640,972,1406`, `lib/meta/client.ts:269` |
+| **Follow gate** | Pede para seguir, verifica `is_user_follow_business` no toque do botão e libera o link somente com confirmação positiva; re-pergunta quando não segue ou a consulta não confirma | `lib/queue/dm-worker.ts`, `lib/meta/client.ts`; contrato em `docs/follow-verification.md` |
 | **Rate limit** | 750 respostas privadas/hora por conta (Redis), overflow enfileirado | `lib/utils/rate-limiter.ts` |
 | **Relatórios** | Dashboard (stats), Overview (insights + histórico de seguidores), relatório público compartilhável por campanha, cliques únicos por destinatário, CTR | `lib/reports/*`, `lib/tracking/*`, `app/reports/[shareSlug]` |
 | **Operação** | `/api/health` (DB, Redis, fila, heartbeat do worker), página de diagnóstico, `OperationalEvent` | `app/api/health`, `app/(dashboard)/diagnostics` |
@@ -349,7 +349,7 @@ Prioridade: **P0** = v1.0 obrigatório · **P1** = v1.0 desejável · **P2** = p
 | --- | --- | --- |
 | FG-1 | Registrar etapas do funil por envio: `PROMPTED`, `TAPPED`, `FOLLOW_CONFIRMED`, `LINK_SENT`, `FAILED_OPEN` | P0 |
 | FG-2 | Relatório de funil por campanha e conta | P0 |
-| FG-3 | Política configurável por campanha: *fail-open* (padrão atual) ou *fail-closed* com mensagem de tentar novamente | P1 |
+| FG-3 | Com `requireFollow` ativo, exigir confirmação positiva antes de liberar o link em qualquer entrada, inclusive botões antigos; consulta indisponível mantém a opção de tentar novamente | P0 |
 | FG-4 | Máximo de re-perguntas configurável, exibido no editor | P1 |
 | FG-5 | Textos padrão em pt-BR para pedido e botão | P0 |
 
@@ -398,7 +398,7 @@ model Automation {
   // + startsAt DateTime?  + endsAt DateTime?
   // + excludeKeywords String[] @default([])
   // + dailyLimit Int?
-  // + followGateFailClosed Boolean @default(false)
+  // requireFollow já exige confirmação positiva; não adicionar bypass em erro.
   // + followGateMaxPrompts Int @default(3)
 }
 

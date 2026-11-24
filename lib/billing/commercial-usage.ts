@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/db/client";
 import type { CommercialUsageResource, Prisma } from "@/app/generated/prisma/client";
-import { BillingError, getBillingProviderScope } from "./config";
+import { BillingError } from "./config";
 import { loadCommercialEntitlement } from "./commercial-access";
 import { isBillingEnabled } from "./trial";
 import { encryptToken, decryptToken } from "@/lib/meta/oauth";
+import { commercialScopeKey } from "./lifetime";
 
 const operation = z.string().regex(/^[A-Za-z0-9:_-]{1,200}$/);
 const resources = new Set<CommercialUsageResource>(["DM", "PUBLICATION", "STORAGE_BYTES", "TRANSFER_BYTES"]);
@@ -73,9 +74,7 @@ export async function reserveCommercialUsage(workspaceId: string, resource: Comm
       if (lockedPrevious.amount !== BigInt(amount) || lockedPrevious.intentFingerprint !== (intentFingerprint ?? null)) throw new BillingError("USAGE_OPERATION_CONFLICT");
       if (lockedPrevious.status !== "REJECTED") return { mode: "commercial" as const, reservationId: lockedPrevious.id, status: lockedPrevious.status };
     }
-    const scopeKey = access.subjectKind === "OWNER_TRIAL" ? "owner-trial-v1" : (() => {
-      const scope = getBillingProviderScope(); return `${scope.environment}:${scope.accountScope}`;
-    })();
+    const scopeKey = commercialScopeKey(access);
     const periodStart = access.periodStart;
     const periodEnd = access.periodEnd;
     const cap = BigInt(access.limits[limitKey[resource]]);
@@ -107,9 +106,7 @@ export async function beginCommercialDispatch(workspaceId: string, reservationId
     const access = await entitlement(tx, workspaceId);
     const row = await tx.commercialUsageReservation.findFirst({ where: { id: reservationId, workspaceId }, include: { bucket: true } });
     if (!row || row.status !== "RESERVED") return null;
-    const scopeKey = access.subjectKind === "OWNER_TRIAL" ? "owner-trial-v1" : (() => {
-      const scope = getBillingProviderScope(); return `${scope.environment}:${scope.accountScope}`;
-    })();
+    const scopeKey = commercialScopeKey(access);
     const bucket = row.bucket;
     if (bucket.resource !== row.resource || bucket.subjectKind !== access.subjectKind || bucket.subjectId !== access.subjectId || bucket.scopeKey !== scopeKey
       || bucket.periodStart.getTime() !== access.periodStart.getTime() || bucket.periodEnd.getTime() !== access.periodEnd.getTime())

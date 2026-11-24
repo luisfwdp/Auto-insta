@@ -1585,6 +1585,102 @@ describe("durable Zernio postback delivery", () => {
 describe("DM Worker — follow-gate re-check", () => {
   const gated = { ...mockAutomation, requireFollow: true, trackedLinks: [] };
 
+  it.each([false, null])("prompts immediately on the first legacy reveal tap without a follow claim (%s)", async follows => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(follows);
+
+    await getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "reveal:auto_789",
+    }));
+
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledWith(
+      "decrypted_token", "ig_456", "commenter_999", expect.any(String), expect.any(String), "followcheck:auto_789");
+    expect(mockQueueAdd).not.toHaveBeenCalled();
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+    expect(mockReserveWorkspaceDMSend).not.toHaveBeenCalled();
+    expect(mockPrisma.operationalEvent.create).not.toHaveBeenCalled();
+  });
+
+  it.each([false, null])("does not let an older reveal button bypass the current follow requirement (%s)", async follows => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(follows);
+
+    await getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999",
+      payload: "reveal:auto_789", followRecheckAttempt: 2,
+    }));
+
+    expect(mockGetUserFollowStatus).toHaveBeenCalledWith("decrypted_token", "commenter_999");
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+    expect(mockReserveWorkspaceDMSend).not.toHaveBeenCalled();
+  });
+
+  it("rechecks an unverifiable follow without delivering the link or spending reveal quota", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(null);
+
+    await getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789",
+    }));
+
+    expect(mockQueueAdd).toHaveBeenCalledWith("process-postback",
+      expect.objectContaining({ followRecheckAttempt: 1 }), expect.objectContaining({ delay: 20_000 }));
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+    expect(mockReserveWorkspaceDMSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps the retry button available after an unverifiable final check, without claiming a confirmed rejection", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(null);
+
+    await getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999",
+      payload: "followcheck:auto_789", followRecheckAttempt: 2,
+    }));
+
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledWith(
+      "decrypted_token", "ig_456", "commenter_999", expect.any(String), expect.any(String), "followcheck:auto_789");
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+    expect(mockQueueAdd).not.toHaveBeenCalled();
+    expect(mockPrisma.operationalEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ message: "Follow gate could not verify a button tap" }),
+    }));
+  });
+
+  it("delivers only after a later check positively confirms the follow", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValueOnce(null).mockResolvedValueOnce(true);
+    const processor = getProcessor();
+    const tap = { instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789" };
+
+    await processor(createMockPostbackJob(tap));
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    await processor(createMockPostbackJob({ ...tap, followRecheckAttempt: 1 }));
+
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessage).toHaveBeenCalledWith(
+      "decrypted_token", "ig_456", "commenter_999", "Hey commenter_user! Here is the link: https://example.com");
+    expect(mockReserveWorkspaceDMSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the follow prompt on an unverifiable opening tap instead of revealing the link", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(null);
+
+    await getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open",
+    }));
+
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledTimes(1);
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockQueueAdd).not.toHaveBeenCalled();
+  });
+
   it("re-checks a first false follow later instead of rejecting the tap", async () => {
     mockPrisma.automation.findFirst.mockResolvedValue(gated);
     mockGetUserFollowStatus.mockResolvedValue(false);
