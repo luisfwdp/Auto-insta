@@ -5,7 +5,7 @@ export type BillingRole = "OWNER" | "ADMIN" | "MEMBER";
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const date = z.string().datetime({ offset: true });
 const planId = z.string().min(1).max(80);
-const statusNames = ["NOT_STARTED", "TRIALING", "ACTIVE", "EXPIRED", "CANCELED", "PAST_DUE", "SUSPENDED", "REVIEW_REQUIRED"] as const;
+const statusNames = ["NOT_STARTED", "TRIALING", "ACTIVE", "EXPIRED", "CANCELED", "PAST_DUE", "SUSPENDED", "REVIEW_REQUIRED", "LIFETIME"] as const;
 export const trialStatusSchema = z.object({ status: z.enum(statusNames), hasAccess: z.boolean(), trialStartedAt: date.nullable(), trialEndsAt: date.nullable(), paidThrough: date.nullable(), planId: planId.nullable() });
 export const billingStatusSchema = z.object({
   enabled: z.boolean(), status: z.enum(statusNames).optional(), hasAccess: z.boolean().optional(),
@@ -20,7 +20,7 @@ export const billingPlansSchema = z.object({ plans: z.array(z.object({
 const counter = z.object({ consumed: count, reserved: count, limit: count });
 export const billingUsageSchema = z.discriminatedUnion("hasAccess", [
   z.object({ hasAccess: z.literal(false), code: z.string().max(64), limits: z.null(), counters: z.null() }),
-  z.object({ hasAccess: z.literal(true), kind: z.enum(["trial", "paid"]), periodStart: date, periodEnd: date, limits,
+  z.object({ hasAccess: z.literal(true), kind: z.enum(["trial", "paid", "lifetime"]), periodStart: date, periodEnd: date, limits,
     metering: z.object({ storage: z.literal("NOT_REPORTED"), transfer: z.literal("NOT_METERED") }),
     usageVisibility: z.enum(["OWNER_ONLY", "AVAILABLE"]),
     counters: z.object({ dms: counter, publications: counter, storage: z.null(), transfer: z.null() }).nullable(),
@@ -99,7 +99,7 @@ export async function createBrowserCheckout(input: MutationOptions & { plan: Bil
     // clear ambiguous POST/network results. CHECKOUT_IN_PROGRESS is a known
     // no-effect conflict, not an unknown charge created by this request.
     if (error instanceof BillingBrowserError && ["FORBIDDEN", "UNAUTHORIZED", "INVALID_REQUEST", "OFFER_CHANGED", "TRIAL_NOT_STARTED",
-      "ALREADY_PAID", "SUBSCRIPTION_EXISTS", "FINANCIAL_SYNC_BUSY", "RATE_LIMITED", "PROVIDER_REJECTED", "BILLING_SUSPENDED", "BILLING_DISABLED", "BILLING_SALES_DISABLED",
+      "ALREADY_PAID", "LIFETIME_ACCESS_ACTIVE", "SUBSCRIPTION_EXISTS", "FINANCIAL_SYNC_BUSY", "RATE_LIMITED", "PROVIDER_REJECTED", "BILLING_SUSPENDED", "BILLING_DISABLED", "BILLING_SALES_DISABLED",
       "CHECKOUT_IN_PROGRESS", "BILLING_CONFIGURATION", "WORKSPACE_CONTEXT_REQUIRED", "WORKSPACE_CHANGED"].includes(error.code)) input.persist(null);
     throw error;
   }
