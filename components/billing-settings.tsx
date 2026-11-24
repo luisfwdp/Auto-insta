@@ -14,7 +14,7 @@ import {
 const emptyRequests = (): SavedBillingRequests => ({ checkout: null, cancellation: null });
 const statusLabels = {
   NOT_STARTED: "Trial not started", TRIALING: "Trial active", ACTIVE: "Subscription active", EXPIRED: "Access expired",
-  CANCELED: "Renewal canceled", PAST_DUE: "Payment past due", SUSPENDED: "Access suspended", REVIEW_REQUIRED: "Billing needs review",
+  CANCELED: "Renewal canceled", PAST_DUE: "Payment past due", SUSPENDED: "Access suspended", REVIEW_REQUIRED: "Billing needs review", LIFETIME: "Lifetime access",
 } as const;
 
 export function BillingSettings(props: { role: BillingRole; workspaceId: string }) {
@@ -118,10 +118,11 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
   }, [workspaceId, role]);
 
   if (workspaceChanged) return <BillingWorkspaceChangedNotice href="/billing" />;
-  const checkoutLink = checkout?.status === "OPEN" ? safeAsaasCheckoutUrl(checkout.url) : null;
-  const alreadyPaid = status?.hasAccess === true && status.status !== "TRIALING";
+  const lifetime = status?.status === "LIFETIME";
+  const checkoutLink = !lifetime && checkout?.status === "OPEN" ? safeAsaasCheckoutUrl(checkout.url) : null;
+  const subscriptionNotRequired = status?.hasAccess === true && status.status !== "TRIALING";
   const buyEligible = status?.status !== undefined && ["TRIALING", "EXPIRED", "CANCELED"].includes(status.status) && !status.canCancelRenewal;
-  const canBuy = owner && storageReady && buyEligible && status?.enabled === true && !alreadyPaid && !requests.checkout && !busy && !loading;
+  const canBuy = owner && storageReady && buyEligible && status?.enabled === true && !subscriptionNotRequired && !requests.checkout && !busy && !loading;
   const trialAvailable = owner && status?.enabled === true && status.status === "NOT_STARTED";
   return <Card aria-busy={busy || loading} className="space-y-6 border border-[#494949] bg-[#1A1A1A] p-5 text-[#F5F5F5]">
     <div><h2 className="text-xl font-semibold">{t("Billing and subscription")}</h2><p className="mt-1 text-sm text-[#B5B5B5]">{t("Manage your trial, subscription and renewal.")}</p></div>
@@ -132,7 +133,8 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
     {status?.status ? <div className="space-y-1 text-sm">
       <p>{t("Subscription status")}: <strong>{t(statusLabels[status.status])}</strong></p>
       <p>{t(status.hasAccess ? "Recorded access is active." : "Recorded access is inactive.")}</p>
-      {status.trialEndsAt ? <p>{t("Trial ends on {date}", { date: when(status.trialEndsAt) })}</p> : null}
+      {lifetime ? <p>{t("Lifetime license with no expiry. No subscription payment is required. Monthly usage limits still apply.")}</p> : null}
+      {status.trialEndsAt && !lifetime ? <p>{t("Trial ends on {date}", { date: when(status.trialEndsAt) })}</p> : null}
       {status.paidThrough ? <p>{t("Paid period through {date}", { date: when(status.paidThrough) })}</p> : null}
     </div> : null}
     {trialAvailable ? <div className="space-y-2"><p>{t("3 days free. No card required.")}</p><Button disabled={busy || loading} onClick={() => void run(async () => {
@@ -153,11 +155,11 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
     {status?.enabled && requests.checkout ? <div className="space-y-3 rounded-lg border border-[#494949] p-4" role="status">
       <p>{t(!requests.checkout.id ? "An earlier request has an unknown outcome. No new charge request will be sent." : checkout && !checkoutPending(checkout) ? "Payment confirmation is pending. Access changes only after confirmation." : "Checkout creation is pending. Do not create another checkout.")}</p>
       {owner && checkoutLink ? <a className="inline-block rounded bg-[#C7FF2F] px-4 py-2 font-semibold text-[#0B0B0B]" href={checkoutLink} target="_blank" rel="noopener noreferrer">{t("Continue at Asaas")}</a> : null}
-      {owner && checkout?.status === "OPEN" && !checkoutLink ? <p role="alert">{t("Invalid or unavailable checkout link.")}</p> : null}
+      {owner && checkout?.status === "OPEN" && !checkoutLink && !lifetime ? <p role="alert">{t("Invalid or unavailable checkout link.")}</p> : null}
       {owner && requests.checkout.id ? <Button variant="secondary" disabled={busy || loading} onClick={() => void run(() => track("checkout", requests.checkout!))}>{t(checkoutLink ? "Review payment status" : "Resume checkout lookup")}</Button> : <p className="text-sm">{t("Checkout requires operational review. Do not start another purchase.")}</p>}
     </div> : null}
 
-    {status?.enabled && !requests.checkout && !alreadyPaid ? <section className="space-y-3">
+    {status?.enabled && !requests.checkout && !subscriptionNotRequired ? <section className="space-y-3">
       {!plans.length && !loading ? <p>{t("New subscriptions are temporarily unavailable.")}</p> : null}
       <div className="grid gap-4 lg:grid-cols-3">{plans.map(plan => <div key={plan.id} className="space-y-3 rounded-lg border border-[#494949] bg-[#0B0B0B] p-4">
         <h3 className="font-semibold">{plan.name}</h3><p className="text-lg text-[#C7FF2F]">{t("{price} per month", { price: currency(plan.amountCents) })}</p>
@@ -218,10 +220,10 @@ function TrialWorkspace({ role, workspaceId, onSuccessHref = "/settings" }: { ro
   if (workspaceChanged) return <BillingWorkspaceChangedNotice href="/onboarding" />;
   const href = /^\/(?!\/)[^\\\x00-\x20]*$/.test(onSuccessHref) ? onSuccessHref : "/settings";
   return <Card aria-busy={busy || (!status && !error)} className="space-y-3 border border-[#494949] bg-[#1A1A1A] p-5 text-[#F5F5F5]">
-    <h2 className="text-xl font-semibold">{t("3 days free. No card required.")}</h2>
+    <h2 className="text-xl font-semibold">{t(status?.status === "LIFETIME" ? "Lifetime access" : "3 days free. No card required.")}</h2>
     {!status && !error ? <p role="status">{t("Loading billing details")}</p> : null}
     {error ? <p role="alert">{t("Trial could not be started. No card was requested.")}</p> : null}
-    {status?.hasAccess ? <><p>{t("Your trial is ready. Connect Instagram to continue.")}</p><a className="inline-block rounded bg-[#C7FF2F] px-4 py-2 font-semibold text-[#0B0B0B]" href={href}>{t("Connect Instagram")}</a></> : status?.enabled && status.status === "NOT_STARTED" && role === "OWNER" ? <Button disabled={busy} onClick={() => {
+    {status?.hasAccess ? <><p>{t(status.status === "LIFETIME" ? "Your access is ready. Connect Instagram to continue." : "Your trial is ready. Connect Instagram to continue.")}</p><a className="inline-block rounded bg-[#C7FF2F] px-4 py-2 font-semibold text-[#0B0B0B]" href={href}>{t("Connect Instagram")}</a></> : status?.enabled && status.status === "NOT_STARTED" && role === "OWNER" ? <Button disabled={busy} onClick={() => {
       if (lock.current || active.current?.signal.aborted) return; lock.current = true; setBusy(true); setError(false);
       void (async () => { try {
         await billingRequest("/api/billing/trial", trialStatusSchema, { workspaceId, method: "POST", signal: active.current?.signal });

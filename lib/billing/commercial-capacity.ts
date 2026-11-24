@@ -4,6 +4,7 @@ import { loadCommercialEntitlement } from "./commercial-access";
 import { BillingError } from "./config";
 import type { CommercialEntitlement } from "./entitlements";
 import { isBillingEnabled } from "./trial";
+import { BILLING_PLAN_IDS } from "./catalog";
 
 type Tx = Prisma.TransactionClient;
 type ActiveEntitlement = Exclude<CommercialEntitlement, { status: "denied" }>;
@@ -25,10 +26,12 @@ async function activeEntitlement(tx: Tx, workspaceId: string): Promise<ActiveEnt
 }
 
 function capacityScope(entitlement: ActiveEntitlement, workspaceId: string) {
-  if (entitlement.status === "paid") return { workspaceId };
-  // Paid workspaces do not consume the owner's shared free-trial capacity.
+  if (entitlement.subjectKind !== "OWNER_TRIAL") return { workspaceId };
+  // Paid/licensed workspaces do not consume shared free-trial capacity.
   return { workspace: { ownerId: entitlement.subjectId, billing: { is: { status: "TRIALING" as const,
-    trialStartedAt: entitlement.periodStart, trialEndsAt: entitlement.periodEnd } } } };
+    trialStartedAt: entitlement.periodStart, trialEndsAt: entitlement.periodEnd,
+    NOT: { lifetimeAccess: { is: { ownerId: entitlement.subjectId, revokedAt: null, grantedAt: { lte: new Date() }, planId: { in: [...BILLING_PLAN_IDS] } } } },
+  } } } };
 }
 
 /** Preflight for OAuth entry. Capacity itself is checked after the real ID is

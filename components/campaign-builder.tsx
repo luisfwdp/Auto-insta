@@ -617,7 +617,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       <UiToggle label={t("Include a tracked link")} checked={linkOpen} onChange={(e) => { setLinkOpen(e.target.checked); if (!e.target.checked) { setTrackedDestinationUrl(""); setSecondaryDestinationUrl(""); setSecondLinkOpen(false); } }} />
       {linkOpen && <><Input label={t("Link URL")} type="url" value={trackedDestinationUrl} onChange={(e) => setTrackedDestinationUrl(e.target.value)} onBlur={ensureLinkToken} /><Input label={t("Link button label")} maxLength={20} value={linkButtonLabel} onChange={(e) => setLinkButtonLabel(e.target.value)} /><UiToggle label={t("Include a second link")} checked={secondLinkOpen} onChange={(e) => { setSecondLinkOpen(e.target.checked); if (!e.target.checked) setSecondaryDestinationUrl(""); }} />{secondLinkOpen && <><Input label={t("Second link URL")} type="url" value={secondaryDestinationUrl} onChange={(e) => setSecondaryDestinationUrl(e.target.value)} /><Input label={t("Second button label")} maxLength={20} value={secondaryButtonLabel} onChange={(e) => setSecondaryButtonLabel(e.target.value)} /></>}</>}
       <UiToggle label={t("a follow requirement first")} checked={requireFollow} onChange={(e) => setRequireFollow(e.target.checked)} />
-      {requireFollow && <><Textarea label={t("Follow prompt message")} maxLength={1000} value={followPromptMessage} onChange={(e) => setFollowPromptMessage(e.target.value)} /><Input label={t("Follow button label")} maxLength={20} value={followPromptButtonLabel} onChange={(e) => setFollowPromptButtonLabel(e.target.value)} /><p className={wizardStyles.muted}>{t("We send the link only after they tap the button and Instagram confirms the follow. If it can't be verified, we send it anyway.")}</p></>}
+      {requireFollow && <><Textarea label={t("Follow prompt message")} maxLength={1000} value={followPromptMessage} onChange={(e) => setFollowPromptMessage(e.target.value)} /><Input label={t("Follow button label")} maxLength={20} value={followPromptButtonLabel} onChange={(e) => setFollowPromptButtonLabel(e.target.value)} /><p className={wizardStyles.muted}>{t("We send the link only when Instagram confirms the follow. If verification is unavailable, the link stays protected and they can try again with the button.")}</p></>}
       <UiToggle label={t("a follow-up thank-you message")} checked={followUpEnabled} onChange={(e) => setFollowUpEnabled(e.target.checked)} />
       {followUpEnabled && <><Textarea label={t("Follow-up message")} maxLength={1000} value={followUpMessage} onChange={(e) => setFollowUpMessage(e.target.value)} /><Input label={t("Follow-up delay in minutes")} type="number" min={0} max={1440} step={1} value={followUpDelayMinutes} onChange={(e) => setFollowUpDelayMinutes(Number(e.target.value))} /></>}
     </>;
@@ -935,7 +935,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                   maxLength={20}
                 />
                 <p className="text-xs text-muted">
-                  {t("We send the link only after they tap the button and Instagram confirms the follow. If it can't be verified, we send it anyway.")}
+                  {t("We send the link only when Instagram confirms the follow. If verification is unavailable, the link stays protected and they can try again with the button.")}
                 </p>
               </div>
             )}

@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/db/client";
 import { loadCommercialEntitlement } from "./commercial-access";
-import { BillingError, getBillingProviderScope } from "./config";
+import { BillingError } from "./config";
 import { isBillingEnabled } from "./trial";
+import { commercialScopeKey } from "./lifetime";
 
 function safeCounter(value: bigint): number {
   if (value < BigInt("0") || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new BillingError("BILLING_UNAVAILABLE", 503);
@@ -23,9 +24,7 @@ export async function readCommercialUsageOverview(workspaceId: string, viewerUse
       metering: { storage: "NOT_REPORTED" as const, transfer: "NOT_METERED" as const } };
     if (access.subjectKind === "OWNER_TRIAL" && viewerUserId !== access.subjectId)
       return { ...view, counters: null, usageVisibility: "OWNER_ONLY" as const };
-    const scopeKey = access.subjectKind === "OWNER_TRIAL" ? "owner-trial-v1" : (() => {
-      const scope = getBillingProviderScope(); return `${scope.environment}:${scope.accountScope}`;
-    })();
+    const scopeKey = commercialScopeKey(access);
     const buckets = await tx.commercialUsageBucket.findMany({ where: { subjectKind: access.subjectKind, subjectId: access.subjectId,
       scopeKey, periodStart: access.periodStart, periodEnd: access.periodEnd, resource: { in: ["DM", "PUBLICATION"] } },
       select: { resource: true, consumed: true, reserved: true } });

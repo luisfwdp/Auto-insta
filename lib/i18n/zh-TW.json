@@ -272,6 +272,10 @@
   "None": "無",
   "Not attached": "未指定",
   "Not connected": "尚未連線",
+  "Check your trial or subscription": "請確認試用或訂閱狀態",
+  "Connecting or reconnecting Instagram requires an active trial or subscription for this workspace. Check Billing and subscription.": "連接或重新連接 Instagram，需要此工作區有有效的試用或訂閱。請查看「帳務與訂閱」中的狀態。",
+  "Instagram account limit reached": "已達 Instagram 帳號數量上限",
+  "Your trial or plan has reached its Instagram account limit. Review usage and subscription options in Billing and subscription.": "您的試用或方案已達 Instagram 帳號數量上限。請前往「帳務與訂閱」查看用量及訂閱選項。",
   "Not permitted": "權限不足",
   "Now": "剛剛",
   "One day recorded so far.": "目前已有一天的紀錄。",
@@ -431,7 +435,7 @@
   "Waiting": "等待中",
   "Waiting for next reel": "等待下一則 Reels",
   "We could not load your real data. Nothing estimated was shown.": "無法載入您的真實資料，因此未顯示任何估算值。",
-  "We send the link only after they tap the button and Instagram confirms the follow. If it can't be verified, we send it anyway.": "對方點擊按鈕且 Instagram 確認已追蹤後，才傳送連結。若無法驗證追蹤狀態，仍會傳送連結。",
+  "We send the link only when Instagram confirms the follow. If verification is unavailable, the link stays protected and they can try again with the button.": "只有 Instagram 確認對方已追蹤時，才會傳送連結。若暫時無法驗證，連結仍受保護，對方可以點擊按鈕再試一次。",
   "We sent you a secure sign-in link. Open it on this device to continue.": "安全登入連結已寄到你的信箱，請在這台裝置上開啟。若未看到郵件，請檢查垃圾郵件資料夾。",
   "Webhook Failures": "Webhook 接收錯誤",
   "Webhook configured. Choose an Instagram account for PING CHAT:": "Webhook 已設定，請選擇要在 PING CHAT 使用的 Instagram 帳號：",
@@ -811,5 +815,8 @@
   "Times shown in {timezone}.": "時間以 {timezone} 顯示。",
   "No publications scheduled for this month.": "本月尚無排程的貼文。",
   "MP4 or MOV videos. Up to {count} files at a time.": "MP4 或 MOV 影片。每次最多 {count} 個檔案。",
-  "JPEG images, MP4 or MOV videos. Up to {count} files at a time.": "JPEG 圖片、MP4 或 MOV 影片。每次最多 {count} 個檔案。"
+  "JPEG images, MP4 or MOV videos. Up to {count} files at a time.": "JPEG 圖片、MP4 或 MOV 影片。每次最多 {count} 個檔案。",
+  "Lifetime access": "終身使用權",
+  "Lifetime license with no expiry. No subscription payment is required. Monthly usage limits still apply.": "終身授權，無到期日且無須支付訂閱費。每月使用量限制仍然適用。",
+  "Your access is ready. Connect Instagram to continue.": "您的使用權已啟用。請連接 Instagram 以繼續。"
 }
