@@ -1,3 +1,4 @@
+vi.mock("@/lib/api/request-rate-limit", () => ({ requestLimitResponse: vi.fn(async () => null) }));
 /** Real PostgreSQL MVCC/row-lock regression. Disposable DB only; own schema. */
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";

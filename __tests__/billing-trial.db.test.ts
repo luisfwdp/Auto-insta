@@ -1,3 +1,4 @@
+vi.mock("@/lib/api/request-rate-limit", () => ({ consumeRequestLimit: vi.fn(async () => ({ allowed: true, retryAfter: 60 })) }));
 /** Card-free trial contract on a disposable PostgreSQL schema. */
 import { randomBytes } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
