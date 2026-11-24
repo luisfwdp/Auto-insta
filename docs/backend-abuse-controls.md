@@ -54,8 +54,10 @@ mantêm suas assinaturas/tokens, limites de corpo, deduplicação e autorizaçã
 Isso evita que o IP compartilhado de um provedor ou uma falha do Redis bloqueie
 entrega financeira legítima. Não é um WAF nem substitui proteção DDoS da borda.
 
-Erros internos de saúde e de assinatura de upload não são serializados para o
-navegador. `/api/health` mantém estado, fila e tempos para monitoramento, sem
+Erros internos de saúde, assinatura de upload, OAuth e Zernio não são repassados
+em texto bruto ao navegador. OAuth persiste/loga códigos permitidos em vez do
+objeto de exceção; Zernio mantém orientação segura para erros conhecidos.
+`/api/health` mantém estado, fila e tempos para monitoramento, sem
 hostname/PID, stack, credenciais ou texto bruto de exceção.
 
 ## Verificação e implantação

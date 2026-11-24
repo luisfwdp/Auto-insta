@@ -263,10 +263,10 @@ export async function GET(request: NextRequest) {
     return finish(`${baseUrl}/dashboard?connected=true`);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("[Instagram Callback] Error:", err);
-    // The message is the only diagnostic a self-hoster gets for a failed
-    // connect, so persist it alongside the other operational events rather
-    // than leaving it in server logs they may not be able to reach.
+    const reason = err instanceof BillingError ? err.code : failureCode(message);
+    console.error("[Instagram Callback] Error:", { reason });
+    // Operators get a stable code, never upstream strings/exception objects
+    // that can carry credentials into logs or the diagnostics frontend.
     await prisma.operationalEvent
       .create({
         data: {
@@ -275,7 +275,7 @@ export async function GET(request: NextRequest) {
           workspaceId: state.workspaceId,
           message: "Instagram connection failed",
           payload: {
-            reason: message,
+            reason,
             ...(unifiedDiagnostic ? { unifiedLogin: unifiedDiagnostic } : {}),
           },
         },
@@ -399,7 +399,7 @@ async function connectUnifiedAccounts(
     } catch (error) {
       outcome.failed.push({
         username: label,
-        reason: error instanceof BillingError ? error.code : error instanceof Error ? error.message : "Unknown error",
+        reason: error instanceof BillingError ? error.code : failureCode(error instanceof Error ? error.message : ""),
       });
     }
   }
@@ -458,7 +458,7 @@ async function connectFacebookPageAccounts(
     } catch (error) {
       outcome.failed.push({
         username: label,
-        reason: error instanceof BillingError ? error.code : error instanceof Error ? error.message.slice(0, 200) : "unknown",
+        reason: error instanceof BillingError ? error.code : failureCode(error instanceof Error ? error.message : ""),
       });
     }
   }
