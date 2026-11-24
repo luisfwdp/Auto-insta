@@ -5,6 +5,13 @@ SET LOCAL TIME ZONE 'UTC';
 DO $$
 DECLARE current_owner text; billing_record record; license_record record;
 BEGIN
+  IF position('REPLACE_AFTER_REVIEW' in 'WORKSPACE_ID_REPLACE_AFTER_REVIEW') > 0
+     OR position('REPLACE_AFTER_REVIEW' in 'OWNER_ID_REPLACE_AFTER_REVIEW') > 0
+     OR 'OPERATOR_ID' = ('OPERATOR_' || 'ID')
+     OR 'APPROVED_REASON' = ('APPROVED_' || 'REASON')
+     OR 'APPROVAL_REFERENCE' = ('APPROVAL_' || 'REFERENCE')
+     OR '00000000-0000-4000-8000-000000000001'::uuid = '00000000000040008000000000000001'::uuid
+  THEN RAISE EXCEPTION 'Replace all administrative grant template placeholders'; END IF;
   PERFORM 1 FROM public."User" WHERE id='OWNER_ID_REPLACE_AFTER_REVIEW' FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Expected owner missing'; END IF;
   SELECT "ownerId" INTO current_owner FROM public."Workspace" WHERE id='WORKSPACE_ID_REPLACE_AFTER_REVIEW' FOR UPDATE;

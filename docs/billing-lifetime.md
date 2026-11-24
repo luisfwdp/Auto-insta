@@ -39,6 +39,10 @@ Se houver, resolver explicitamente essa pendência antes de conceder a licença.
    humano, conforme `AGENTS.md`. Não executar contra produção sem autorização
    específica para a migração e o registro administrativo.
 2. Aplicar apenas a migração aditiva `20261123233000_workspace_lifetime_access`.
+   Antes, confirmar em Vercel e Fly que a conexão efetiva usa `pingchat_runtime`,
+   sem superuser, BYPASSRLS, propriedade das tabelas ou memberships elevados.
+   Não inferir isso apenas da existência do papel. Se a conexão usa outro papel,
+   interromper a implantação; não contornar RLS nem ampliar privilégios.
    Ela preserva dados e privilégios de outras tabelas. Amplia a função de
    vínculo de reservas para validar também o workspace/owner da concessão,
    mantendo as regras anteriores de trial e pagamento e `SECURITY INVOKER`.
@@ -55,6 +59,8 @@ Se houver, resolver explicitamente essa pendência antes de conceder a licença.
 SQL com identificação do cliente fica no pacote privado de operação; não
 publicar dados pessoais no PR. Aplicar uma vez e, ao repetir, verificar igualdade
 do vínculo e da auditoria antes de considerar a operação idempotente.
+O template aborta se restarem IDs ou textos de exemplo; preencher também um
+UUID próprio, operador, motivo e referência reais antes da revisão humana.
 
 ## Rollback
 

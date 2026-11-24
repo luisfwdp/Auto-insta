@@ -19,16 +19,22 @@ import { createAsaasClient } from "../lib/billing/asaas-client";
 import { reserveCommercialStorageAsset } from "../lib/billing/commercial-storage";
 let sql: Client, admin: PrismaClient, grantId: string;
 const createdRoles: string[] = [];
+const templateGrantId = randomUUID();
 
 async function asRole<T>(role: string, run: () => Promise<T>) {
   await sql.query(`SET ROLE "${role}"`);
   try { return await run(); } finally { await sql.query("RESET ROLE"); }
 }
-function administrativeGrant(ownerId = "owner-a") {
-  return readFileSync(path.join(__dirname, "..", "docs/workspace-lifetime-grant.sql"), "utf8")
+function administrativeGrant(ownerId = "owner-a", omit?: "actor" | "reason" | "approval" | "id") {
+  let source = readFileSync(path.join(__dirname, "..", "docs/workspace-lifetime-grant.sql"), "utf8")
     .replaceAll("public.", `"${schema}".`)
     .replaceAll("WORKSPACE_ID_REPLACE_AFTER_REVIEW", "workspace-b")
     .replaceAll("OWNER_ID_REPLACE_AFTER_REVIEW", ownerId);
+  if (omit !== "actor") source = source.replaceAll("OPERATOR_ID", "fixture-operator");
+  if (omit !== "reason") source = source.replaceAll("APPROVED_REASON", "Explicit fixture approval");
+  if (omit !== "approval") source = source.replaceAll("APPROVAL_REFERENCE", "fixture-review-reference");
+  if (omit !== "id") source = source.replaceAll("00000000-0000-4000-8000-000000000001", templateGrantId);
+  return source;
 }
 describe.skipIf(!url)("administrative lifetime license and runtime RLS", () => {
   beforeAll(async () => {
@@ -187,6 +193,11 @@ describe.skipIf(!url)("administrative lifetime license and runtime RLS", () => {
     await expect(sql.query(administrativeGrant("owner-b"))).rejects.toThrow("Workspace owner changed"); await sql.query("ROLLBACK");
     await admin.billingCheckout.create({ data: { workspaceId: "workspace-b", environment: "sandbox", accountScope: "12000000-0000-4000-8000-000000000001", requestId: randomUUID(), planId: "essential-v1", amountCents: 7900, firstChargeDate: "2026-11-23", billingAnchorDay: 23 } });
     await expect(sql.query(administrativeGrant())).rejects.toThrow("Resolve financial or administrative state"); await sql.query("ROLLBACK");
+    expect(await admin.workspaceLifetimeAccess.count({ where: { workspaceId: "workspace-b" } })).toBe(0);
+  });
+  it.each(["actor", "reason", "approval", "id"] as const)("refuses a grant with the remaining %s template placeholder", async missing => {
+    await expect(sql.query(administrativeGrant("owner-a", missing))).rejects.toThrow("Replace all administrative grant template placeholders");
+    await sql.query("ROLLBACK");
     expect(await admin.workspaceLifetimeAccess.count({ where: { workspaceId: "workspace-b" } })).toBe(0);
   });
   it("requires complete grant and revocation audit evidence at the database boundary", async () => {
