@@ -105,17 +105,25 @@ export function checkedAsaasCheckoutLink(link: string, mode: "sandbox" | "produc
 }
 
 /** Fixed hosts only. Secrets remain in a closure and cannot enter JSON DTOs. */
-export function createAsaasClient(env: Readonly<Record<string, string | undefined>> = process.env, fetcher: typeof fetch = fetch) {
+export function createAsaasClient(env: Readonly<Record<string, string | undefined>> = process.env, fetcher: typeof fetch = fetch,
+  transport?: {
+    request: (path: string, options: RequestInit) => Promise<Response>;
+    createHostedCheckout: (input: HostedCheckoutInput) => Promise<{ id: string; url: string }>;
+  }) {
   const configuredMode = env.ASAAS_ENVIRONMENT;
   const key = env.ASAAS_API_KEY;
-  if ((configuredMode !== "sandbox" && configuredMode !== "production") || !key || key.length < 32 || /[\r\n]/.test(key)) throw new AsaasError("CONFIGURATION");
+  if ((configuredMode !== "sandbox" && configuredMode !== "production") || (!transport && (!key || key.length < 32 || /[\r\n]/.test(key)))) throw new AsaasError("CONFIGURATION");
   const mode = configuredMode;
   const api = mode === "production" ? "https://api.asaas.com/v3" : "https://api-sandbox.asaas.com/v3";
   const payerOrigin = mode === "production" ? "https://asaas.com" : "https://sandbox.asaas.com";
+  const request = transport?.request ?? ((path: string, options: RequestInit) => fetcher(`${api}${path}`, {
+    ...options, headers: { access_token: key!, Accept: "application/json", "User-Agent": "CRIA-PING/1.0" },
+  }));
 
   async function createHostedCheckout(input: HostedCheckoutInput) {
     const parsed = checkoutInput.safeParse(input);
     if (!parsed.success) throw new AsaasError("INVALID_REQUEST");
+    if (transport) return transport.createHostedCheckout(parsed.data);
     // Configuration errors occur before fetch, outside UNKNOWN_OUTCOME handling.
     // Use the factory's environment mode consistently with its fixed API host.
     const origin = getAsaasCheckoutOrigin({ ASAAS_ENVIRONMENT: mode, NEXTAUTH_URL: env.NEXTAUTH_URL, AUTH_URL: env.AUTH_URL });
@@ -154,9 +162,8 @@ export function createAsaasClient(env: Readonly<Record<string, string | undefine
     const signal = AbortSignal.timeout(10_000);
     let response: Response;
     try {
-      response = await fetcher(`${api}${path}`, {
+      response = await request(path, {
         method: "GET", redirect: "error", cache: "no-store", signal,
-        headers: { access_token: key!, Accept: "application/json", "User-Agent": "CRIA-PING/1.0" },
       });
     } catch { throw new AsaasError("UNAVAILABLE"); }
     if (!response.ok) {
@@ -226,9 +233,8 @@ export function createAsaasClient(env: Readonly<Record<string, string | undefine
     if (!subscriptionId.safeParse(id).success) throw new AsaasError("INVALID_REQUEST");
     let response: Response;
     try {
-      response = await fetcher(`${api}/subscriptions/${encodeURIComponent(id)}`, {
+      response = await request(`/subscriptions/${encodeURIComponent(id)}`, {
         method: "DELETE", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000),
-        headers: { access_token: key!, Accept: "application/json", "User-Agent": "CRIA-PING/1.0" },
       });
     } catch { throw new AsaasError("UNKNOWN_OUTCOME"); }
     if (!response.ok) {

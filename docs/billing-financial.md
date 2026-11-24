@@ -165,28 +165,27 @@ financial records. Do not roll a paid installation back to a worker without bill
 maintenance indefinitely; preserve cancellation processing or carry out a reviewed
 provider-side operational plan. Never drop financial/trial tables to roll back.
 
-## Direct checkout through Pulso
+## Billing through Pulso
 
-Register `ping-chat` in the Pulso instance for the environment being deployed. Set
-`PULSO_CHECKOUT_ORIGIN`, `PULSO_CHECKOUT_ENVIRONMENT`, `PULSO_APP_TOKEN`, and the
-dedicated `PULSO_PROTECTION_BYPASS` for protected deployments in the web project's
-server environment. Set `PULSO_CHECKOUT_ENABLED=true` once the checks below pass.
+Register `ping-chat` in Pulso with the callback `/api/billing/pulso` on the
+public Ping Chat origin and payment confirmation notifications enabled. Keep
+the Asaas credential and its webhook in Pulso. Set the Pulso origin, environment,
+app token and dedicated deployment-protection secret on Ping Chat's web service
+and worker. Set the independent callback signing secret (`PULSO_WEBHOOK_SECRET`)
+on the web service only. The existing `ASAAS_ENVIRONMENT` and
+`ASAAS_ACCOUNT_SCOPE` values are stable local ledger identifiers in Pulso mode.
 
-With the flag enabled, new direct checkouts use Pulso's `/api/checkouts`, with the
-Ping Chat checkout ID as the order ID. The existing Ping Chat Asaas webhook and
-worker must remain configured for canonical payment reconciliation and cancellation.
-Pulso records receipts using its own Asaas webhook. The app registration in Pulso
-can omit a callback URL because Ping Chat receives Asaas events directly.
+Set `PULSO_CHECKOUT_ENABLED=true` on both services after deploying Pulso's
+billing API and notification migration. The Ping Chat worker obtains payment
+and subscription records and sends cancellation requests through Pulso. The
+web service authenticates Pulso callbacks and persists their IDs for worker
+reconciliation. In Sandbox, verify checkout, receipt, access, renewal, refund
+and cancellation. Before switching an existing deployment, verify that any
+subscriptions and outstanding orders are visible to the app token in Pulso.
 
-Compare `GET /v3/wallets/` using each deployment's own Asaas credential. The
-wallet ID and provider environment must match. In Sandbox, confirm that a paid
-recurring checkout appears under `ping-chat` in Pulso and that Ping Chat grants
-access after Asaas reconciliation. Verify a renewal, cancellation and refund.
-Repeat the wallet comparison after an account or credential change.
-
-If creation times out, look up the original `orderId` under the `ping-chat` app
-in Pulso and confirm its provider ID in Asaas before resolving the Ping Chat
-intent. Disabling the flag restores direct Asaas creation for new checkouts.
+If creation times out, the signed payment notification can recover the
+original `orderId` from Pulso. For a sales rollback, set
+`BILLING_SALES_ENABLED=false` so Pulso can still reconcile existing subscriptions.
 
 ## Official references
 
@@ -196,4 +195,3 @@ intent. Disabling the flag restores direct Asaas creation for new checkouts.
 - [Remove subscription](https://docs.asaas.com/reference/remover-assinatura)
 - [Webhook idempotence](https://docs.asaas.com/docs/how-to-implement-idempotence-in-webhooks)
 - [Provider URL changes](https://docs.asaas.com/changelog/altera%C3%A7%C3%A3o-na-estrutura-de-urls-p%C3%BAblicas-do-asaas)
-- [Retrieve Asaas wallet ID](https://docs.asaas.com/reference/recuperar-walletid)

@@ -1,5 +1,8 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { createPulsoCheckoutClient } from "../lib/billing/pulso-checkout";
+import { createAsaasClient } from "../lib/billing/asaas-client";
+import { createPulsoClient } from "../lib/billing/pulso-checkout";
+import { parsePulsoNotification } from "../lib/billing/pulso-webhook";
 
 const environment = {
   ASAAS_ENVIRONMENT: "sandbox",
@@ -32,7 +35,7 @@ const result = {
 describe("Pulso recurring checkout", () => {
   it("sends the immutable order to Pulso and returns the verified Asaas checkout", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(result, { status: 201 }));
-    const createCheckout = createPulsoCheckoutClient("sandbox", environment, fetcher)!;
+    const { createHostedCheckout: createCheckout } = createPulsoClient("sandbox", environment, fetcher)!;
     await expect(createCheckout(input)).resolves.toEqual({ id: result.providerId, url: result.paymentUrl });
     const [[url, request]] = fetcher.mock.calls;
     expect(String(url)).toBe("https://pulso.example.test/api/checkouts");
@@ -56,20 +59,53 @@ describe("Pulso recurring checkout", () => {
     [201, { ...result, paymentUrl: "https://asaas.com/checkoutSession/show?id=other" }],
   ])("keeps the outcome uncertain after an unverified %s response", async (status, body) => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(body, { status }));
-    const createCheckout = createPulsoCheckoutClient("sandbox", environment, fetcher)!;
+    const { createHostedCheckout: createCheckout } = createPulsoClient("sandbox", environment, fetcher)!;
     await expect(createCheckout(input)).rejects.toMatchObject({ code: "UNKNOWN_OUTCOME" });
     expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it("recognizes a definitive provider rejection", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: "asaas_rejected" }, { status: 422 }));
-    const createCheckout = createPulsoCheckoutClient("sandbox", environment, fetcher)!;
+    const { createHostedCheckout: createCheckout } = createPulsoClient("sandbox", environment, fetcher)!;
     await expect(createCheckout(input)).rejects.toMatchObject({ code: "REJECTED" });
   });
 
   it("requires consistent settings before checkout can be enabled", () => {
-    expect(createPulsoCheckoutClient("sandbox", {})).toBeUndefined();
-    expect(() => createPulsoCheckoutClient("production", environment)).toThrow();
-    expect(() => createPulsoCheckoutClient("sandbox", { ...environment, PULSO_CHECKOUT_ORIGIN: "https://pulso.example.test/path" })).toThrow();
+    expect(createPulsoClient("sandbox", {})).toBeUndefined();
+    expect(() => createPulsoClient("production", environment)).toThrow();
+    expect(() => createPulsoClient("sandbox", { ...environment, PULSO_CHECKOUT_ORIGIN: "https://pulso.example.test/path" })).toThrow();
+  });
+
+  it("reads and cancels through Pulso with no Asaas credentials or web callback configuration", async () => {
+    const workerEnvironment = { ...environment, NEXTAUTH_URL: undefined };
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ id: "sub_monthly", customer: "cus_test", status: "ACTIVE", value: 149, cycle: "MONTHLY", deleted: false }))
+      .mockResolvedValueOnce(Response.json({ id: "sub_monthly", deleted: true }));
+    const transport = createPulsoClient("sandbox", workerEnvironment, fetcher);
+    const gateway = createAsaasClient(workerEnvironment, fetcher, transport);
+    await expect(gateway.getSubscription("sub_monthly")).resolves.toMatchObject({ id: "sub_monthly", valueCents: 14900 });
+    await expect(gateway.cancelSubscription("sub_monthly")).resolves.toEqual({ id: "sub_monthly", deleted: true });
+    for (const [url, request] of fetcher.mock.calls) {
+      expect(String(url)).toBe("https://pulso.example.test/api/billing/subscriptions/sub_monthly");
+      expect(new Headers(request?.headers).get("access_token")).toBeNull();
+      expect(new Headers(request?.headers).get("x-pulso-environment")).toBe("sandbox");
+    }
+  });
+});
+
+describe("Pulso notifications", () => {
+  it("authenticates the original body, date, app and idempotency key", () => {
+    const secret = "test-secret-for-pulso-notifications";
+    const now = Date.parse("2026-11-23T14:00:00Z");
+    const timestamp = String(now / 1000);
+    const payload = { id: result.providerId, app: "ping-chat", orderId: input.reference, event: "payment.confirmed", paymentId: "pay_test" };
+    const raw = JSON.stringify(payload);
+    const headers = new Headers({ "idempotency-key": payload.id, "x-pulso-timestamp": timestamp,
+      "x-pulso-signature": `sha256=${createHmac("sha256", secret).update(`${timestamp}.${raw}`).digest("hex")}` });
+    expect(parsePulsoNotification(headers, raw, secret, now)).toMatchObject({ event: "PAYMENT_CONFIRMED", paymentId: "pay_test", orderId: input.reference });
+    expect(() => parsePulsoNotification(headers, raw + "\n", secret, now)).toThrow();
+    expect(() => parsePulsoNotification(headers, raw, secret, now + 301_000)).toThrow();
+    headers.set("idempotency-key", input.reference);
+    expect(() => parsePulsoNotification(headers, raw, secret, now)).toThrow();
   });
 });
