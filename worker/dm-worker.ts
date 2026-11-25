@@ -4,6 +4,7 @@ import { trackConsumerReadiness } from "@/lib/ops/worker-readiness";
 import { enqueueCanary } from "@/lib/ops/worker-canary";
 import { getDMQueue } from "@/lib/queue/client";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
+import { reconcileButtonTaps } from "@/lib/polling/button-tap-reconciler";
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
 import { createPublishingWorker } from "@/lib/queue/publishing-worker";
 import { enqueueDuePublications } from "@/lib/queue/publishing";
@@ -74,6 +75,14 @@ async function poll() {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[DM Worker] Comment reconciliation failed:", message);
+  }
+  // Separate from the comment sweep so a failure in one never skips the other.
+  try {
+    const taps = await reconcileButtonTaps();
+    if (taps.recovered > 0 || taps.errors > 0) console.log("[DM Worker] Button tap recovery:", taps);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[DM Worker] Button tap recovery failed:", message);
   }
 }
 
