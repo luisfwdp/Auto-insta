@@ -81,3 +81,42 @@ autorizado antes de reverter a imagem do worker. Não remover `requireFollow`
 para mascarar falha de verificação. Preservar logs, filas e histórico; não
 reenviar mensagens cujo resultado de entrega seja incerto. A imagem anterior
 deve ser registrada antes de cada deploy aprovado.
+
+## Recuperação de toques sem webhook
+
+Quando a Meta não entrega `messaging_postbacks` (por exemplo, enquanto a
+permissão de mensagens está só com Acesso Padrão), o toque no botão nunca chega
+e ninguém recebe o link. Em produção, em 25/11/2026, um toque real em "Já estou
+seguindo" não gerou nenhum evento, embora a conta estivesse inscrita em
+`messaging_postbacks`.
+
+O worker passa a recuperar esses toques pela mesma lista de conversas que a
+Caixa de entrada já lê (`lib/polling/button-tap-reconciler.ts`), no mesmo ciclo
+de 5 minutos da varredura de comentários:
+
+- Só contas META com campanha ativa que envia botão (`requireFollow` ou DM de
+  abertura) e que contataram alguém nas últimas 24 horas. Sem isso, nenhuma
+  chamada à Graph API é feita.
+- Só age quando a mensagem mais recente da conversa é da outra pessoa, tem até
+  24 horas e o texto é exatamente o título do botão (sem diferenciar maiúsculas).
+- Só para quem a campanha já havia contatado antes do toque; a campanha mais
+  recente decide de qual botão se trata.
+- Cada mensagem é tratada uma única vez (marcador no Redis por 48 horas) e o job
+  usa o mesmo formato de `jobId` do webhook, de modo que um postback que chegue
+  para a mesma mensagem não gera um segundo job.
+- Não envia nada por conta própria: enfileira o mesmo job `process-postback`, e
+  o caminho existente continua exigindo `is_user_follow_business === true`,
+  cota, deduplicação e janela de mensagens.
+
+Limites: só a mensagem mais recente de cada conversa é lida, então um toque
+seguido de outra mensagem da pessoa não é recuperado; a lista cobre as 50
+conversas mais recentes; o atraso é de até 5 minutos. Não há chamada nova à
+Graph API nem permissão nova. O registro operacional
+(`Button taps recovered from conversations`) guarda só a contagem.
+
+Pressuposto ainda não comprovado em produção: que a API de conversas devolva o
+toque do botão como mensagem com o título do botão. Os testes usam payload
+anonimizado nesse formato. Se a API não devolver, a rotina não encontra nada e
+não tem efeito.
+
+Referência: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/conversations-api
