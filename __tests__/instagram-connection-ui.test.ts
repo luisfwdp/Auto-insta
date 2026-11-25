@@ -129,6 +129,18 @@ describe("Instagram connection interface", () => {
     expect(html).not.toContain("plan_limit");
   });
 
+  it.each([
+    ["no_account_shared", "Professional Instagram account not found", "/api/instagram/connect"],
+    ["multiple_accounts_shared", "Instagram permission is insufficient", "/api/instagram/connect"],
+    ["token_exchange_failed", "Meta configuration needs attention", "/diagnostics"],
+    ["connection_failed", "Instagram connection failed", "/diagnostics"],
+    ["state_store_unavailable", "Instagram connection failed", "/diagnostics"],
+  ])("maps the callback failure code %s to specific guidance", (reason, title, href) => {
+    const feedback = resolveInstagramConnectFeedback("failed", reason);
+    expect(feedback?.title).toBe(title);
+    expect(feedback?.actionHref).toBe(href);
+  });
+
   it("renders an assertive alert for an incomplete OAuth return", () => {
     navigation.params = new URLSearchParams({ instagram: "invalid" });
     const html = renderToStaticMarkup(createElement(InstagramConnectNotice));
