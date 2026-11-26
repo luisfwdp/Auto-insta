@@ -5,6 +5,9 @@ export const metadata: Metadata = {
   title: "Política de Privacidade — PING CHAT",
   description:
     "Como o PING CHAT trata dados de conta, do Instagram, de cobrança e das campanhas dos clientes.",
+  alternates: {
+    canonical: "https://www.pingchatbr.app/privacy",
+  },
 };
 
 export default function PrivacyPage() {
@@ -12,12 +15,15 @@ export default function PrivacyPage() {
     <LegalShell
       title="Política de Privacidade"
       description="O PING CHAT ajuda criadores e negócios a responder comentários do Instagram com mensagens privadas, usando apenas a integração oficial da Meta."
-      updatedAt="23 de novembro de 2026"
+      updatedAt="26 de novembro de 2026"
     >
       <section>
         <h2 className="text-xl font-bold text-foreground">Quem somos</h2>
         <p className="mt-3">
-          O PING CHAT é operado pela Creator Lab School. Para qualquer assunto sobre privacidade e proteção de dados, incluindo os direitos previstos na LGPD, escreva para <a className="underline" href="mailto:contato@pingchatbr.app">contato@pingchatbr.app</a>.
+          O PING CHAT é operado por Pereira Negócios Digitais LTDA, inscrita no CNPJ sob o nº 40.526.791/0001-02, estabelecida no Brasil.
+        </p>
+        <p className="mt-3">
+          O site oficial do serviço é <a className="underline" href="https://www.pingchatbr.app">www.pingchatbr.app</a>. Para qualquer assunto sobre privacidade e proteção de dados, incluindo os direitos previstos na LGPD, escreva para <a className="underline" href="mailto:contato@pingchatbr.app">contato@pingchatbr.app</a>.
         </p>
       </section>
 
