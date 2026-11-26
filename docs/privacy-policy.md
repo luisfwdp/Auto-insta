@@ -28,3 +28,9 @@ declara que novos procedimentos de atendimento a autoridades foram implantados.
 
 Rollback: reverter este commit ou restaurar o deploy web anterior. Não há schema,
 migração, variável de ambiente ou mudança no worker a desfazer.
+
+## Evidencias visuais do build local
+
+![Politica em desktop](assets/privacy-controller-desktop.jpg)
+
+![Politica em celular](assets/privacy-controller-mobile.jpg)
