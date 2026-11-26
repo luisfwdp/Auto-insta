@@ -1,4 +1,4 @@
-import { UnrecoverableError, Worker, type Job } from "bullmq";
+import { DelayedError, UnrecoverableError, Worker, type Job } from "bullmq";
 import { assertCommercialAccess } from "@/lib/billing/commercial-access";
 import { assertCommercialAccountUsable } from "@/lib/billing/commercial-capacity";
 import { BillingError } from "@/lib/billing/config";
@@ -30,10 +30,22 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : "Unknown publishing error";
 }
 
+/** Meta's publishing window is rolling, so an exhausted quota frees up by itself. */
+export const PUBLISHING_QUOTA_WAITING = "PUBLISHING_QUOTA_WAITING";
+export const QUOTA_RETRY_DELAY_MS = 30 * 60_000;
+export const QUOTA_MAX_WAIT_MS = 24 * 60 * 60_000;
+
+export class PublishingQuotaExhaustedError extends RateLimitError {
+  constructor(usage: number, total: number) {
+    super(`Instagram publishing quota exhausted (${usage}/${total})`);
+    this.name = "PublishingQuotaExhaustedError";
+  }
+}
+
 async function assertPublishingQuota(instagramId: string, accessToken: string) {
   const quota = await getContentPublishingLimit(instagramId, accessToken);
   if (quota.quotaUsage >= quota.quotaTotal)
-    throw new RateLimitError(`Instagram publishing quota exhausted (${quota.quotaUsage}/${quota.quotaTotal})`);
+    throw new PublishingQuotaExhaustedError(quota.quotaUsage, quota.quotaTotal);
 }
 
 async function mediaFor(publication: {
@@ -228,10 +240,33 @@ async function publishPublication(job: Job<PublishPublicationJob>) {
   await refreshBatchProgress(publication.batchId, publication.workspaceId);
 }
 
-async function processPublication(job: Job<PublishPublicationJob>) {
+/**
+ * The account already used its Meta allowance for the rolling 24 hours. Nothing
+ * was sent for this publication, so hand it back to the queue and look again
+ * later without spending one of its attempts. Returns false once the wait
+ * would exceed a full window, so the normal failure path reports it.
+ */
+async function waitForPublishingQuota(job: Job<PublishPublicationJob>, token: string | undefined, now = Date.now()) {
+  if (!token) return false;
+  const where = { id: job.data.publicationId, workspaceId: job.data.workspaceId };
+  const row = await prisma.scheduledPublication.findFirst({ where, select: { scheduledFor: true, createdAt: true } });
+  const due = (row?.scheduledFor ?? row?.createdAt)?.getTime();
+  if (!due || now - due >= QUOTA_MAX_WAIT_MS) return false;
+  const released = await prisma.scheduledPublication.updateMany({
+    where: { ...where, status: "PROCESSING" },
+    data: { status: "QUEUED", lastError: PUBLISHING_QUOTA_WAITING },
+  });
+  if (released.count !== 1) return false;
+  await job.moveToDelayed(now + QUOTA_RETRY_DELAY_MS, token);
+  return true;
+}
+
+async function processPublication(job: Job<PublishPublicationJob>, token?: string) {
   try {
     await publishPublication(job);
   } catch (error) {
+    if (error instanceof PublishingQuotaExhaustedError && await waitForPublishingQuota(job, token))
+      throw new DelayedError();
     if (!(error instanceof BillingError)) throw error;
     // BullMQ stops retrying UnrecoverableError before attemptsMade reaches the
     // configured maximum, so persist terminal commercial failures here.

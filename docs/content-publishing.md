@@ -91,3 +91,16 @@ de `PROCESSING` perde para um cancelamento. Ambas exigem revisão humana conform
 worker. Não há migração ou rollback de dados.
 Rollback da proteção de conteúdo de containers: reverta o commit e reimplante a
 versão aprovada anterior da aplicação. Não há mudança de schema ou de dados.
+
+## Cota de publicação da Meta esgotada
+
+A Meta limita as publicações feitas pela API por conta, em uma janela móvel de 24 horas. O
+valor real vem de `GET /{ig-id}/content_publishing_limit` (`quota_usage` e `config.quota_total`)
+e é lido antes de cada publicação; não há número fixo no código.
+
+Quando a cota está esgotada, o worker não cria contêiner nem chama `media_publish`. A
+publicação volta para `QUEUED` com `lastError = PUBLISHING_QUOTA_WAITING` e é tentada de novo a
+cada 30 minutos, sem gastar tentativas. Se passar 24 horas do horário agendado sem vaga, ela
+segue o caminho normal de falha. Pausar ou cancelar o lote continua valendo durante a espera.
+
+Referência: https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/content_publishing_limit

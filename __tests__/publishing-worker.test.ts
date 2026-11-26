@@ -56,6 +56,7 @@ vi.mock("@/lib/queue/client", () => ({
 
 vi.mock("bullmq", () => ({
   UnrecoverableError: class UnrecoverableError extends Error {},
+  DelayedError: class DelayedError extends Error {},
   Worker: function MockWorker(_name: string, processor: unknown) {
     (globalThis as Record<string, unknown>).__publishingWorkerProcessor = processor;
     return { on: vi.fn(), close: vi.fn() };
@@ -64,7 +65,8 @@ vi.mock("bullmq", () => ({
 
 import { BillingError } from "@/lib/billing/config";
 import { MetaApiError, RateLimitError, TokenExpiredError } from "@/lib/meta/client";
-import { createPublishingWorker } from "@/lib/queue/publishing-worker";
+import { createPublishingWorker, PUBLISHING_QUOTA_WAITING, QUOTA_RETRY_DELAY_MS } from "@/lib/queue/publishing-worker";
+import { DelayedError } from "bullmq";
 
 const publication = {
   id: "publication_1",
@@ -376,5 +378,63 @@ describe("commercial publishing dispatch", () => {
     expect(mocks.finish).not.toHaveBeenCalled();
     expect(mocks.recover).not.toHaveBeenCalled();
     expect(mocks.publishContainer).toHaveBeenCalledOnce();
+  });
+});
+
+describe("publishing worker quota wait", () => {
+  type Processor = (job: unknown, token?: string) => Promise<void>;
+  const exhausted = { quotaUsage: 100, quotaTotal: 100, quotaDurationSeconds: 86_400 };
+  const jobWith = (moveToDelayed: ReturnType<typeof vi.fn>) => ({
+    data: { publicationId: publication.id, workspaceId: publication.workspaceId }, moveToDelayed,
+  });
+
+  it("puts the publication back in the queue instead of failing when Meta's quota is exhausted", async () => {
+    const moveToDelayed = vi.fn().mockResolvedValue(undefined);
+    mocks.findFirst
+      .mockResolvedValueOnce({ ...publication, metaContainerId: null })
+      .mockResolvedValueOnce({ scheduledFor: new Date(Date.now() - 60_000), createdAt: new Date(Date.now() - 3_600_000) });
+    mocks.getContentPublishingLimit.mockResolvedValue(exhausted);
+    const before = Date.now();
+
+    await expect((processor() as Processor)(jobWith(moveToDelayed), "lock-token")).rejects.toBeInstanceOf(DelayedError);
+
+    expect(mocks.createPublishContainer).not.toHaveBeenCalled();
+    expect(mocks.publishContainer).not.toHaveBeenCalled();
+    expect(mocks.reserve).not.toHaveBeenCalled();
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { id: publication.id, workspaceId: publication.workspaceId, status: "PROCESSING" },
+      data: { status: "QUEUED", lastError: PUBLISHING_QUOTA_WAITING },
+    });
+    const [until, token] = moveToDelayed.mock.calls[0];
+    expect(until).toBeGreaterThanOrEqual(before + QUOTA_RETRY_DELAY_MS);
+    expect(token).toBe("lock-token");
+  });
+
+  it("fails normally once the publication has waited a full 24 hour window", async () => {
+    const moveToDelayed = vi.fn();
+    mocks.findFirst
+      .mockResolvedValueOnce({ ...publication, metaContainerId: null })
+      .mockResolvedValueOnce({ scheduledFor: new Date(Date.now() - 25 * 3_600_000), createdAt: new Date(0) });
+    mocks.getContentPublishingLimit.mockResolvedValue(exhausted);
+
+    await expect((processor() as Processor)(jobWith(moveToDelayed), "lock-token")).rejects.toThrow("quota exhausted");
+
+    expect(moveToDelayed).not.toHaveBeenCalled();
+    expect(mocks.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ lastError: PUBLISHING_QUOTA_WAITING }),
+    }));
+  });
+
+  it("does not delay a publication that was cancelled while the quota was checked", async () => {
+    const moveToDelayed = vi.fn();
+    mocks.findFirst
+      .mockResolvedValueOnce({ ...publication, metaContainerId: null })
+      .mockResolvedValueOnce({ scheduledFor: new Date(), createdAt: new Date() });
+    mocks.getContentPublishingLimit.mockResolvedValue(exhausted);
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+    await expect((processor() as Processor)(jobWith(moveToDelayed), "lock-token")).rejects.toThrow("quota exhausted");
+
+    expect(moveToDelayed).not.toHaveBeenCalled();
   });
 });
