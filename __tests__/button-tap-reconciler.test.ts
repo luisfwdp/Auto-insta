@@ -2,25 +2,32 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   automationFindMany: vi.fn(), dmLogFindFirst: vi.fn(), eventCreate: vi.fn(),
-  queueAdd: vi.fn(), redisEval: vi.fn(), redisSet: vi.fn(), getConversations: vi.fn(), createContext: vi.fn(),
+  queueAdd: vi.fn(), redisEval: vi.fn(), redisExists: vi.fn(), redisSet: vi.fn(), getConversations: vi.fn(), createContext: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ prisma: {
   automation: { findMany: mocks.automationFindMany },
   dmLog: { findFirst: mocks.dmLogFindFirst },
   operationalEvent: { create: mocks.eventCreate },
 } }));
-vi.mock("@/lib/queue/client", () => ({
+vi.mock("@/lib/queue/client", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/queue/client")>(),
   POSTBACK_JOB_NAME: "process-postback",
   getDMQueue: () => ({ add: mocks.queueAdd }),
-  getRedisConnection: () => ({ eval: mocks.redisEval, set: mocks.redisSet }),
+  getRedisConnection: () => ({ eval: mocks.redisEval, exists: mocks.redisExists, set: mocks.redisSet }),
 }));
-vi.mock("@/lib/instagram/read-inbox", () => ({ getConversations: mocks.getConversations }));
+vi.mock("@/lib/meta/client", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/meta/client")>(),
+  async *iterateConversations(...args: unknown[]) {
+    yield* await mocks.getConversations(...args);
+  },
+}));
 vi.mock("@/lib/instagram/context", () => ({
   createInstagramContext: mocks.createContext,
   hasInstagramCredentials: (account: { accessToken: string }) => Boolean(account.accessToken),
 }));
 
 import { reconcileButtonTaps, BUTTON_TAP_LOOKBACK_MS, BUTTON_TAP_RECOVERED_MESSAGE } from "@/lib/polling/button-tap-reconciler";
+import { MetaApiError } from "@/lib/meta/client";
 
 const now = new Date("2026-11-25T03:00:00.000Z");
 const account = { id: "acct_1", instagramId: "ig_account", accessToken: "encrypted", provider: "META", workspaceId: "ws_1", zernioAccountId: null };
@@ -44,6 +51,7 @@ beforeEach(() => {
   mocks.createContext.mockResolvedValue({ provider: "META", accessToken: "token", instagramId: "ig_account" });
   mocks.getConversations.mockResolvedValue([conversation()]);
   mocks.redisEval.mockResolvedValue(1);
+  mocks.redisExists.mockResolvedValue(0);
   mocks.redisSet.mockResolvedValue("OK");
   mocks.queueAdd.mockResolvedValue({});
   mocks.eventCreate.mockResolvedValue({});
@@ -76,6 +84,41 @@ describe("button tap recovery from conversations", () => {
       workspaceId: "ws_1", instagramAccountId: "acct_1", status: "SENT",
       dmSentAt: { gte: new Date(now.getTime() - BUTTON_TAP_LOOKBACK_MS) },
     });
+  });
+
+  it("uses only the first Graph page for accounts with a DM in the past ten minutes", async () => {
+    expect(await reconcileButtonTaps(now, "recent")).toEqual({ accounts: 1, recovered: 1, errors: 0 });
+    expect(mocks.dmLogFindFirst.mock.calls[0][0].where.dmSentAt.gte).toEqual(new Date(now.getTime() - 600_000));
+    expect(mocks.getConversations).toHaveBeenCalledWith(
+      "token", account.instagramId, expect.objectContaining({ firstPageOnly: true, signal: expect.any(AbortSignal) }),
+    );
+    expect(mocks.dmLogFindFirst.mock.calls[1][0].where.dmSentAt.gte).toEqual(new Date(now.getTime() - BUTTON_TAP_LOOKBACK_MS));
+  });
+
+  it("keeps a recent follow prompt eligible after the opening DM ages out of the fast window", async () => {
+    mocks.dmLogFindFirst.mockResolvedValueOnce(null);
+    mocks.redisExists.mockResolvedValueOnce(1);
+
+    expect(await reconcileButtonTaps(now, "recent")).toEqual({ accounts: 1, recovered: 1, errors: 0 });
+    expect(mocks.redisExists).toHaveBeenNthCalledWith(1, "button_tap_recent_prompt:acct_1");
+    expect(mocks.getConversations).toHaveBeenCalledOnce();
+  });
+
+  it("skips fast scans for accounts without a recent opening or follow prompt", async () => {
+    mocks.dmLogFindFirst.mockResolvedValueOnce(null);
+    await expect(reconcileButtonTaps(now, "recent")).resolves.toEqual({ accounts: 0, recovered: 0, errors: 0 });
+    expect(mocks.getConversations).not.toHaveBeenCalled();
+  });
+
+  it("backs off Graph reads for an account that reaches Meta's Instagram rate limit", async () => {
+    mocks.getConversations.mockRejectedValueOnce(new MetaApiError(80002, undefined, undefined, "rate limit"));
+    expect(await reconcileButtonTaps(now, "recent")).toEqual({ accounts: 1, recovered: 0, errors: 1 });
+    expect(mocks.redisSet).toHaveBeenCalledWith("button_tap_scan_rate_limit:acct_1", "1", "EX", 300);
+
+    mocks.getConversations.mockClear();
+    mocks.redisExists.mockResolvedValueOnce(1);
+    await expect(reconcileButtonTaps(now, "full")).resolves.toEqual({ accounts: 0, recovered: 0, errors: 0 });
+    expect(mocks.getConversations).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -124,6 +167,18 @@ describe("button tap recovery from conversations", () => {
     expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 1, errors: 0 });
     expect(mocks.queueAdd.mock.calls[0][2]).toEqual(mocks.queueAdd.mock.calls[1][2]);
     expect(mocks.redisSet).toHaveBeenCalledTimes(2);
+  });
+
+  it("enqueues the first verified tap even when a later conversation page fails", async () => {
+    async function* interruptedScan() {
+      yield conversation();
+      throw new DOMException("Graph preview timed out", "TimeoutError");
+    }
+    mocks.getConversations.mockResolvedValue(interruptedScan());
+
+    expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 1, errors: 1 });
+    expect(mocks.queueAdd).toHaveBeenCalledOnce();
+    expect(mocks.eventCreate).toHaveBeenCalledOnce();
   });
 
   it("holds a short claim when marking the enqueued job fails and retries with the same job id", async () => {

@@ -110,6 +110,11 @@ export type DmQueueJob =
 export const POSTBACK_JOB_NAME = "process-postback";
 export const FOLLOWUP_JOB_NAME = "process-followup";
 export const MESSAGE_JOB_NAME = "process-message";
+export const RECENT_BUTTON_PROMPT_SECONDS = 10 * 60;
+
+export function recentButtonPromptKey(accountConnectionId: string) {
+  return `button_tap_recent_prompt:${accountConnectionId}`;
+}
 
 let dmQueue: Queue<DmQueueJob> | null = null;
 

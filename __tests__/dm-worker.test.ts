@@ -116,7 +116,8 @@ vi.mock("@/lib/ops/worker-health", () => ({
   recordWorkerAlert: vi.fn(),
 }));
 
-vi.mock("@/lib/queue/client", () => ({
+vi.mock("@/lib/queue/client", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/queue/client")>(),
   getDMQueue: () => ({
     add: mockQueueAdd,
   }),
@@ -1679,6 +1680,21 @@ describe("DM Worker — follow-gate re-check", () => {
     expect(mockSendDirectMessageWithButton).toHaveBeenCalledTimes(1);
     expect(mockSendDirectMessage).not.toHaveBeenCalled();
     expect(mockQueueAdd).not.toHaveBeenCalled();
+  });
+
+  it("activates the fast scan for the account after Meta accepts a follow prompt", async () => {
+    const processor = getProcessor();
+    const set = vi.fn().mockResolvedValue("OK");
+    vi.mocked(getRedisConnection).mockReturnValueOnce({ set } as never);
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+
+    await processor(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open",
+    }));
+
+    expect(set).toHaveBeenCalledWith("button_tap_recent_prompt:ig_account_row_1", "1", "EX", 600);
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
   });
 
   it("allows a follow-prompt retry after Meta explicitly rate limits the send", async () => {

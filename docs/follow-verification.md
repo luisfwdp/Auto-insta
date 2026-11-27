@@ -91,12 +91,18 @@ entrega. O Acesso Padrão atende ao teste com papéis
 no próprio app; o Acesso Avançado atende a contas de clientes externos.
 
 O worker passa a recuperar esses toques pela mesma lista de conversas que a
-Caixa de entrada já lê (`lib/polling/button-tap-reconciler.ts`), no mesmo ciclo
-de 5 minutos da varredura de comentários:
+Caixa de entrada já lê (`lib/polling/button-tap-reconciler.ts`). A recuperação
+roda separada da varredura de comentários:
 
 - Só contas META com campanha ativa que envia botão (`requireFollow` ou DM de
   abertura) e que contataram alguém nas últimas 24 horas. Sem isso, nenhuma
   chamada à Graph API é feita.
+- A cada 30 segundos, consulta até três prévias para contas que enviaram
+  uma DM elegível ou um novo pedido para seguir nos últimos dez minutos.
+  A cada cinco minutos, uma varredura
+  completa cobre até as 50 conversas recentes. O worker evita rodadas
+  simultâneas e suspende essa leitura da conta por cinco minutos quando a
+  Meta retorna um limite de taxa.
 - Só age quando a mensagem mais recente da conversa é da outra pessoa, tem até
   24 horas e o texto é exatamente o título do botão (sem diferenciar maiúsculas).
 - Só para quem tem uma DM registrada como `SENT`, anterior ao toque, na mesma
@@ -120,8 +126,8 @@ Limites: digitar o título do botão também pode ser interpretado como um toque
 As mesmas regras de envio anterior, janela e confirmação de follow se aplicam.
 Só a mensagem mais recente de cada conversa é lida, então um toque
 seguido de outra mensagem da pessoa não é recuperado; a lista cobre as 50
-conversas mais recentes; o atraso é de até 5 minutos. Não há chamada nova à
-Graph API nem permissão nova. O registro operacional
+conversas mais recentes na varredura completa. O tempo de entrega depende
+da fila, da resposta da Meta e de qual varredura encontra o toque. O registro operacional
 (`Button taps recovered from conversations`) guarda só a contagem.
 
 O worker distingue limite de envio explícito (`FOLLOW_PROMPT_RATE_LIMITED`, com
@@ -133,3 +139,13 @@ para seguir e do link, verifique a conversa no Instagram do destinatário de
 teste.
 
 Referência: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/conversations-api
+
+Em 27/11, a chamada de 50 prévias expirou enquanto a chamada de uma prévia
+retornou a conversa e os cliques do teste. A varredura completa começa com
+uma prévia, processa cada página conforme chega e cresce até oito conversas
+por chamada. Um timeout reduz a página e repete o mesmo cursor enquanto houver
+tempo no orçamento de 35 segundos por conta. O ciclo recente usa até 18
+segundos por conta. Se outra página falhar, os jobs já gravados continuam na
+fila. A Caixa de entrada mantém sua consulta usual.
+
+Limites de taxa: https://developers.facebook.com/docs/graph-api/overview/rate-limiting/
