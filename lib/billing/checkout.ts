@@ -8,6 +8,7 @@ import { BillingError, getBillingProviderScope, saoPauloDate } from "./config";
 import { isBillingEnabled } from "./trial";
 import { isBillingSalesEnabled } from "./sales";
 import { createPingAffiliateCheckout } from "./batida-affiliate";
+import { createBillingGateway } from "./gateway";
 import { reconcileBillingResource } from "./reconcile";
 import { evaluateLifetimeAccess } from "./lifetime";
 
@@ -32,8 +33,9 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
   if (!parsed.success) throw new BillingError("INVALID_REQUEST", 400);
   const input = parsed.data, plan = BILLING_PLANS[input.planId], scope = getBillingProviderScope();
   if (input.expectedAmountCents !== plan.amountCents) throw new BillingError("OFFER_CHANGED");
-  const gateway = provider ?? createAsaasClient();
-  getAsaasCheckoutOrigin();
+  const gateway = provider ?? createBillingGateway();
+  const origin = getAsaasCheckoutOrigin();
+  if (process.env.PULSO_CHECKOUT_ENABLED === "true" && !origin.startsWith("https://")) throw new BillingError("BILLING_CONFIGURATION", 503);
   // Validate encryption configuration before any financial mutation could happen.
   encryptToken("billing-readiness");
   const now = new Date();

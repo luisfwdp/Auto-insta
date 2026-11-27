@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/client";
 import { createAsaasClient, AsaasError } from "./asaas-client";
 import { BillingError, getBillingProviderScope } from "./config";
 import { claimBillingSync, assertBillingSyncLease, releaseBillingSync } from "./sync-lease";
+import { createBillingGateway } from "./gateway";
 
 /** Available during rollout rollback too: disabling sales must not stop cancellation. */
 export async function requestSubscriptionCancellation(workspaceId: string, requestId: string) {
@@ -39,7 +40,7 @@ const eligible = (now: Date) => ({
 /** Durable outbox. A retry GETs canonical state before repeating idempotent DELETE. */
 export async function processBillingCancellations(limit = 5, provider?: ReturnType<typeof createAsaasClient>) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new BillingError("INVALID_REQUEST", 400);
-  const scope = getBillingProviderScope(), gateway = provider ?? createAsaasClient(), now = new Date();
+  const scope = getBillingProviderScope(), gateway = provider ?? createBillingGateway(), now = new Date();
   const candidates = await prisma.billingCommand.findMany({ where: { ...eligible(now), subscription: scope }, take: limit, orderBy: { createdAt: "asc" } });
   let processed = 0;
   for (const candidate of candidates) {

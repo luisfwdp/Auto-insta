@@ -5,6 +5,7 @@ import { BillingError, getBillingProviderScope } from "./config";
 import { derivePaidAccess, FinancialPolicyError, type FinancialPaymentRecord } from "./financial-policy";
 import { claimBillingSync, assertBillingSyncLease, releaseBillingSync, renewBillingSync } from "./sync-lease";
 import { claimBillingEvents, finishBillingEvent, renewBillingEvent } from "./inbox";
+import { createBillingGateway } from "./gateway";
 
 type Gateway = ReturnType<typeof createAsaasClient>;
 
@@ -150,7 +151,7 @@ async function syncCheckout(checkout: BillingCheckout, gateway: Gateway, token: 
 
 /** Resource IDs here come from the authenticated durable inbox, never an owner-supplied binding. */
 export async function reconcileBillingResource(source: { paymentId?: string; subscriptionId?: string; checkoutId?: string; terminal?: "CANCELED" | "EXPIRED"; recoverExpiredOpen?: boolean }, provider?: Gateway, heartbeat?: () => Promise<void>) {
-  const scope = getBillingProviderScope(), gateway = provider ?? createAsaasClient();
+  const scope = getBillingProviderScope(), gateway = provider ?? createBillingGateway();
   const read = async <T>(request: () => Promise<T>) => { await heartbeat?.(); const value = await request(); await heartbeat?.(); return value; };
   let bound: BillingSubscription | null = null, checkout: BillingCheckout | null = null;
   const keys: ResourceKeys = { paymentIds: [], subscriptionIds: [], checkoutIds: [] };
@@ -230,7 +231,7 @@ async function isForeignBillingResource(event: BillingEvent, keys: ResourceKeys,
 
 export async function processBillingInbox(limit = 5, provider?: Gateway) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new BillingError("INVALID_REQUEST", 400);
-  const gateway = provider ?? createAsaasClient();
+  const gateway = provider ?? createBillingGateway();
   let processed = 0;
   // Claim just before processing: slow reads must not age the next job's lease.
   for (let index = 0; index < limit; index++) {

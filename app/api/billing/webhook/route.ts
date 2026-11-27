@@ -30,6 +30,7 @@ async function readBody(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  if (process.env.PULSO_CHECKOUT_ENABLED === "true") return NextResponse.json({ received: true }, { headers });
   const configuredToken = process.env.ASAAS_WEBHOOK_TOKEN;
   if (!configuredToken || configuredToken.length < 32 || configuredToken === process.env.ASAAS_API_KEY) return NextResponse.json({ success: false, error: "BILLING_CONFIGURATION" }, { status: 503, headers });
   // Do not read or parse the body until the distinct provider token authenticates.
