@@ -6,6 +6,7 @@ const checkoutInput = z.object({
   name: z.string().trim().min(1).max(100),
   amountCents: z.number().int().positive().max(1_000_000_000),
   planId: z.enum(BILLING_PLAN_IDS).optional(),
+  offerReference: z.uuid().optional(),
   firstChargeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
     const parsed = new Date(`${value}T00:00:00Z`);
     return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;

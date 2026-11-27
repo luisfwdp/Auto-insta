@@ -19,6 +19,7 @@ export const checkoutRequest = z.object({
   acceptImmediateCharge: z.literal(true),
 }).strict();
 export type CheckoutRequest = z.infer<typeof checkoutRequest>;
+type CheckoutAttribution = { affiliateCode?: string; offerReference?: string };
 
 function checkoutDTO(row: BillingCheckout) {
   return { id: row.id, status: row.status, planId: row.planId, amountCents: row.amountCents,
@@ -26,7 +27,8 @@ function checkoutDTO(row: BillingCheckout) {
 }
 
 /** Durable intent BEFORE the only provider POST; no network inside a DB lock. */
-export async function requestCheckout(workspaceId: string, value: CheckoutRequest, provider?: ReturnType<typeof createAsaasClient>, affiliateCode?: string) {
+export async function requestCheckout(workspaceId: string, value: CheckoutRequest,
+  provider?: ReturnType<typeof createAsaasClient>, { affiliateCode, offerReference }: CheckoutAttribution = {}) {
   if (!isBillingEnabled()) throw new BillingError("BILLING_DISABLED", 404);
   if (!isBillingSalesEnabled()) throw new BillingError("BILLING_SALES_DISABLED", 503);
   const parsed = checkoutRequest.safeParse(value);
@@ -89,7 +91,7 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
         date: row.firstChargeDate, mode: scope.environment,
       })
       : await gateway.createHostedCheckout({ reference: row.id, name: `PING CHAT — ${plan.name}`, planId: input.planId,
-        amountCents: row.amountCents, firstChargeDate: row.firstChargeDate });
+        amountCents: row.amountCents, firstChargeDate: row.firstChargeDate, ...(offerReference && { offerReference }) });
     const encryptedUrl = encryptToken(result.url);
     const saved = await prisma.billingCheckout.updateMany({ where: { id: row.id, workspaceId, status: { in: ["CREATING", "UNKNOWN"] }, OR: [{ providerCheckoutId: null }, { providerCheckoutId: result.id }] }, data: { providerCheckoutId: result.id, checkoutUrlCiphertext: encryptedUrl, status: "OPEN", lastErrorCode: null } });
     if (saved.count !== 1) throw new BillingError("CHECKOUT_CONFLICT");

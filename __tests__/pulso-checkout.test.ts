@@ -140,6 +140,17 @@ describe("Pulso recurring checkout", () => {
     expect(String(fetcher.mock.calls[0][0])).toBe("https://pulso.example.test/api/commerce/ping-chat");
   });
 
+  it("sends the opaque offer reference only on the versioned creation call", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(productionResult, { status: 201 }))
+      .mockResolvedValueOnce(Response.json(brandedLink()));
+    const gateway = createAsaasClient(production, fetcher, createPulsoClient("production", production, fetcher));
+    await gateway.createHostedCheckout({ ...catalogInput, offerReference: productionResult.id });
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).get("x-pulso-offer-ref")).toBe(productionResult.id);
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).not.toHaveProperty("offerReference");
+    expect(new Headers(fetcher.mock.calls[1][1]?.headers).get("x-pulso-offer-ref")).toBeNull();
+  });
+
   it("refuses a divergent price before calling Pulso", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const transport = createPulsoClient("production", production, fetcher)!;

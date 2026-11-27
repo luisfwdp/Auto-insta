@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { checkoutRequest, requestCheckout, readCheckout } from "@/lib/billing/checkout";
 import { BATIDA_REFERRAL_COOKIE, referralCode } from "@/lib/billing/batida-affiliate";
 import { BillingError } from "@/lib/billing/config";
+import { readPulsoOfferReference } from "@/lib/billing/pulso-offer";
 import { billingFailure, billingJson, billingResourceId, readBillingJson, requireBillingOwner } from "@/lib/billing/http";
 
 export const maxDuration = 30;
@@ -18,8 +19,9 @@ export async function POST(request: NextRequest) {
     const referral = process.env.BATIDA_AFFILIATE_CHECKOUT_SECRET
       ? referralCode.safeParse(request.cookies.get(BATIDA_REFERRAL_COOKIE)?.value).data
       : undefined;
-    const data = referral
-      ? await requestCheckout(context.workspaceId, parsed.data, undefined, referral)
+    const offerReference = !referral ? readPulsoOfferReference(request, parsed.data.planId) : undefined;
+    const data = (referral || offerReference)
+      ? await requestCheckout(context.workspaceId, parsed.data, undefined, { affiliateCode: referral, offerReference })
       : await requestCheckout(context.workspaceId, parsed.data);
     return billingJson(checkoutResponse(data), data.status === "CREATING" || data.status === "UNKNOWN" ? 202 : 200);
   } catch (error) { return billingFailure(error); }

@@ -38,12 +38,13 @@ export function createPulsoClient(
       || (bypass && !/^[A-Za-z0-9_-]{16,256}$/.test(bypass))) throw new Error();
   } catch { throw new AsaasError("CONFIGURATION"); }
 
-  function send(path: string, options: RequestInit) {
+  function send(path: string, options: RequestInit, offerReference?: string) {
     return fetcher(new URL(path, url), {
       ...options, redirect: "error", cache: "no-store",
       headers: {
         Authorization: `Bearer ${token}`, "Content-Type": "application/json",
         "x-pulso-environment": environment,
+        ...(offerReference && { "x-pulso-offer-ref": offerReference }),
         ...(bypass && { "x-vercel-protection-bypass": bypass }),
       },
     });
@@ -101,7 +102,7 @@ export function createPulsoClient(
           callback: callbacks,
           subscription: { cycle: "MONTHLY", nextDueDate: input.firstChargeDate },
         }),
-      });
+      }, input.planId ? input.offerReference : undefined);
       if (response.status === 422) {
         const failure = z.object({ error: z.string() }).parse(await readBoundedJson(response));
         if (failure.error === "asaas_rejected" || failure.error === "invalid_input") throw new AsaasError("REJECTED", 422);
