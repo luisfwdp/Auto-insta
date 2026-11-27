@@ -188,6 +188,12 @@ reconciliation. In Sandbox, verify checkout, receipt, access, renewal, refund
 and cancellation. Before switching an existing deployment, verify that any
 subscriptions and outstanding orders are visible to the app token in Pulso.
 
+Card chargeback and reversal callbacks wake the same reconciliation worker.
+The worker verifies the affected invoice against the canonical payment list
+through Pulso. It recalculates coverage for the original periods, preserving a
+later paid cycle and honoring a definitive refund even if a reversal notice
+arrives late.
+
 If creation times out, the signed payment notification can recover the
 original `orderId` from Pulso. For a sales rollback, set
 `BILLING_SALES_ENABLED=false` so Pulso can still reconcile existing subscriptions.

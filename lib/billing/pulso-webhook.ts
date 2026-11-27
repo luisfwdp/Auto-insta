@@ -3,10 +3,24 @@ import { z } from "zod";
 import { BillingError } from "./config";
 import { PULSO_APP } from "./pulso-checkout";
 
-const events = { "payment.confirmed": "PAYMENT_CONFIRMED", "payment.received": "PAYMENT_RECEIVED", "payment.refunded": "PAYMENT_REFUNDED" } as const;
+const events = {
+  "payment.confirmed": "PAYMENT_CONFIRMED", "payment.received": "PAYMENT_RECEIVED", "payment.refunded": "PAYMENT_REFUNDED",
+  "payment.chargeback_requested": "PAYMENT_CHARGEBACK_REQUESTED", "payment.chargeback_reversed": "PAYMENT_CHARGEBACK_REVERSED",
+} as const;
 const eventSchema = z.object({
   id: z.uuid(), app: z.literal(PULSO_APP), orderId: z.uuid(), event: z.enum(Object.keys(events) as [keyof typeof events, ...Array<keyof typeof events>]),
   paymentId: z.string().max(128).regex(/^pay_[A-Za-z0-9_]+$/),
+  status: z.unknown().optional(),
+  billingType: z.unknown().optional(),
+  occurredAt: z.unknown().optional(),
+  disputeId: z.unknown().optional(),
+}).refine(({ id, event, status, billingType, occurredAt, disputeId }) => {
+  if (event !== "payment.chargeback_requested" && event !== "payment.chargeback_reversed") return true;
+  if (billingType !== "CREDIT_CARD" || !z.iso.datetime({ offset: true }).safeParse(occurredAt).success) return false;
+  if (event === "payment.chargeback_requested") {
+    return status === "CHARGEBACK_REQUESTED" && disputeId === undefined;
+  }
+  return (status === "RECEIVED" || status === "CONFIRMED") && z.uuid().safeParse(disputeId).success && disputeId !== id;
 });
 
 export function parsePulsoNotification(headers: Headers, body: string, secret: string, now = Date.now()) {

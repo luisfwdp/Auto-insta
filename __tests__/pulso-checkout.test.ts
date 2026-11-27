@@ -108,4 +108,30 @@ describe("Pulso notifications", () => {
     headers.set("idempotency-key", input.reference);
     expect(() => parsePulsoNotification(headers, raw, secret, now)).toThrow();
   });
+
+  it("accepts only signed card disputes and reversals with consistent evidence", () => {
+    const secret = "test-secret-for-pulso-notifications";
+    const occurredAt = "2026-11-23T14:00:00Z";
+    const now = Date.parse(occurredAt);
+    const timestamp = String(now / 1000);
+    const dispute = { id: result.providerId, app: "ping-chat", orderId: input.reference,
+      event: "payment.chargeback_requested", paymentId: "pay_test", status: "CHARGEBACK_REQUESTED",
+      billingType: "CREDIT_CARD", occurredAt };
+    const reversal = { ...dispute, id: "30000000-0000-4000-8000-000000000003", event: "payment.chargeback_reversed",
+      status: "RECEIVED", disputeId: dispute.id };
+    const parse = (value: Record<string, unknown>) => {
+      const raw = JSON.stringify(value);
+      return parsePulsoNotification(new Headers({
+        "idempotency-key": String(value.id), "x-pulso-timestamp": timestamp,
+        "x-pulso-signature": `sha256=${createHmac("sha256", secret).update(`${timestamp}.${raw}`).digest("hex")}`,
+      }), raw, secret, now);
+    };
+    expect(parse(dispute)).toEqual({ id: "pulso:" + dispute.id, orderId: input.reference,
+      event: "PAYMENT_CHARGEBACK_REQUESTED", paymentId: "pay_test" });
+    expect(parse(reversal)).toMatchObject({ event: "PAYMENT_CHARGEBACK_REVERSED" });
+    expect(() => parse({ ...dispute, billingType: "PIX" })).toThrow();
+    expect(() => parse({ ...reversal, disputeId: undefined })).toThrow();
+    expect(() => parse({ ...reversal, status: "CHARGEBACK_REQUESTED" })).toThrow();
+    expect(() => parse({ ...reversal, app: "other-product" })).toThrow();
+  });
 });
