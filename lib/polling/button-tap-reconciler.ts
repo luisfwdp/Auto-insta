@@ -15,6 +15,7 @@
  * Conversations API (already used by the Inbox, no new permission):
  * https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/conversations-api
  */
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db/client";
 import { getDMQueue, getRedisConnection, POSTBACK_JOB_NAME } from "@/lib/queue/client";
 import { createInstagramContext, hasInstagramCredentials } from "@/lib/instagram/context";
@@ -23,6 +24,13 @@ import { getConversations } from "@/lib/instagram/read-inbox";
 export const BUTTON_TAP_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 export const BUTTON_TAP_RECOVERED_MESSAGE = "Button taps recovered from conversations";
 const SEEN_TTL_SECONDS = 48 * 60 * 60;
+const PENDING_TTL_SECONDS = 60;
+const RESOLVE_CLAIM = `
+  if redis.call("GET", KEYS[1]) ~= ARGV[1] then return 0 end
+  if ARGV[2] == "0" then return redis.call("DEL", KEYS[1]) end
+  redis.call("SET", KEYS[1], "1", "EX", ARGV[2])
+  return 1
+`;
 const DEFAULT_FOLLOW_BUTTON_LABEL = "i'm following";
 
 export type ButtonTapReconcileResult = { accounts: number; recovered: number; errors: number };
@@ -140,24 +148,30 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
 
         const redis = getRedisConnection();
         const seenKey = `button_tap_seen:${account.instagramId}:${message.id}`;
-        if (await redis.exists(seenKey)) continue;
+        const claim = randomUUID();
+        if (await redis.set(seenKey, claim, "EX", PENDING_TTL_SECONDS, "NX") !== "OK") continue;
 
-        await getDMQueue().add(
-          POSTBACK_JOB_NAME,
-          {
-            instagramAccountId: account.instagramId,
-            accountConnectionId: account.id,
-            userId,
-            payload: candidate.payload,
-            mid: message.id,
-          },
-          // Same id shape as the webhook path, so a postback webhook that does
-          // arrive for the same message collapses into this job.
-          { jobId: `postback_${account.instagramId}_${userId}_${message.id.replace(/:/g, "_")}` }
-        );
-        // Queue identity deduplicates concurrent sweeps. Record the marker
-        // only after enqueue succeeds, so a Redis/queue error can be retried.
-        if (await redis.set(seenKey, "1", "EX", SEEN_TTL_SECONDS, "NX") === "OK") recovered += 1;
+        try {
+          await getDMQueue().add(
+            POSTBACK_JOB_NAME,
+            {
+              instagramAccountId: account.instagramId,
+              accountConnectionId: account.id,
+              userId,
+              payload: candidate.payload,
+              mid: message.id,
+            },
+            // Same job identity as the webhook when Meta supplies the same mid.
+            { jobId: `postback_${account.instagramId}_${userId}_${message.id.replace(/:/g, "_")}` }
+          );
+        } catch (error) {
+          await redis.eval(RESOLVE_CLAIM, 1, seenKey, claim, 0).catch(() => {});
+          throw error;
+        }
+
+        // If a process or Redis fails here, the short claim expires. The job
+        // id and the DM worker's durable per-tap send claim cover a retry.
+        if (await redis.eval(RESOLVE_CLAIM, 1, seenKey, claim, SEEN_TTL_SECONDS) === 1) recovered += 1;
       }
     } catch {
       result.errors += 1;

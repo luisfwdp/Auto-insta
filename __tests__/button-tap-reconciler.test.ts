@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   automationFindMany: vi.fn(), dmLogFindFirst: vi.fn(), eventCreate: vi.fn(),
-  queueAdd: vi.fn(), redisExists: vi.fn(), redisSet: vi.fn(), getConversations: vi.fn(), createContext: vi.fn(),
+  queueAdd: vi.fn(), redisEval: vi.fn(), redisSet: vi.fn(), getConversations: vi.fn(), createContext: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ prisma: {
   automation: { findMany: mocks.automationFindMany },
@@ -12,7 +12,7 @@ vi.mock("@/lib/db/client", () => ({ prisma: {
 vi.mock("@/lib/queue/client", () => ({
   POSTBACK_JOB_NAME: "process-postback",
   getDMQueue: () => ({ add: mocks.queueAdd }),
-  getRedisConnection: () => ({ exists: mocks.redisExists, set: mocks.redisSet }),
+  getRedisConnection: () => ({ eval: mocks.redisEval, set: mocks.redisSet }),
 }));
 vi.mock("@/lib/instagram/read-inbox", () => ({ getConversations: mocks.getConversations }));
 vi.mock("@/lib/instagram/context", () => ({
@@ -43,7 +43,7 @@ beforeEach(() => {
     args.where.commenterId ? { automationId: "auto_1" } : { id: "log_1" });
   mocks.createContext.mockResolvedValue({ provider: "META", accessToken: "token", instagramId: "ig_account" });
   mocks.getConversations.mockResolvedValue([conversation()]);
-  mocks.redisExists.mockResolvedValue(0);
+  mocks.redisEval.mockResolvedValue(1);
   mocks.redisSet.mockResolvedValue("OK");
   mocks.queueAdd.mockResolvedValue({});
   mocks.eventCreate.mockResolvedValue({});
@@ -55,7 +55,9 @@ describe("button tap recovery from conversations", () => {
     expect(mocks.queueAdd).toHaveBeenCalledWith("process-postback",
       { instagramAccountId: "ig_account", accountConnectionId: "acct_1", userId: "user_1", payload: "followcheck:auto_1", mid: "mid_1" },
       { jobId: "postback_ig_account_user_1_mid_1" });
-    expect(mocks.redisSet).toHaveBeenCalledWith("button_tap_seen:ig_account:mid_1", "1", "EX", 172800, "NX");
+    expect(mocks.redisSet).toHaveBeenCalledWith("button_tap_seen:ig_account:mid_1", expect.any(String), "EX", 60, "NX");
+    const claim = mocks.redisSet.mock.calls[0][1];
+    expect(mocks.redisEval).toHaveBeenCalledWith(expect.any(String), 1, "button_tap_seen:ig_account:mid_1", claim, 172800);
   });
 
   it("only looks at active META campaigns that send a button", async () => {
@@ -105,7 +107,7 @@ describe("button tap recovery from conversations", () => {
   });
 
   it("handles each tap once across polls", async () => {
-    mocks.redisExists.mockResolvedValue(1);
+    mocks.redisSet.mockResolvedValue(null);
     expect((await reconcileButtonTaps(now)).recovered).toBe(0);
     expect(mocks.queueAdd).not.toHaveBeenCalled();
     expect(mocks.eventCreate).not.toHaveBeenCalled();
@@ -114,11 +116,30 @@ describe("button tap recovery from conversations", () => {
   it("retries the same tap on the next sweep after enqueue fails", async () => {
     mocks.queueAdd.mockRejectedValueOnce(new Error("queue offline"));
     expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 0, errors: 1 });
-    expect(mocks.redisSet).not.toHaveBeenCalled();
+    expect(mocks.redisEval).toHaveBeenCalledWith(
+      expect.any(String), 1, "button_tap_seen:ig_account:mid_1", mocks.redisSet.mock.calls[0][1], 0,
+    );
 
     expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 1, errors: 0 });
     expect(mocks.queueAdd.mock.calls[0][2]).toEqual(mocks.queueAdd.mock.calls[1][2]);
-    expect(mocks.redisSet).toHaveBeenCalledOnce();
+    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds a short claim when marking the enqueued job fails and retries with the same job id", async () => {
+    mocks.redisEval.mockRejectedValueOnce(new Error("marker unavailable"));
+    mocks.redisSet.mockResolvedValueOnce("OK").mockResolvedValueOnce(null).mockResolvedValueOnce("OK");
+    expect((await reconcileButtonTaps(now)).errors).toBe(1);
+    expect((await reconcileButtonTaps(now)).recovered).toBe(0);
+    expect((await reconcileButtonTaps(now)).recovered).toBe(1);
+    expect(mocks.queueAdd).toHaveBeenCalledTimes(2);
+    expect(mocks.queueAdd.mock.calls[0][2]).toEqual(mocks.queueAdd.mock.calls[1][2]);
+  });
+
+  it("enqueues only once during overlapping sweeps while the first claim is pending", async () => {
+    mocks.redisSet.mockResolvedValueOnce("OK").mockResolvedValueOnce(null);
+    const sweeps = await Promise.all([reconcileButtonTaps(now), reconcileButtonTaps(now)]);
+    expect(sweeps.map(({ recovered }) => recovered).sort()).toEqual([0, 1]);
+    expect(mocks.queueAdd).toHaveBeenCalledOnce();
   });
 
   it("ignores campaigns linked to an account from another workspace", async () => {

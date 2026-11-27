@@ -1709,6 +1709,34 @@ describe("DM Worker — follow-gate re-check", () => {
     expect(mockSendDirectMessage).not.toHaveBeenCalled();
   });
 
+  it("sends one follow prompt when two ingress paths deliver the same message after queue eviction", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockPrisma.postbackDelivery.create
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce({ code: "P2002" });
+    const processor = getProcessor();
+    const tap = { instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open", mid: "same_mid" };
+
+    await processor({ ...createMockPostbackJob(tap), id: "reconciled_job" });
+    await processor({ ...createMockPostbackJob(tap), id: "webhook_job" });
+    expect(mockPrisma.postbackDelivery.create.mock.calls[0][0]).toEqual(mockPrisma.postbackDelivery.create.mock.calls[1][0]);
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledOnce();
+    expect(mockPrisma.postbackDelivery.delete).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed claim write before making a provider call", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockPrisma.postbackDelivery.create.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open",
+    }))).rejects.toMatchObject({ name: "Error", message: "FOLLOW_PROMPT_PROCESSING_FAILED" });
+    expect(mockSendDirectMessageWithButton).not.toHaveBeenCalled();
+    expect(mockPrisma.postbackDelivery.delete).not.toHaveBeenCalled();
+  });
+
   it("re-checks a first false follow later instead of rejecting the tap", async () => {
     mockPrisma.automation.findFirst.mockResolvedValue(gated);
     mockGetUserFollowStatus.mockResolvedValue(false);

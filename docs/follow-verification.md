@@ -87,7 +87,7 @@ deve ser registrada antes de cada deploy aprovado.
 Em produção, em 26/11/2026, um toque real em “Me envie o link” apareceu na
 API de conversas, mas não chegou como `messaging_postbacks` no callback. A
 conta estava inscrita nesse campo. O suporte Meta informou um incidente de
-entrega no chamado 1491237186237317. O Acesso Padrão atende ao teste com papéis
+entrega. O Acesso Padrão atende ao teste com papéis
 no próprio app; o Acesso Avançado atende a contas de clientes externos.
 
 O worker passa a recuperar esses toques pela mesma lista de conversas que a
@@ -102,13 +102,19 @@ de 5 minutos da varredura de comentários:
 - Só para quem tem uma DM registrada como `SENT`, anterior ao toque, na mesma
   conta e workspace. A campanha do envio mais recente decide de qual botão
   se trata.
-- O job usa a mesma identidade do webhook. O marcador Redis de 48 horas só é
-  gravado após o enfileiramento; uma falha da fila permite uma nova varredura.
+- Uma reserva Redis de um minuto evita varreduras simultâneas para o mesmo
+  toque. A reserva vira marcador de 48 horas após enfileirar. Uma falha de
+  fila libera a reserva; uma interrupção do processo permite retry após expirar.
+- Quando o ID de mensagem coincide com o `mid` do postback, ambas as entradas
+  usam a mesma identidade de job e a trava persistente de entrega. A fila
+  conserva as últimas 1.000 conclusões e a trava continua após a remoção do job.
 - Não envia nada por conta própria: enfileira o mesmo job `process-postback`, e
   o caminho existente continua exigindo `is_user_follow_business === true`,
   cota, deduplicação e janela de mensagens.
 
-Limites: só a mensagem mais recente de cada conversa é lida, então um toque
+Limites: digitar o título do botão também pode ser interpretado como um toque.
+As mesmas regras de envio anterior, janela e confirmação de follow se aplicam.
+Só a mensagem mais recente de cada conversa é lida, então um toque
 seguido de outra mensagem da pessoa não é recuperado; a lista cobre as 50
 conversas mais recentes; o atraso é de até 5 minutos. Não há chamada nova à
 Graph API nem permissão nova. O registro operacional
