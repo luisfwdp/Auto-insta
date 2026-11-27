@@ -6,7 +6,7 @@ import { Button, Card } from "@/components/ui/primitives";
 import {
   billingRequest, billingStatusSchema, trialStatusSchema, billingPlansSchema, billingUsageSchema, checkoutSchema, cancellationSchema,
   savedBillingSchema, createBrowserCheckout, createBrowserCancellation, resumeBrowserCancellation, isWorkspaceContextError, pollBillingOperation, checkoutPending, checkoutClosed,
-  cancellationPending, safeAsaasCheckoutUrl, BillingBrowserError,
+  cancellationPending, safeBillingCheckoutUrl, BillingBrowserError,
   type BillingRole, type BillingStatus, type BillingPlan, type BillingUsage, type Checkout, type Cancellation,
   type SavedBillingRequests, type PendingBillingRequest,
 } from "@/lib/billing/browser-contract";
@@ -119,7 +119,7 @@ function BillingWorkspace({ role, workspaceId }: { role: BillingRole; workspaceI
 
   if (workspaceChanged) return <BillingWorkspaceChangedNotice href="/billing" />;
   const lifetime = status?.status === "LIFETIME";
-  const checkoutLink = !lifetime && checkout?.status === "OPEN" ? safeAsaasCheckoutUrl(checkout.url) : null;
+  const checkoutLink = !lifetime && checkout?.status === "OPEN" ? safeBillingCheckoutUrl(checkout.url) : null;
   const subscriptionNotRequired = status?.hasAccess === true && status.status !== "TRIALING";
   const buyEligible = status?.status !== undefined && ["TRIALING", "EXPIRED", "CANCELED"].includes(status.status) && !status.canCancelRenewal;
   const canBuy = owner && storageReady && buyEligible && status?.enabled === true && !subscriptionNotRequired && !requests.checkout && !busy && !loading;
