@@ -23,6 +23,8 @@ export interface ScheduledPublication {
 export interface PublishingBatch {
   id: string;
   name: string;
+  reelMode: "STANDARD" | "TRIAL";
+  instagramAccount?: { id: string; username: string };
   status: "DRAFT" | "SCHEDULED" | "RUNNING" | "PAUSED" | "COMPLETED" | "CANCELLED" | "FAILED";
   totalItems: number;
   publishedItems: number;

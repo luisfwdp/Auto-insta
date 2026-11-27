@@ -114,8 +114,11 @@ export default function SpeedPostWorkspace() {
         <label className={styles.field}>{t("Order")}<select className={styles.control} value={order} onChange={e => { const next = e.target.value as typeof order; if (next === "RANDOM" && order !== "RANDOM") setRandomSeed(crypto.randomUUID()); setOrder(next); }}><option value="SEQUENTIAL">{t("Sequential")}</option><option value="MANUAL">{t("Manual")}</option><option value="RANDOM">{t("Random")}</option></select></label>
         <label className={styles.field}>{t("Default caption")}<textarea className={styles.control} maxLength={2200} value={caption} onChange={e => setCaption(e.target.value)} placeholder={t("Applied to every Reel unless an individual caption is set.")} /></label>
         {mediaIds.length > 0 && <details><summary className={styles.button}>{t("Individual settings")}</summary><div className={styles.fields}>{mediaIds.map((id,index) => <div className={styles.notice} key={id}><div className={styles.row}><strong>Reel {index+1}</strong>{order === "MANUAL" && <><button className={styles.button} onClick={() => moveMedia(index,-1)} disabled={index === 0} aria-label={t("Move earlier")}>↑</button><button className={styles.button} onClick={() => moveMedia(index,1)} disabled={index === mediaIds.length-1} aria-label={t("Move later")}>↓</button></>}</div>{scheduleMode === "CUSTOM" && <label className={styles.field}>{t("Custom date and time")}<input className={styles.control} type="datetime-local" value={customDates[id] ?? ""} onChange={e => setCustomDates(values => ({...values,[id]:e.target.value}))} /></label>}<label className={styles.field}>{t("Individual caption")}<textarea className={styles.control} maxLength={2200} value={itemCaptions[id] ?? ""} onChange={e => setItemCaptions(values => ({...values,[id]:e.target.value}))} placeholder={t("Use the default caption")} /></label></div>)}</div></details>}
-        <label className={styles.row}><input type="checkbox" checked={trialReels} onChange={e => setTrialReels(e.target.checked)} /> <span>{t("Use Trial Reels when the account is eligible")}</span></label>
-        {trialReels && <p className={styles.notice}>{t("Meta checks eligibility at publishing time. If the account is not eligible, the publication fails and is not silently published as a standard Reel.")}</p>}
+        <label className={styles.row}><input type="checkbox" checked={trialReels} aria-describedby={trialReels ? "speed-post-trial-visibility" : undefined} onChange={e => setTrialReels(e.target.checked)} /> <span>{t("Use Trial Reels when the account is eligible")}</span></label>
+        {trialReels && <p id="speed-post-trial-visibility" className={styles.notice}>
+          {t("Trial Reels reach non-followers first. In the Instagram app, find them on the publishing account beside its drafts. Share with everyone on Instagram to show them on the public profile.")}{" "}
+          {t("Meta checks eligibility at publishing time. If the account is not eligible, the publication fails and is not silently published as a standard Reel.")}
+        </p>}
         <button className={`${styles.button} ${styles.primary}`} disabled={submitting || !effectiveAccount || mediaIds.length === 0 || (scheduleMode === "CUSTOM" && mediaIds.some(id => !customDates[id]))} onClick={() => void createBatch()}>{t("Create automatic calendar")}</button>
       </div></section>
       <div className={styles.fields}>
@@ -137,6 +140,35 @@ export default function SpeedPostWorkspace() {
         <section className={styles.panel}><h2>{t("Generated calendar")} · {schedule.length ? Math.ceil(schedule.length / postsPerDay) : 0} {t("days")}</h2>{schedule.length === 0 ? <p className={styles.muted}>{t("Select media to preview the schedule.")}</p> : <div className={styles.list}>{schedule.slice(0,20).map((item,index) => <div className={styles.listItem} key={`${item.id}-${index}`}><span><strong>Reel {index+1}</strong><br/><span className={styles.muted}>{item.date.toLocaleString(locale,{dateStyle:"short",timeStyle:"short"})}</span></span><span className={styles.status}>{trialReels ? "Trial Reel" : "Reel"}</span></div>)}{schedule.length > 20 && <p className={styles.muted}>+ {schedule.length - 20} {t("scheduled items")}</p>}</div>}</section>
       </div>
     </div>
-    <section className={styles.panel}><h2>{t("Batches, progress and errors")}</h2><div className={styles.list}>{data.batches.length === 0 ? <p className={styles.muted}>{t("No Speed Post batches yet.")}</p> : data.batches.map(batch => { const done = batch.publishedItems + batch.failedItems; const percent = batch.totalItems ? Math.round(done / batch.totalItems * 100) : 0; return <article className={styles.listItem} key={batch.id}><div><strong>{batch.name}</strong> <span className={styles.status}>{batch.status}</span><p className={styles.muted}>{batch.publishedItems}/{batch.totalItems} {t("published")} · {batch.failedItems} {t("errors")}</p><div className={styles.progress} role="progressbar" aria-label={batch.name} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{width:`${percent}%`}} /></div></div><div className={styles.row}>{["SCHEDULED","RUNNING"].includes(batch.status) && <button className={styles.button} onClick={() => void batchAction(batch.id,"pause")}>{t("Pause")}</button>}{["PAUSED","FAILED"].includes(batch.status) && <button className={`${styles.button} ${styles.primary}`} onClick={() => void batchAction(batch.id,"resume")}>{t("Resume")}</button>}{!["COMPLETED","CANCELLED"].includes(batch.status) && <button className={`${styles.button} ${styles.danger}`} onClick={() => void batchAction(batch.id,"cancel")}>{t("Cancel")}</button>}</div></article>; })}</div></section>
+    <section className={styles.panel}>
+      <h2>{t("Batches, progress and errors")}</h2>
+      <div className={styles.list}>
+        {data.batches.length === 0 ? <p className={styles.muted}>{t("No Speed Post batches yet.")}</p> : data.batches.map(batch => {
+          const done = batch.publishedItems + batch.failedItems;
+          const percent = batch.totalItems ? Math.round(done / batch.totalItems * 100) : 0;
+          const trial = batch.reelMode === "TRIAL";
+          return <article className={styles.listItem} key={batch.id}>
+            <div>
+              <strong>{batch.name}</strong> <span className={styles.status}>{batch.status}</span>
+              {batch.instagramAccount && <p className={styles.muted}>@{batch.instagramAccount.username}</p>}
+              <p className={styles.muted}>
+                {batch.publishedItems}/{batch.totalItems} {t(trial ? "published as Trial Reels" : "published")} · {batch.failedItems} {t("errors")}
+              </p>
+              {trial && batch.publishedItems > 0 && <p className={styles.muted}>
+                {t("Trial Reels reach non-followers first. In the Instagram app, find them on the publishing account beside its drafts. Share with everyone on Instagram to show them on the public profile.")}
+              </p>}
+              <div className={styles.progress} role="progressbar" aria-label={batch.name} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+                <span style={{ width: `${percent}%` }} />
+              </div>
+            </div>
+            <div className={styles.row}>
+              {["SCHEDULED", "RUNNING"].includes(batch.status) && <button className={styles.button} onClick={() => void batchAction(batch.id, "pause")}>{t("Pause")}</button>}
+              {["PAUSED", "FAILED"].includes(batch.status) && <button className={`${styles.button} ${styles.primary}`} onClick={() => void batchAction(batch.id, "resume")}>{t("Resume")}</button>}
+              {!["COMPLETED", "CANCELLED"].includes(batch.status) && <button className={`${styles.button} ${styles.danger}`} onClick={() => void batchAction(batch.id, "cancel")}>{t("Cancel")}</button>}
+            </div>
+          </article>;
+        })}
+      </div>
+    </section>
   </div>;
 }

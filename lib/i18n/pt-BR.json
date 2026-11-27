@@ -648,6 +648,8 @@
   "Default caption": "Legenda padrão",
   "Applied to every Reel unless an individual caption is set.": "Aplicada a todos os Reels, exceto quando houver legenda individual.",
   "Use Trial Reels when the account is eligible": "Usar Trial Reels quando a conta for elegível",
+  "Trial Reels reach non-followers first. In the Instagram app, find them on the publishing account beside its drafts. Share with everyone on Instagram to show them on the public profile.": "Reels de teste chegam primeiro a quem ainda não segue a conta. No Instagram, encontre-os no perfil que publicou, junto aos rascunhos. Use Compartilhar com todos no Instagram para mostrá-los no perfil público.",
+  "published as Trial Reels": "publicados como Reels de teste",
   "Meta checks eligibility at publishing time. If the account is not eligible, the publication fails and is not silently published as a standard Reel.": "A Meta verifica a elegibilidade no momento da publicação. Se a conta não for elegível, a publicação falha e não é publicada silenciosamente como Reel comum.",
   "Create automatic calendar": "Criar calendário automático",
   "Select media": "Selecionar mídias",
