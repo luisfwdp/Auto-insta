@@ -1,4 +1,5 @@
-import { createAsaasClient, AsaasError } from "./asaas-client";
+import { AsaasError } from "./asaas-client";
+import { createBillingGateway } from "./gateway";
 import { BillingError, hasBillingProviderScope } from "./config";
 import { recoverInterruptedCheckouts } from "./checkout";
 import { processBillingCancellations } from "./cancellation";
@@ -32,7 +33,7 @@ function errorCode(error: unknown) {
 /** Maintenance survives a sales rollback. It never creates a new checkout. */
 export async function runBillingMaintenanceOnce(): Promise<BillingMaintenanceSummary> {
   if (!hasBillingProviderScope()) return { interruptedCheckouts: 0, cancellationsProcessed: 0, recoveryEventsQueued: 0, eventsProcessed: 0, deadLetters: 0 };
-  const gateway = createAsaasClient();
+  const gateway = createBillingGateway();
   const interrupted = await recoverInterruptedCheckouts();
   const cancellations = await processBillingCancellations(5, gateway);
   const recovery = await enqueueBillingRecovery();

@@ -7,6 +7,8 @@ import { BILLING_PLANS, BILLING_PLAN_IDS } from "./catalog";
 import { BillingError, getBillingProviderScope, saoPauloDate } from "./config";
 import { isBillingEnabled } from "./trial";
 import { isBillingSalesEnabled } from "./sales";
+import { createPingAffiliateCheckout } from "./batida-affiliate";
+import { createBillingGateway } from "./gateway";
 import { reconcileBillingResource } from "./reconcile";
 import { evaluateLifetimeAccess } from "./lifetime";
 
@@ -24,15 +26,16 @@ function checkoutDTO(row: BillingCheckout) {
 }
 
 /** Durable intent BEFORE the only provider POST; no network inside a DB lock. */
-export async function requestCheckout(workspaceId: string, value: CheckoutRequest, provider?: ReturnType<typeof createAsaasClient>) {
+export async function requestCheckout(workspaceId: string, value: CheckoutRequest, provider?: ReturnType<typeof createAsaasClient>, affiliateCode?: string) {
   if (!isBillingEnabled()) throw new BillingError("BILLING_DISABLED", 404);
   if (!isBillingSalesEnabled()) throw new BillingError("BILLING_SALES_DISABLED", 503);
   const parsed = checkoutRequest.safeParse(value);
   if (!parsed.success) throw new BillingError("INVALID_REQUEST", 400);
   const input = parsed.data, plan = BILLING_PLANS[input.planId], scope = getBillingProviderScope();
   if (input.expectedAmountCents !== plan.amountCents) throw new BillingError("OFFER_CHANGED");
-  const gateway = provider ?? createAsaasClient();
-  getAsaasCheckoutOrigin();
+  const gateway = provider ?? createBillingGateway();
+  const origin = getAsaasCheckoutOrigin();
+  if (process.env.PULSO_CHECKOUT_ENABLED === "true" && !origin.startsWith("https://")) throw new BillingError("BILLING_CONFIGURATION", 503);
   // Validate encryption configuration before any financial mutation could happen.
   encryptToken("billing-readiness");
   const now = new Date();
@@ -80,7 +83,12 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
   const row = reservation.row;
   let result: Awaited<ReturnType<typeof gateway.createHostedCheckout>> | undefined;
   try {
-    result = await gateway.createHostedCheckout({ reference: row.id, name: `PING CHAT — ${plan.name}`, amountCents: row.amountCents, firstChargeDate: row.firstChargeDate });
+    result = affiliateCode
+      ? await createPingAffiliateCheckout({
+        code: affiliateCode, orderId: row.id, offer: row.planId, cents: row.amountCents,
+        date: row.firstChargeDate, mode: scope.environment,
+      })
+      : await gateway.createHostedCheckout({ reference: row.id, name: `PING CHAT — ${plan.name}`, amountCents: row.amountCents, firstChargeDate: row.firstChargeDate });
     const encryptedUrl = encryptToken(result.url);
     const saved = await prisma.billingCheckout.updateMany({ where: { id: row.id, workspaceId, status: { in: ["CREATING", "UNKNOWN"] }, OR: [{ providerCheckoutId: null }, { providerCheckoutId: result.id }] }, data: { providerCheckoutId: result.id, checkoutUrlCiphertext: encryptedUrl, status: "OPEN", lastErrorCode: null } });
     if (saved.count !== 1) throw new BillingError("CHECKOUT_CONFLICT");

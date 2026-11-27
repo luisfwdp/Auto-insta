@@ -2,52 +2,60 @@ import type { Metadata } from "next";
 import LegalShell from "@/components/legal-shell";
 
 export const metadata: Metadata = {
-  title: "Terms of Service - PING CHAT",
+  title: "Termos de Uso — PING CHAT",
   description:
-    "Terms for using PING CHAT's Instagram comment-to-DM campaign software.",
+    "Termos para usar o PING CHAT, serviço de automação de comentários e mensagens no Instagram.",
 };
 
 export default function TermsPage() {
   return (
     <LegalShell
-      title="Terms of Service"
-      description="These terms define acceptable use for PING CHAT's hosted Instagram comment-to-DM campaign service."
-      updatedAt="May 24, 2026"
+      title="Termos de Uso"
+      description="Estes termos definem as regras de uso do PING CHAT."
+      updatedAt="23 de novembro de 2026"
     >
       <section>
-        <h2 className="text-xl font-bold text-white">Authorized Use</h2>
+        <h2 className="text-xl font-bold text-foreground">Uso autorizado</h2>
         <p className="mt-3">
-          You may use PING CHAT only with Instagram professional accounts you
-          own or are authorized to manage. You are responsible for the campaigns,
-          keywords, links, and messages you configure.
+          Você só pode usar o PING CHAT com contas profissionais do Instagram que sejam suas ou que você esteja autorizado a administrar. Você é responsável pelas campanhas, palavras-chave, links e mensagens que configurar.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">Platform Compliance</h2>
+        <h2 className="text-xl font-bold text-foreground">Regras da plataforma</h2>
         <p className="mt-3">
-          You agree to follow Meta Platform Terms, Instagram policies, applicable
-          messaging rules, privacy laws, advertising rules, and anti-spam laws.
-          PING CHAT may rate-limit, pause, or disable campaigns that create
-          compliance, abuse, security, or deliverability risk.
+          Você se compromete a seguir os Termos da Plataforma da Meta, as políticas do Instagram, as regras de mensagens, a LGPD, as normas de publicidade e as leis contra spam. O PING CHAT pode limitar, pausar ou desativar campanhas que criem risco de abuso, de segurança, de descumprimento de regras ou de bloqueio da conta.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">Availability</h2>
+        <h2 className="text-xl font-bold text-foreground">Teste grátis, assinatura e cancelamento</h2>
         <p className="mt-3">
-          PING CHAT depends on third-party platforms including Meta, email,
-          hosting, database, and queue providers. We work to operate the
-          service reliably, but uninterrupted availability is not guaranteed.
+          O teste grátis dura 72 horas a partir da ativação e não exige cartão. As assinaturas são mensais, cobradas pelo Asaas no valor mostrado na página de preços, com renovação automática até o cancelamento.
+        </p>
+        <p className="mt-3">
+          Você pode cancelar a renovação a qualquer momento na área de assinatura. O acesso continua até o fim do período já pago. Cada plano tem limites de contas, membros, mensagens, publicações e armazenamento, informados na página de preços.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">Open-Source Core</h2>
+        <h2 className="text-xl font-bold text-foreground">Disponibilidade</h2>
         <p className="mt-3">
-          The public repository is MIT licensed. Hosted SaaS infrastructure,
-          managed support, agency workflows, analytics, reports, and other paid
-          service features may be provided separately from the open-source core.
+          O PING CHAT depende de serviços de terceiros, como Meta, e-mail, hospedagem, banco de dados e filas. Trabalhamos para manter o serviço estável, mas não garantimos funcionamento ininterrupto. Mudanças nas regras ou na API da Meta podem alterar ou limitar recursos.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-xl font-bold text-foreground">Contato</h2>
+        <p className="mt-3">
+          Dúvidas sobre estes termos: <a className="underline" href="mailto:contato@pingchatbr.app">contato@pingchatbr.app</a>.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-xl font-bold text-foreground">Código aberto</h2>
+        <p className="mt-3">
+          O PING CHAT é baseado no OpenReply, projeto de código aberto sob licença MIT. A infraestrutura hospedada, o suporte e os recursos pagos do serviço são oferecidos separadamente do código aberto.
         </p>
       </section>
     </LegalShell>

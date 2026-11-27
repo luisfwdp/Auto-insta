@@ -4,11 +4,13 @@ import { trackConsumerReadiness } from "@/lib/ops/worker-readiness";
 import { enqueueCanary } from "@/lib/ops/worker-canary";
 import { getDMQueue } from "@/lib/queue/client";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
+import { reconcileButtonTaps } from "@/lib/polling/button-tap-reconciler";
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
 import { createPublishingWorker } from "@/lib/queue/publishing-worker";
 import { enqueueDuePublications } from "@/lib/queue/publishing";
 import { auditMetaWebhookSubscriptions } from "@/lib/ops/meta-webhook-audit";
 import { startBillingMaintenance } from "@/lib/billing/worker";
+import { sendTrialEndedNotices } from "@/lib/email/trial-ended";
 import { applyRetention } from "@/lib/privacy/retention";
 import os from "node:os";
 
@@ -74,6 +76,14 @@ async function poll() {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[DM Worker] Comment reconciliation failed:", message);
   }
+  // Separate from the comment sweep so a failure in one never skips the other.
+  try {
+    const taps = await reconcileButtonTaps();
+    if (taps.recovered > 0 || taps.errors > 0) console.log("[DM Worker] Button tap recovery:", taps);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[DM Worker] Button tap recovery failed:", message);
+  }
 }
 
 // Kick off one sweep shortly after boot, then on a fixed interval.
@@ -126,6 +136,22 @@ async function runRetention() {
 const retentionBootTimer = setTimeout(() => void runRetention(), 60_000);
 const retentionTimer = setInterval(() => void runRetention(), RETENTION_INTERVAL_MS);
 
+// Tells a workspace owner once when a trial ended without a paid plan, since
+// sends stop being admitted from that moment. No-op unless billing and email
+// are configured on the worker.
+const TRIAL_NOTICE_INTERVAL_MS = 60 * 60_000;
+async function notifyEndedTrials() {
+  try {
+    const result = await sendTrialEndedNotices();
+    if (result && (result.sent || result.failed)) console.log("[DM Worker] Trial ended notices:", result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[DM Worker] Trial ended notices failed:", message);
+  }
+}
+const trialNoticeBootTimer = setTimeout(() => void notifyEndedTrials(), 90_000);
+const trialNoticeTimer = setInterval(() => void notifyEndedTrials(), TRIAL_NOTICE_INTERVAL_MS);
+
 async function shutdown(signal: string) {
   console.log(`[DM Worker] ${signal} received, closing worker`);
   clearInterval(heartbeatTimer);
@@ -135,6 +161,8 @@ async function shutdown(signal: string) {
   clearInterval(webhookAuditTimer);
   clearTimeout(retentionBootTimer);
   clearInterval(retentionTimer);
+  clearTimeout(trialNoticeBootTimer);
+  clearInterval(trialNoticeTimer);
   await Promise.all([worker.close(), publishingWorker.close(), billingMaintenance.stop()]);
   process.exit(0);
 }

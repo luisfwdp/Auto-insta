@@ -165,6 +165,28 @@ financial records. Do not roll a paid installation back to a worker without bill
 maintenance indefinitely; preserve cancellation processing or carry out a reviewed
 provider-side operational plan. Never drop financial/trial tables to roll back.
 
+## Billing through Pulso
+
+Register `ping-chat` in Pulso with the callback `/api/billing/pulso` on the
+public Ping Chat origin and payment confirmation notifications enabled. Keep
+the Asaas credential and its webhook in Pulso. Set the Pulso origin, environment,
+app token and dedicated deployment-protection secret on Ping Chat's web service
+and worker. Set the independent callback signing secret (`PULSO_WEBHOOK_SECRET`)
+on the web service only. The existing `ASAAS_ENVIRONMENT` and
+`ASAAS_ACCOUNT_SCOPE` values are stable local ledger identifiers in Pulso mode.
+
+Set `PULSO_CHECKOUT_ENABLED=true` on both services after deploying Pulso's
+billing API and notification migration. The Ping Chat worker obtains payment
+and subscription records and sends cancellation requests through Pulso. The
+web service authenticates Pulso callbacks and persists their IDs for worker
+reconciliation. In Sandbox, verify checkout, receipt, access, renewal, refund
+and cancellation. Before switching an existing deployment, verify that any
+subscriptions and outstanding orders are visible to the app token in Pulso.
+
+If creation times out, the signed payment notification can recover the
+original `orderId` from Pulso. For a sales rollback, set
+`BILLING_SALES_ENABLED=false` so Pulso can still reconcile existing subscriptions.
+
 ## Official references
 
 - [Checkout and callbacks](https://docs.asaas.com/reference/criar-novo-checkout)

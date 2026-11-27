@@ -83,8 +83,11 @@ export function resolveInstagramConnectFeedback(
     };
   }
 
+  // The callback redirects with stable codes (failureCode in
+  // app/api/instagram/callback/route.ts), not with the upstream sentences the
+  // checks below look for. Match the codes exactly first.
   const normalized = (reason ?? "").toLowerCase();
-  if (normalized.includes("no instagram account was shared") || normalized.includes("professional account")) {
+  if (normalized === "no_account_shared" || normalized.includes("no instagram account was shared") || normalized.includes("professional account")) {
     return {
       tone: "error",
       title: "Professional Instagram account not found",
@@ -93,7 +96,7 @@ export function resolveInstagramConnectFeedback(
       actionHref: "/api/instagram/connect",
     };
   }
-  if (normalized.includes("share exactly one") || normalized.includes("permission")) {
+  if (normalized === "multiple_accounts_shared" || normalized.includes("share exactly one") || normalized.includes("permission")) {
     return {
       tone: "error",
       title: "Instagram permission is insufficient",
@@ -102,7 +105,7 @@ export function resolveInstagramConnectFeedback(
       actionHref: "/api/instagram/connect",
     };
   }
-  if (normalized.includes("token exchange") || normalized.includes("redirect") || normalized.includes("authorization code")) {
+  if (normalized === "token_exchange_failed" || normalized.includes("token exchange") || normalized.includes("redirect") || normalized.includes("authorization code")) {
     return {
       tone: "error",
       title: "Meta configuration needs attention",
