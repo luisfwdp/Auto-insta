@@ -79,7 +79,11 @@ export default function CriapingCampaignDetail() {
     <header className={styles.header}>
       <div><h1 className={styles.wrap}>{campaign.name}</h1><p className={styles.wrap}>@{campaign.instagramAccount.username}</p></div>
       <Badge tone={campaign.isActive ? "success" : "neutral"}>{t(campaign.isActive ? "Active" : "Paused")}</Badge>
-      <div className={styles.actions}>{back}<Link className={styles.primaryLink} href={`/campaigns/${encodeURIComponent(campaign.id)}/edit`}>{t("Edit campaign")}</Link></div>
+      <div className={styles.actions}>
+        {back}
+        <Link className={styles.link} href={`/campaigns/${encodeURIComponent(campaign.id)}/leads`}>{t("Campaign leads")}</Link>
+        <Link className={styles.primaryLink} href={`/campaigns/${encodeURIComponent(campaign.id)}/edit`}>{t("Edit campaign")}</Link>
+      </div>
     </header>
     <Card><h2>{t("Insights")}</h2><dl className={styles.metrics}>{metrics.map(([name, value]) =>
       <div key={name}><dt>{name}</dt><dd>{Number.isFinite(value) ? value.toLocaleString(locale) + (name === t("CTR") ? "%" : "") : t("not available")}</dd></div>)}</dl></Card>
