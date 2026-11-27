@@ -68,6 +68,7 @@ export interface ProcessPostbackJob {
   userId: string;
   payload: string;
   mid?: string;
+  tapTimeSeconds?: number;
   fallback?: boolean;
   // Set on the delayed second pass of a follow-gate check. Instagram does not
   // report a brand-new follow immediately, so the first `false` is re-checked

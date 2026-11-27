@@ -108,6 +108,10 @@ de 5 minutos da varredura de comentários:
 - Quando o ID de mensagem coincide com o `mid` do postback, ambas as entradas
   usam a mesma identidade de job e a trava persistente de entrega. A fila
   conserva as últimas 1.000 conclusões e a trava continua após a remoção do job.
+- Quando os IDs diferem e ambos os eventos incluem o horário, a trava usa
+  também a conta, a pessoa, o passo do fluxo e o instante fornecido pela
+  Meta. A tolerância cobre arredondamento de até dois segundos. Um segundo
+  toque para o mesmo passo nesse intervalo também é deduplicado.
 - Não envia nada por conta própria: enfileira o mesmo job `process-postback`, e
   o caminho existente continua exigindo `is_user_follow_business === true`,
   cota, deduplicação e janela de mensagens.

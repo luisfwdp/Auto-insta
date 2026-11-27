@@ -160,6 +160,7 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
               userId,
               payload: candidate.payload,
               mid: message.id,
+              tapTimeSeconds: Math.floor(sentAt.getTime() / 1000),
             },
             // Same job identity as the webhook when Meta supplies the same mid.
             { jobId: `postback_${account.instagramId}_${userId}_${message.id.replace(/:/g, "_")}` }

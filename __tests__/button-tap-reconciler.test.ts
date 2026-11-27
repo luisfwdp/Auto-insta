@@ -53,7 +53,8 @@ describe("button tap recovery from conversations", () => {
   it("enqueues the follow check the missing postback webhook would have enqueued", async () => {
     expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 1, errors: 0 });
     expect(mocks.queueAdd).toHaveBeenCalledWith("process-postback",
-      { instagramAccountId: "ig_account", accountConnectionId: "acct_1", userId: "user_1", payload: "followcheck:auto_1", mid: "mid_1" },
+      { instagramAccountId: "ig_account", accountConnectionId: "acct_1", userId: "user_1", payload: "followcheck:auto_1", mid: "mid_1",
+        tapTimeSeconds: new Date("2026-11-25T02:58:00.000Z").getTime() / 1000 },
       { jobId: "postback_ig_account_user_1_mid_1" });
     expect(mocks.redisSet).toHaveBeenCalledWith("button_tap_seen:ig_account:mid_1", expect.any(String), "EX", 60, "NX");
     const claim = mocks.redisSet.mock.calls[0][1];

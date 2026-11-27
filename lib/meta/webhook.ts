@@ -74,6 +74,7 @@ interface WebhookEntry {
   messaging?: Array<{
     sender?: { id?: string };
     recipient?: { id?: string };
+    timestamp?: number;
     postback?: { mid?: string; title?: string; payload?: string };
     read?: { watermark?: number; seq?: number };
     message?: {
@@ -103,6 +104,7 @@ export interface WebhookPostbackEvent {
   userId: string;
   payload: string;
   mid?: string;
+  tapTimeSeconds?: number;
 }
 
 export interface WebhookReadEvent {
@@ -186,11 +188,16 @@ export function parsePostbackEvents(
       // Ignore echoes of the account's own actions.
       if (userId === accountId) continue;
 
+      const timestamp = messaging.timestamp;
+      const tapTimeSeconds = typeof timestamp === "number" && Number.isSafeInteger(timestamp) && timestamp > 0
+        ? Math.floor(timestamp > 9999999999 ? timestamp / 1000 : timestamp)
+        : undefined;
       events.push({
         instagramAccountId: accountId,
         userId,
         payload: postbackPayload,
         mid: messaging.postback?.mid,
+        ...(tapTimeSeconds === undefined ? {} : { tapTimeSeconds }),
       });
     }
   }
