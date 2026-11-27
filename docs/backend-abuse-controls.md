@@ -9,10 +9,12 @@ integração de cobrança não recebe uma função de saque como parte desta mud
 Os módulos de autenticação e de proteção HTTP usam `server-only`: importá-los
 em um Client Component faz o build falhar. Os módulos compartilhados com o
 worker Node não recebem esse marcador, pois ele exige o resolvedor do Next.
-`npm run build` verifica os arquivos públicos JS/HTML/RSC gerados e falha se
-valores configurados de segredos backend aparecerem neles. A verificação não
-imprime valores. Trata-se de defesa contra regressão, não de promessa de detectar
-qualquer codificação/obfuscação deliberada ou segredo emitido apenas em runtime.
+`npm run build` procura valores de credenciais em arquivos estáticos,
+HTML, RSC, respostas pré-renderizadas e `public/`. O bloqueio inclui o token
+e a chave de assinatura do Pulso, a credencial de proteção da Vercel e o segredo de
+checkout da Batida. Uma variável privada com prefixo `NEXT_PUBLIC_` também
+bloqueia o build. A mensagem de erro identifica apenas a variável. Dados
+produzidos em tempo de resposta seguem os controles de acesso de cada rota.
 
 ## Orçamentos independentes
 
