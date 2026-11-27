@@ -556,17 +556,32 @@ export async function getConversations(
   accessToken: string,
   igUserId: string
 ): Promise<InstagramConversation[]> {
+  const conversations: InstagramConversation[] = [];
+  for await (const conversation of iterateConversations(accessToken, igUserId)) {
+    conversations.push(conversation);
+  }
+  return conversations;
+}
+
+/** Yield previews as pages arrive, so a later page cannot block a recovered tap. */
+export async function* iterateConversations(
+  accessToken: string,
+  igUserId: string,
+  recoverySignal?: AbortSignal,
+): AsyncGenerator<InstagramConversation> {
   const fields =
     "participants,updated_time,messages.limit(1){message,from,created_time}";
   type Page = {
     data?: InstagramConversation[];
     paging?: { next?: string; cursors?: { after?: string } };
   };
-  const results: InstagramConversation[] = [];
   const seenIds = new Set<string>();
   const seenCursors = new Set<string>();
   let after: string | undefined;
-  let pageSize = 50;
+  // Expanded pages of 50 can time out in the worker while the first item is
+  // available quickly. Keep the normal inbox fast path and start recovery small.
+  const maxPageSize = recoverySignal ? 8 : 50;
+  let pageSize = recoverySignal ? 1 : maxPageSize;
 
   async function readPage(limit: number, requestedFields: string): Promise<Page> {
     // Never follow Meta's next URL: rebuild on our trusted host and carry the
@@ -576,17 +591,18 @@ export async function getConversations(
     url.searchParams.set("fields", requestedFields);
     url.searchParams.set("limit", String(limit));
     if (after) url.searchParams.set("after", after);
+    const pageTimeout = AbortSignal.timeout(10_000);
     return handleResponse<Page>(
       await fetch(url.toString(), {
         headers: { Authorization: `Bearer ${accessToken}` },
-        signal: AbortSignal.timeout(10_000),
+        signal: recoverySignal ? AbortSignal.any([recoverySignal, pageTimeout]) : pageTimeout,
       })
     );
   }
 
   // Also bound cursor traversal in case Meta repeats data with changing cursors.
-  for (let pages = 0; pages < 100 && results.length < 50; pages++) {
-    let limit = Math.min(pageSize, 50 - results.length);
+  for (let pages = 0; pages < 100 && seenIds.size < 50; pages++) {
+    let limit = Math.min(pageSize, 50 - seenIds.size);
     let page: Page;
     let unavailable = false;
     while (true) {
@@ -594,11 +610,15 @@ export async function getConversations(
         page = await readPage(limit, fields);
         break;
       } catch (error) {
-        if (!(error instanceof MetaApiError) || error.code !== 1) throw error;
+        const invalidExpansion = error instanceof MetaApiError && error.code === 1;
+        const pageTimedOut = recoverySignal && !recoverySignal.aborted
+          && error instanceof DOMException && error.name === "TimeoutError";
+        if (!invalidExpansion && !pageTimedOut) throw error;
         if (limit > 1) {
           limit = Math.max(1, Math.floor(limit / 2));
           continue;
         }
+        if (!invalidExpansion) throw error;
         // This exact cursor succeeds with id,updated_time in the reported case.
         // If even that fails, propagate the failure; do not skip unknown data.
         page = await readPage(1, "id,updated_time");
@@ -616,10 +636,10 @@ export async function getConversations(
     for (const row of rows) {
       if (seenIds.has(row.id)) continue;
       seenIds.add(row.id);
-      results.push(unavailable ? { ...row, detailsUnavailable: true } : row);
-      if (results.length === 50) return results;
+      yield unavailable ? { ...row, detailsUnavailable: true } : row;
+      if (seenIds.size === 50) return;
     }
-    if (!page.paging?.next || rows.length === 0) return results;
+    if (!page.paging?.next || rows.length === 0) return;
     const nextAfter = page.paging.cursors?.after;
     if (!nextAfter || seenCursors.has(nextAfter)) {
       throw new Error("Instagram conversation pagination did not advance");
@@ -628,7 +648,7 @@ export async function getConversations(
     after = nextAfter;
     // Stay small around failures; grow back towards the normal page size after
     // successful expansions. Consecutive bad entries cost two reads each.
-    pageSize = unavailable ? 1 : Math.min(50, limit * 2);
+    pageSize = unavailable ? 1 : Math.min(maxPageSize, limit * 2);
   }
   throw new Error("Instagram conversation pagination exceeded its safety limit");
 }

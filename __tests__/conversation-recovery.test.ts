@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getConversations, MetaApiError } from "@/lib/meta/client";
+import { getConversations, iterateConversations, MetaApiError } from "@/lib/meta/client";
 
 const token = "test-token-not-for-logging";
 const expanded = "participants,updated_time,messages.limit(1){message,from,created_time}";
@@ -142,5 +142,44 @@ describe("Instagram conversation recovery (upstream #60)", () => {
       data: [{ id: "first" }], paging: { next: "https://untrusted.example" },
     })));
     await expect(getConversations(token, "owner")).rejects.toThrow("pagination did not advance");
+  });
+});
+
+describe("small-page conversation scans for tap recovery", () => {
+  const head = {
+    data: [{ id: "first" }],
+    paging: { next: "https://untrusted.example/ignored", cursors: { after: "outer-cursor" } },
+  };
+  const pageTimeout = () => new DOMException("Graph preview timed out", "TimeoutError");
+
+  it("yields the latest conversation before fetching later pages and shrinks a timed-out page", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok(head))
+      .mockRejectedValueOnce(pageTimeout()).mockResolvedValueOnce(ok({ data: [{ id: "next" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const scanner = iterateConversations(token, "owner", new AbortController().signal);
+
+    await expect(scanner.next()).resolves.toEqual({ value: { id: "first" }, done: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(scanner.next()).resolves.toEqual({ value: { id: "next" }, done: false });
+    await expect(scanner.next()).resolves.toEqual({ value: undefined, done: true });
+
+    const urls = fetchMock.mock.calls.map(([input]) => new URL(String(input)));
+    expect(urls.map(url => url.searchParams.get("limit"))).toEqual(["1", "2", "1"]);
+    expect(urls.map(url => url.searchParams.get("after"))).toEqual([null, "outer-cursor", "outer-cursor"]);
+    expect(urls.every(url => url.hostname === "graph.instagram.com")).toBe(true);
+  });
+
+  it("does not discard an already yielded conversation when the scan budget expires", async () => {
+    const deadline = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok(head)).mockImplementationOnce(async () => {
+      deadline.abort();
+      throw pageTimeout();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const scanner = iterateConversations(token, "owner", deadline.signal);
+
+    await expect(scanner.next()).resolves.toMatchObject({ value: { id: "first" }, done: false });
+    await expect(scanner.next()).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

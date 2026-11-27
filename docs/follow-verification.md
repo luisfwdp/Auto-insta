@@ -133,3 +133,10 @@ para seguir e do link, verifique a conversa no Instagram do destinatário de
 teste.
 
 Referência: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/conversations-api
+
+Em 27/11, a chamada de 50 prévias expirou enquanto a chamada de uma prévia
+retornou a conversa e os cliques do teste. A recuperação começa com uma prévia,
+processa cada página conforme chega e cresce até oito conversas por chamada.
+Um timeout reduz a página e tenta novamente com o mesmo cursor enquanto houver
+tempo no orçamento de 35 segundos por conta. Se outra página falhar, os jobs
+já gravados continuam na fila. A Caixa de entrada mantém sua consulta usual.

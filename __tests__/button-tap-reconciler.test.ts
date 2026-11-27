@@ -14,7 +14,11 @@ vi.mock("@/lib/queue/client", () => ({
   getDMQueue: () => ({ add: mocks.queueAdd }),
   getRedisConnection: () => ({ eval: mocks.redisEval, set: mocks.redisSet }),
 }));
-vi.mock("@/lib/instagram/read-inbox", () => ({ getConversations: mocks.getConversations }));
+vi.mock("@/lib/meta/client", () => ({
+  async *iterateConversations(...args: unknown[]) {
+    yield* await mocks.getConversations(...args);
+  },
+}));
 vi.mock("@/lib/instagram/context", () => ({
   createInstagramContext: mocks.createContext,
   hasInstagramCredentials: (account: { accessToken: string }) => Boolean(account.accessToken),
@@ -124,6 +128,18 @@ describe("button tap recovery from conversations", () => {
     expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 1, errors: 0 });
     expect(mocks.queueAdd.mock.calls[0][2]).toEqual(mocks.queueAdd.mock.calls[1][2]);
     expect(mocks.redisSet).toHaveBeenCalledTimes(2);
+  });
+
+  it("enqueues the first verified tap even when a later conversation page fails", async () => {
+    async function* interruptedScan() {
+      yield conversation();
+      throw new DOMException("Graph preview timed out", "TimeoutError");
+    }
+    mocks.getConversations.mockResolvedValue(interruptedScan());
+
+    expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 1, errors: 1 });
+    expect(mocks.queueAdd).toHaveBeenCalledOnce();
+    expect(mocks.eventCreate).toHaveBeenCalledOnce();
   });
 
   it("holds a short claim when marking the enqueued job fails and retries with the same job id", async () => {

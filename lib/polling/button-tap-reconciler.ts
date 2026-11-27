@@ -19,12 +19,13 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db/client";
 import { getDMQueue, getRedisConnection, POSTBACK_JOB_NAME } from "@/lib/queue/client";
 import { createInstagramContext, hasInstagramCredentials } from "@/lib/instagram/context";
-import { getConversations } from "@/lib/instagram/read-inbox";
+import { iterateConversations } from "@/lib/meta/client";
 
 export const BUTTON_TAP_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 export const BUTTON_TAP_RECOVERED_MESSAGE = "Button taps recovered from conversations";
 const SEEN_TTL_SECONDS = 48 * 60 * 60;
 const PENDING_TTL_SECONDS = 60;
+const CONVERSATION_SCAN_TIMEOUT_MS = 35_000;
 const RESOLVE_CLAIM = `
   if redis.call("GET", KEYS[1]) ~= ARGV[1] then return 0 end
   if ARGV[2] == "0" then return redis.call("DEL", KEYS[1]) end
@@ -120,9 +121,11 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
     let recovered = 0;
     try {
       const context = await createInstagramContext(account, `button-taps:${account.id}`);
-      const conversations = await getConversations({ context, igUserId: account.instagramId });
-
-      for (const conversation of conversations) {
+      if (context.provider !== "META") continue;
+      const conversations = iterateConversations(
+        context.accessToken, account.instagramId, AbortSignal.timeout(CONVERSATION_SCAN_TIMEOUT_MS),
+      );
+      for await (const conversation of conversations) {
         const message = conversation.messages?.data?.[0];
         const userId = message?.from?.id;
         if (!message?.id || !userId || userId === account.instagramId) continue;
