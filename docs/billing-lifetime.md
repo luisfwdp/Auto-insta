@@ -28,6 +28,11 @@ continuam recuperáveis. A interface informa `LIFETIME`, sem expor o operador,
 motivo, referência administrativa ou ID da concessão. Novos checkouts são
 recusados antes de gravar intent ou chamar o provedor.
 
+A migração `20261127155600_lifetime_quota_timezone` fixa UTC somente na
+função do gatilho que valida cada reserva. O horário da concessão é gravado
+em UTC e a validação vale também quando a sessão do aplicativo usa o fuso de
+São Paulo. A janela mensal das cotas continua seguindo o calendário de São Paulo.
+
 Uma licença **não cancela** assinaturas ou checkouts existentes no Asaas.
 Antes da concessão, o operador deve confirmar que não há assinatura vigente,
 checkout aberto/em criação/desconhecido ou sincronização financeira ativa.
