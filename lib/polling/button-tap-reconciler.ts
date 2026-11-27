@@ -3,10 +3,8 @@
  *
  * A tap on a follow-prompt or opening-DM button is also visible as the newest
  * inbound message of the conversation, whose text is the button's title. When
- * Meta does not deliver the postback webhook (for example while the messaging
- * permission only has Standard Access), nobody who taps the button ever gets
- * the link. This pass reads the conversation list the Inbox already uses and
- * enqueues the same job the webhook would have enqueued.
+ * Meta does not deliver the postback webhook, this pass reads the conversation
+ * list the Inbox already uses and enqueues the same job as the webhook path.
  *
  * It only acts for people this account prompted in the last 24 hours (the
  * messaging window), only when the newest message is theirs and matches the
@@ -62,6 +60,7 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
 
   const byAccount = new Map<string, typeof automations>();
   for (const automation of automations) {
+    if (automation.workspaceId !== automation.instagramAccount.workspaceId) continue;
     const list = byAccount.get(automation.instagramAccount.id) ?? [];
     list.push(automation);
     byAccount.set(automation.instagramAccount.id, list);
@@ -98,8 +97,13 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
     // No recent prompt from these campaigns means nothing can be waiting, so
     // the account costs no Graph API call.
     const automationIds = group.map((automation) => automation.id);
+    const sentByAccount = {
+      workspaceId: account.workspaceId,
+      instagramAccountId: account.id,
+      status: "SENT" as const,
+    };
     const pending = await prisma.dmLog.findFirst({
-      where: { automationId: { in: automationIds }, createdAt: { gte: since } },
+      where: { ...sentByAccount, automationId: { in: automationIds }, dmSentAt: { gte: since } },
       select: { id: true },
     });
     if (!pending) continue;
@@ -123,20 +127,20 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
         // tap decides which button it was. No prior contact, no action.
         const prompted = await prisma.dmLog.findFirst({
           where: {
+            ...sentByAccount,
             automationId: { in: candidates.map((candidate) => candidate.automationId) },
             commenterId: userId,
-            createdAt: { gte: since, lte: sentAt },
+            dmSentAt: { gte: since, lte: sentAt },
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ dmSentAt: "desc" }, { id: "desc" }],
           select: { automationId: true },
         });
         const candidate = candidates.find((item) => item.automationId === prompted?.automationId);
         if (!candidate) continue;
 
-        const first = await getRedisConnection().set(
-          `button_tap_seen:${account.instagramId}:${message.id}`, "1", "EX", SEEN_TTL_SECONDS, "NX"
-        );
-        if (first !== "OK") continue;
+        const redis = getRedisConnection();
+        const seenKey = `button_tap_seen:${account.instagramId}:${message.id}`;
+        if (await redis.exists(seenKey)) continue;
 
         await getDMQueue().add(
           POSTBACK_JOB_NAME,
@@ -151,7 +155,9 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
           // arrive for the same message collapses into this job.
           { jobId: `postback_${account.instagramId}_${userId}_${message.id.replace(/:/g, "_")}` }
         );
-        recovered += 1;
+        // Queue identity deduplicates concurrent sweeps. Record the marker
+        // only after enqueue succeeds, so a Redis/queue error can be retried.
+        if (await redis.set(seenKey, "1", "EX", SEEN_TTL_SECONDS, "NX") === "OK") recovered += 1;
       }
     } catch {
       result.errors += 1;

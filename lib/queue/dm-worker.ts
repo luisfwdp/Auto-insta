@@ -1086,10 +1086,17 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
             }),
         });
       } catch (error) {
-        console.log(
-          "[DM Worker] Failed to re-send follow prompt:",
-          formatError(error),
-        );
+        // Preserve the durable claim on ambiguous sends, and make the queue
+        // report that outcome instead of marking the prompt as completed.
+        if (isDeliveryUnconfirmed(error)) {
+          throw new UnrecoverableError("FOLLOW_PROMPT_DELIVERY_UNCONFIRMED");
+        }
+        if (error instanceof BillingError) throw error;
+        if (error instanceof RateLimitError) throw new Error("FOLLOW_PROMPT_RATE_LIMITED");
+        if (isConfirmedSendRejection(error)) {
+          throw new UnrecoverableError("FOLLOW_PROMPT_PROVIDER_REJECTED");
+        }
+        throw new Error("FOLLOW_PROMPT_PROCESSING_FAILED");
       }
       return;
     }

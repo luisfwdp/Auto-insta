@@ -1681,6 +1681,34 @@ describe("DM Worker — follow-gate re-check", () => {
     expect(mockQueueAdd).not.toHaveBeenCalled();
   });
 
+  it("allows a follow-prompt retry after Meta explicitly rate limits the send", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockSendDirectMessageWithButton.mockRejectedValueOnce(new RateLimitError("provider details"));
+    const processor = getProcessor();
+    const tap = { instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open" };
+
+    await expect(processor(createMockPostbackJob(tap))).rejects.toMatchObject({
+      name: "Error", message: "FOLLOW_PROMPT_RATE_LIMITED",
+    });
+    expect(mockPrisma.postbackDelivery.delete).toHaveBeenCalledOnce();
+    await processor(createMockPostbackJob(tap));
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledTimes(2);
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("reports an unconfirmed follow prompt without releasing the send claim", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockSendDirectMessageWithButton.mockRejectedValueOnce(new Error("provider details"));
+
+    await expect(getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open",
+    }))).rejects.toMatchObject({ name: "UnrecoverableError", message: "FOLLOW_PROMPT_DELIVERY_UNCONFIRMED" });
+    expect(mockPrisma.postbackDelivery.delete).not.toHaveBeenCalled();
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
   it("re-checks a first false follow later instead of rejecting the tap", async () => {
     mockPrisma.automation.findFirst.mockResolvedValue(gated);
     mockGetUserFollowStatus.mockResolvedValue(false);

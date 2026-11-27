@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   automationFindMany: vi.fn(), dmLogFindFirst: vi.fn(), eventCreate: vi.fn(),
-  queueAdd: vi.fn(), redisSet: vi.fn(), getConversations: vi.fn(), createContext: vi.fn(),
+  queueAdd: vi.fn(), redisExists: vi.fn(), redisSet: vi.fn(), getConversations: vi.fn(), createContext: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ prisma: {
   automation: { findMany: mocks.automationFindMany },
@@ -12,7 +12,7 @@ vi.mock("@/lib/db/client", () => ({ prisma: {
 vi.mock("@/lib/queue/client", () => ({
   POSTBACK_JOB_NAME: "process-postback",
   getDMQueue: () => ({ add: mocks.queueAdd }),
-  getRedisConnection: () => ({ set: mocks.redisSet }),
+  getRedisConnection: () => ({ exists: mocks.redisExists, set: mocks.redisSet }),
 }));
 vi.mock("@/lib/instagram/read-inbox", () => ({ getConversations: mocks.getConversations }));
 vi.mock("@/lib/instagram/context", () => ({
@@ -43,6 +43,7 @@ beforeEach(() => {
     args.where.commenterId ? { automationId: "auto_1" } : { id: "log_1" });
   mocks.createContext.mockResolvedValue({ provider: "META", accessToken: "token", instagramId: "ig_account" });
   mocks.getConversations.mockResolvedValue([conversation()]);
+  mocks.redisExists.mockResolvedValue(0);
   mocks.redisSet.mockResolvedValue("OK");
   mocks.queueAdd.mockResolvedValue({});
   mocks.eventCreate.mockResolvedValue({});
@@ -68,7 +69,10 @@ describe("button tap recovery from conversations", () => {
     mocks.dmLogFindFirst.mockResolvedValue(null);
     expect(await reconcileButtonTaps(now)).toEqual({ accounts: 0, recovered: 0, errors: 0 });
     expect(mocks.getConversations).not.toHaveBeenCalled();
-    expect(mocks.dmLogFindFirst.mock.calls[0][0].where.createdAt.gte).toEqual(new Date(now.getTime() - BUTTON_TAP_LOOKBACK_MS));
+    expect(mocks.dmLogFindFirst.mock.calls[0][0].where).toMatchObject({
+      workspaceId: "ws_1", instagramAccountId: "acct_1", status: "SENT",
+      dmSentAt: { gte: new Date(now.getTime() - BUTTON_TAP_LOOKBACK_MS) },
+    });
   });
 
   it.each([
@@ -94,15 +98,33 @@ describe("button tap recovery from conversations", () => {
     expect((await reconcileButtonTaps(now)).recovered).toBe(0);
     expect(mocks.queueAdd).not.toHaveBeenCalled();
     const where = mocks.dmLogFindFirst.mock.calls[1][0].where;
-    expect(where.commenterId).toBe("user_1");
-    expect(where.createdAt.lte).toEqual(new Date("2026-11-25T02:58:00.000Z"));
+    expect(where).toMatchObject({
+      workspaceId: "ws_1", instagramAccountId: "acct_1", status: "SENT", commenterId: "user_1",
+      dmSentAt: { lte: new Date("2026-11-25T02:58:00.000Z") },
+    });
   });
 
   it("handles each tap once across polls", async () => {
-    mocks.redisSet.mockResolvedValue(null);
+    mocks.redisExists.mockResolvedValue(1);
     expect((await reconcileButtonTaps(now)).recovered).toBe(0);
     expect(mocks.queueAdd).not.toHaveBeenCalled();
     expect(mocks.eventCreate).not.toHaveBeenCalled();
+  });
+
+  it("retries the same tap on the next sweep after enqueue fails", async () => {
+    mocks.queueAdd.mockRejectedValueOnce(new Error("queue offline"));
+    expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 0, errors: 1 });
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+
+    expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 1, errors: 0 });
+    expect(mocks.queueAdd.mock.calls[0][2]).toEqual(mocks.queueAdd.mock.calls[1][2]);
+    expect(mocks.redisSet).toHaveBeenCalledOnce();
+  });
+
+  it("ignores campaigns linked to an account from another workspace", async () => {
+    mocks.automationFindMany.mockResolvedValue([automation({ workspaceId: "foreign" })]);
+    expect(await reconcileButtonTaps(now)).toEqual({ accounts: 0, recovered: 0, errors: 0 });
+    expect(mocks.dmLogFindFirst).not.toHaveBeenCalled();
   });
 
   it("uses the campaign that contacted the person when two share the same button title", async () => {
