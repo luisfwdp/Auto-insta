@@ -4,10 +4,13 @@ import { batchActionSchema } from "@/lib/publishing/schemas";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 import { assertCommercialAccess } from "@/lib/billing/commercial-access";
 import { BillingError } from "@/lib/billing/config";
+import { requestLimitResponse } from "@/lib/api/request-rate-limit";
 import { isBillingEnabled } from "@/lib/billing/trial";
 import { releaseCommercialUsage } from "@/lib/billing/commercial-usage";
 
 async function commercialGate(workspaceId: string) {
+  const denied = await requestLimitResponse("publishing", workspaceId);
+  if (denied) return denied;
   try {
     await assertCommercialAccess(workspaceId);
   } catch (error) {

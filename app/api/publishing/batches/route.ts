@@ -6,8 +6,11 @@ import { generateBatchSchedule, orderBatchItems } from "@/lib/publishing/schedul
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 import { assertCommercialAccess } from "@/lib/billing/commercial-access";
 import { BillingError } from "@/lib/billing/config";
+import { requestLimitResponse } from "@/lib/api/request-rate-limit";
 
 async function commercialGate(workspaceId: string) {
+  const denied = await requestLimitResponse("publishing", workspaceId);
+  if (denied) return denied;
   try {
     await assertCommercialAccess(workspaceId);
   } catch (error) {

@@ -99,4 +99,15 @@ describe("GET /api/health with Redis configured", () => {
       counts: { waiting: 25, active: 0 },
     });
   });
+  it("never serializes infrastructure errors or internal process identity", async () => {
+    const privateValue = "private-database-password-and-host";
+    queryRaw.mockRejectedValueOnce(new Error(privateValue));
+    getRedisConnection.mockReturnValue({ ping: vi.fn().mockRejectedValue(new Error(privateValue)) });
+    getDMQueue.mockReturnValue({ getJobCounts: vi.fn().mockRejectedValue(new Error(privateValue)) });
+    getPublishingQueue.mockReturnValue({ getJobCounts: vi.fn().mockRejectedValue(new Error(privateValue)) });
+    getWorkerHealth.mockResolvedValue({ healthy: true, heartbeat: { pid: 1234, hostname: privateValue, privateField: privateValue }, consumer: { state: "processing" } });
+    const { GET } = await import("@/app/api/health/route"); const response = await GET(), text = await response.text();
+    expect(response.status).toBe(503); expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(text).not.toContain(privateValue); expect(text).not.toContain('"pid"'); expect(text).not.toContain('"hostname"');
+  });
 });

@@ -1,9 +1,22 @@
+import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { isTrustedBrowserOrigin } from "@/lib/api/origin";
 import { canManageBilling, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 import { isBillingEnabled } from "./trial";
 import { BillingError, hasBillingProviderScope } from "./config";
+import { consumeRequestLimit, type RequestLimitPolicy } from "@/lib/api/request-rate-limit";
+
+class BillingThrottle extends BillingError {
+  constructor(readonly retryAfter: number) { super("RATE_LIMITED", 429); }
+}
+
+export async function requireBillingRequestBudget(context: { workspaceId: string; userId: string }, policy: RequestLimitPolicy) {
+  let budget;
+  try { budget = await consumeRequestLimit(policy, `${context.workspaceId}:${context.userId}`); }
+  catch { throw new BillingError("BILLING_RATE_LIMIT_UNAVAILABLE", 503); }
+  if (!budget.allowed) throw new BillingThrottle(budget.retryAfter);
+}
 
 export function billingJson(data: unknown, status = 200) {
   return NextResponse.json({ success: true, data }, { status, headers: { "Cache-Control": "no-store" } });
@@ -14,7 +27,8 @@ export function billingFailure(error: unknown) {
   const known = error instanceof BillingError && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)
     && Number.isInteger(error.httpStatus) && error.httpStatus >= 400 && error.httpStatus <= 599;
   return NextResponse.json({ success: false, error: known ? error.code : "BILLING_UNAVAILABLE" },
-    { status: known ? error.httpStatus : 503, headers: { "Cache-Control": "no-store" } });
+    { status: known ? error.httpStatus : 503, headers: { "Cache-Control": "no-store",
+      ...(error instanceof BillingThrottle ? { "Retry-After": String(error.retryAfter) } : {}) } });
 }
 
 /** Browser workspace is a precondition, never a tenant authority. Read routes
@@ -37,6 +51,7 @@ export async function requireBillingOwner(request: NextRequest, { write = false,
   if (!canManageBilling(context.role)) throw new BillingError("FORBIDDEN", 403);
   if (!isBillingEnabled() && !(cancellation && hasBillingProviderScope())) throw new BillingError("BILLING_DISABLED", 404);
   assertBillingWorkspaceContext(request, context.workspaceId, write);
+  if (write) await requireBillingRequestBudget(context, cancellation ? "cancellation" : "checkout");
   return context;
 }
 

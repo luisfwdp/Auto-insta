@@ -131,6 +131,11 @@ Vercel and the worker: ASAAS_ENVIRONMENT, ASAAS_ACCOUNT_SCOPE(stable UUID per ac
 ASAAS_API_KEY and distinct ASAAS_WEBHOOK_TOKEN, through their secret managers.
 The web checkout also needs a canonical NEXTAUTH_URL/AUTH_URL; GET/DELETE worker
 maintenance validates no callback URL and does not require it.
+
+Hosted checkout returns at `/settings/billing` redirect to `/billing` with the
+checkout reference and result parameters. The billing screen requires a workspace
+session and reads payment status from the billing API.
+
 Rotating an API key must preserve account scope. Never put secret values in chat,
 PRs, logs, build args or screenshots. Production Vercel/the existing production
 Fly app rejects Sandbox scope; Sandbox uses a disposable/local or approved staging DB.

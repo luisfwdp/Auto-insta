@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import type Redis from "ioredis";
-import { getRedisConnection } from "@/lib/queue/client";
+import "server-only";
+import { getRateLimitRedis } from "./rate-limit-store";
 
 const WINDOW_SECONDS = 15 * 60;
 const SEND_LIMIT = 60;
@@ -23,14 +24,14 @@ function fingerprint(value: string): string {
 export async function checkManualDmRateLimit({
   workspaceId,
   instagramAccountId,
-  redis = getRedisConnection(),
+  redis,
 }: {
   workspaceId: string;
   instagramAccountId: string;
   redis?: Redis;
 }): Promise<{ allowed: true } | { allowed: false; retryAfter: number }> {
   const subject = fingerprint(`${workspaceId}:${instagramAccountId}`);
-  const result = (await redis.eval(
+  const result = (await (redis ?? await getRateLimitRedis()).eval(
     INCREMENT_WITH_TTL,
     1,
     `api:manual-dm:${subject}`,

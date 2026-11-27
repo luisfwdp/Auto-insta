@@ -272,6 +272,14 @@ describe("authorized callback (Unified Login)", () => {
     expect(res.headers.get("location")).not.toContain("app_secret_value");
     expect(JSON.stringify(db.operationalEvent.create.mock.calls)).not.toContain("app_secret_value");
   });
+  it("does not persist or log secret-bearing provider messages even on failed token exchange", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "oauth rejected: private-backend-secret-fixture" } }), { status: 400 }));
+    const response = await callback({ code: "code_abc", state: validState() });
+    expect(location(response).searchParams.get("reason")).toBe("token_exchange_failed");
+    expect(JSON.stringify(db.operationalEvent.create.mock.calls)).not.toContain("private-backend-secret-fixture");
+    expect(JSON.stringify(log.mock.calls)).not.toContain("private-backend-secret-fixture");
+  });
 });
 
 describe("authorized callback (Facebook Login mode)", () => {
