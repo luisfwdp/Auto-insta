@@ -29,6 +29,7 @@ const SEEN_TTL_SECONDS = 48 * 60 * 60;
 const PENDING_TTL_SECONDS = 60;
 const CONVERSATION_SCAN_TIMEOUT_MS = 35_000;
 const RECENT_SCAN_TIMEOUT_MS = 18_000;
+const HOT_BUTTON_PROMPT_SECONDS = 2 * 60;
 const RATE_LIMIT_COOLDOWN_SECONDS = 5 * 60;
 const RESOLVE_CLAIM = `
   if redis.call("GET", KEYS[1]) ~= ARGV[1] then return 0 end
@@ -46,12 +47,13 @@ type Candidate = { automationId: string; payload: string };
 
 export async function reconcileButtonTaps(
   now = new Date(),
-  mode: "recent" | "full" = "full",
+  mode: "hot" | "recent" | "full" = "full",
 ): Promise<ButtonTapReconcileResult> {
   const result: ButtonTapReconcileResult = { accounts: 0, recovered: 0, errors: 0 };
   const since = new Date(now.getTime() - BUTTON_TAP_LOOKBACK_MS);
-  const recentOnly = mode === "recent";
-  const promptedSince = recentOnly ? new Date(now.getTime() - RECENT_BUTTON_PROMPT_SECONDS * 1000) : since;
+  const recentOnly = mode !== "full";
+  const promptWindow = mode === "hot" ? HOT_BUTTON_PROMPT_SECONDS : RECENT_BUTTON_PROMPT_SECONDS;
+  const promptedSince = recentOnly ? new Date(now.getTime() - promptWindow * 1000) : since;
 
   const automations = await prisma.automation.findMany({
     where: {
@@ -121,7 +123,12 @@ export async function reconcileButtonTaps(
       status: "SENT" as const,
     };
     const pending = await prisma.dmLog.findFirst({
-      where: { ...sentByAccount, automationId: { in: automationIds }, dmSentAt: { gte: promptedSince } },
+      where: {
+        ...sentByAccount,
+        automationId: { in: automationIds },
+        dmSentAt: { gte: promptedSince },
+        ...(mode === "hot" ? { NOT: { commentId: { startsWith: "reveal:" } } } : {}),
+      },
       select: { id: true },
     });
     if (!pending && !recentOnly) continue;
@@ -130,7 +137,13 @@ export async function reconcileButtonTaps(
     const redis = getRedisConnection();
     const rateLimitKey = `button_tap_scan_rate_limit:${account.id}`;
     try {
-      if (!pending && !await redis.exists(recentButtonPromptKey(account.id))) continue;
+      if (!pending) {
+        const promptKey = recentButtonPromptKey(account.id);
+        const recentPrompt = mode === "hot"
+          ? await redis.ttl(promptKey) > RECENT_BUTTON_PROMPT_SECONDS - HOT_BUTTON_PROMPT_SECONDS
+          : await redis.exists(promptKey);
+        if (!recentPrompt) continue;
+      }
       if (await redis.exists(rateLimitKey)) continue;
       const context = await createInstagramContext(account, `button-taps:${account.id}`);
       if (context.provider !== "META") continue;

@@ -97,8 +97,9 @@ roda separada da varredura de comentários:
 - Só contas META com campanha ativa que envia botão (`requireFollow` ou DM de
   abertura) e que contataram alguém nas últimas 24 horas. Sem isso, nenhuma
   chamada à Graph API é feita.
-- A cada 30 segundos, consulta até três prévias para contas que enviaram
-  uma DM elegível ou um novo pedido para seguir nos últimos dez minutos.
+- Consulta até três prévias a cada 15 segundos para contas que enviaram uma
+  DM elegível ou um novo pedido para seguir nos últimos dois minutos.
+  Depois disso, consulta a cada 30 segundos até completar dez minutos.
   A cada cinco minutos, uma varredura
   completa cobre até as 50 conversas recentes. O worker evita rodadas
   simultâneas e suspende essa leitura da conta por cinco minutos quando a
