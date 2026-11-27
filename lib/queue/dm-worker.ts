@@ -14,6 +14,8 @@ import {
   MESSAGE_JOB_NAME,
   POSTBACK_JOB_NAME,
   FOLLOWUP_JOB_NAME,
+  RECENT_BUTTON_PROMPT_SECONDS,
+  recentButtonPromptKey,
   type DmQueueJob,
   type ProcessCommentJob,
   type ProcessMessageJob,
@@ -1096,7 +1098,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
         commenterName,
       });
       try {
-        await sendPostbackOnce({
+        const sent = await sendPostbackOnce({
           operationId,
           relatedIds,
           send: () =>
@@ -1110,6 +1112,13 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
               payload: `followcheck:${automation.id}`,
             }),
         });
+        if (sent && accessToken.provider === "META") {
+          // Keep the fast scan available after a follow prompt, even when
+          // the opening DM predates it by several minutes.
+          void Promise.resolve().then(() => getRedisConnection().set(
+            recentButtonPromptKey(automation.instagramAccountId), "1", "EX", RECENT_BUTTON_PROMPT_SECONDS,
+          )).catch(() => {});
+        }
       } catch (error) {
         // Preserve the durable claim on ambiguous sends, and make the queue
         // report that outcome instead of marking the prompt as completed.

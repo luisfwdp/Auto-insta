@@ -567,7 +567,7 @@ export async function getConversations(
 export async function* iterateConversations(
   accessToken: string,
   igUserId: string,
-  recoverySignal?: AbortSignal,
+  recovery?: { signal: AbortSignal; firstPageOnly?: boolean },
 ): AsyncGenerator<InstagramConversation> {
   const fields =
     "participants,updated_time,messages.limit(1){message,from,created_time}";
@@ -580,8 +580,9 @@ export async function* iterateConversations(
   let after: string | undefined;
   // Expanded pages of 50 can time out in the worker while the first item is
   // available quickly. Keep the normal inbox fast path and start recovery small.
+  const recoverySignal = recovery?.signal;
   const maxPageSize = recoverySignal ? 8 : 50;
-  let pageSize = recoverySignal ? 1 : maxPageSize;
+  let pageSize = recovery?.firstPageOnly ? 3 : recoverySignal ? 1 : maxPageSize;
 
   async function readPage(limit: number, requestedFields: string): Promise<Page> {
     // Never follow Meta's next URL: rebuild on our trusted host and carry the
@@ -639,7 +640,7 @@ export async function* iterateConversations(
       yield unavailable ? { ...row, detailsUnavailable: true } : row;
       if (seenIds.size === 50) return;
     }
-    if (!page.paging?.next || rows.length === 0) return;
+    if (recovery?.firstPageOnly || !page.paging?.next || rows.length === 0) return;
     const nextAfter = page.paging.cursors?.after;
     if (!nextAfter || seenCursors.has(nextAfter)) {
       throw new Error("Instagram conversation pagination did not advance");

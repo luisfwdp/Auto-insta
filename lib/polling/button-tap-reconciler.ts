@@ -17,15 +17,19 @@
  */
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db/client";
-import { getDMQueue, getRedisConnection, POSTBACK_JOB_NAME } from "@/lib/queue/client";
+import {
+  getDMQueue, getRedisConnection, POSTBACK_JOB_NAME, RECENT_BUTTON_PROMPT_SECONDS, recentButtonPromptKey,
+} from "@/lib/queue/client";
 import { createInstagramContext, hasInstagramCredentials } from "@/lib/instagram/context";
-import { iterateConversations } from "@/lib/meta/client";
+import { iterateConversations, MetaApiError, RateLimitError } from "@/lib/meta/client";
 
 export const BUTTON_TAP_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 export const BUTTON_TAP_RECOVERED_MESSAGE = "Button taps recovered from conversations";
 const SEEN_TTL_SECONDS = 48 * 60 * 60;
 const PENDING_TTL_SECONDS = 60;
 const CONVERSATION_SCAN_TIMEOUT_MS = 35_000;
+const RECENT_SCAN_TIMEOUT_MS = 18_000;
+const RATE_LIMIT_COOLDOWN_SECONDS = 5 * 60;
 const RESOLVE_CLAIM = `
   if redis.call("GET", KEYS[1]) ~= ARGV[1] then return 0 end
   if ARGV[2] == "0" then return redis.call("DEL", KEYS[1]) end
@@ -40,9 +44,14 @@ const normalize = (value: string | null | undefined) => (value ?? "").trim().toL
 
 type Candidate = { automationId: string; payload: string };
 
-export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapReconcileResult> {
+export async function reconcileButtonTaps(
+  now = new Date(),
+  mode: "recent" | "full" = "full",
+): Promise<ButtonTapReconcileResult> {
   const result: ButtonTapReconcileResult = { accounts: 0, recovered: 0, errors: 0 };
   const since = new Date(now.getTime() - BUTTON_TAP_LOOKBACK_MS);
+  const recentOnly = mode === "recent";
+  const promptedSince = recentOnly ? new Date(now.getTime() - RECENT_BUTTON_PROMPT_SECONDS * 1000) : since;
 
   const automations = await prisma.automation.findMany({
     where: {
@@ -112,18 +121,25 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
       status: "SENT" as const,
     };
     const pending = await prisma.dmLog.findFirst({
-      where: { ...sentByAccount, automationId: { in: automationIds }, dmSentAt: { gte: since } },
+      where: { ...sentByAccount, automationId: { in: automationIds }, dmSentAt: { gte: promptedSince } },
       select: { id: true },
     });
-    if (!pending) continue;
+    if (!pending && !recentOnly) continue;
 
-    result.accounts += 1;
     let recovered = 0;
+    const redis = getRedisConnection();
+    const rateLimitKey = `button_tap_scan_rate_limit:${account.id}`;
     try {
+      if (!pending && !await redis.exists(recentButtonPromptKey(account.id))) continue;
+      if (await redis.exists(rateLimitKey)) continue;
       const context = await createInstagramContext(account, `button-taps:${account.id}`);
       if (context.provider !== "META") continue;
+      result.accounts += 1;
       const conversations = iterateConversations(
-        context.accessToken, account.instagramId, AbortSignal.timeout(CONVERSATION_SCAN_TIMEOUT_MS),
+        context.accessToken, account.instagramId, {
+          signal: AbortSignal.timeout(recentOnly ? RECENT_SCAN_TIMEOUT_MS : CONVERSATION_SCAN_TIMEOUT_MS),
+          firstPageOnly: recentOnly,
+        },
       );
       for await (const conversation of conversations) {
         const message = conversation.messages?.data?.[0];
@@ -149,7 +165,6 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
         const candidate = candidates.find((item) => item.automationId === prompted?.automationId);
         if (!candidate) continue;
 
-        const redis = getRedisConnection();
         const seenKey = `button_tap_seen:${account.instagramId}:${message.id}`;
         const claim = randomUUID();
         if (await redis.set(seenKey, claim, "EX", PENDING_TTL_SECONDS, "NX") !== "OK") continue;
@@ -177,8 +192,12 @@ export async function reconcileButtonTaps(now = new Date()): Promise<ButtonTapRe
         // id and the DM worker's durable per-tap send claim cover a retry.
         if (await redis.eval(RESOLVE_CLAIM, 1, seenKey, claim, SEEN_TTL_SECONDS) === 1) recovered += 1;
       }
-    } catch {
+    } catch (error) {
       result.errors += 1;
+      if (error instanceof RateLimitError ||
+          (error instanceof MetaApiError && [32, 80001, 80002, 80006].includes(error.code))) {
+        await redis.set(rateLimitKey, "1", "EX", RATE_LIMIT_COOLDOWN_SECONDS).catch(() => {});
+      }
     }
 
     if (recovered > 0) {

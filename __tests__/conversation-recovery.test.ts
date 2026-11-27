@@ -156,7 +156,7 @@ describe("small-page conversation scans for tap recovery", () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(ok(head))
       .mockRejectedValueOnce(pageTimeout()).mockResolvedValueOnce(ok({ data: [{ id: "next" }] }));
     vi.stubGlobal("fetch", fetchMock);
-    const scanner = iterateConversations(token, "owner", new AbortController().signal);
+    const scanner = iterateConversations(token, "owner", { signal: new AbortController().signal });
 
     await expect(scanner.next()).resolves.toEqual({ value: { id: "first" }, done: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -176,10 +176,21 @@ describe("small-page conversation scans for tap recovery", () => {
       throw pageTimeout();
     });
     vi.stubGlobal("fetch", fetchMock);
-    const scanner = iterateConversations(token, "owner", deadline.signal);
+    const scanner = iterateConversations(token, "owner", { signal: deadline.signal });
 
     await expect(scanner.next()).resolves.toMatchObject({ value: { id: "first" }, done: false });
     await expect(scanner.next()).rejects.toMatchObject({ name: "TimeoutError" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads a single small page during a recent-DM scan even when another page exists", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(ok(head));
+    vi.stubGlobal("fetch", fetchMock);
+    const scanner = iterateConversations(token, "owner", { signal: new AbortController().signal, firstPageOnly: true });
+
+    await expect(scanner.next()).resolves.toMatchObject({ value: { id: "first" }, done: false });
+    await expect(scanner.next()).resolves.toMatchObject({ done: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(new URL(String(fetchMock.mock.calls[0][0])).searchParams.get("limit")).toBe("3");
   });
 });

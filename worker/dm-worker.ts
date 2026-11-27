@@ -26,6 +26,8 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = Number(
   process.env.COMMENT_POLL_INTERVAL_MS ?? 5 * 60_000
 );
+const BUTTON_TAP_POLL_INTERVAL_MS = 30_000;
+const BUTTON_TAP_FULL_SCAN_INTERVAL_MS = 5 * 60_000;
 const PUBLISHING_SWEEP_INTERVAL_MS = Number(
   process.env.PUBLISHING_SWEEP_INTERVAL_MS ?? 30_000
 );
@@ -76,19 +78,34 @@ async function poll() {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[DM Worker] Comment reconciliation failed:", message);
   }
-  // Separate from the comment sweep so a failure in one never skips the other.
+}
+
+let buttonTapScanRunning = false;
+let lastFullButtonScanAt = 0;
+
+async function pollButtonTaps() {
+  if (buttonTapScanRunning) return;
+  buttonTapScanRunning = true;
   try {
-    const taps = await reconcileButtonTaps();
+    const now = new Date();
+    const full = now.getTime() - lastFullButtonScanAt >= BUTTON_TAP_FULL_SCAN_INTERVAL_MS;
+    if (full) lastFullButtonScanAt = now.getTime();
+    const taps = await reconcileButtonTaps(now, full ? "full" : "recent");
     if (taps.recovered > 0 || taps.errors > 0) console.log("[DM Worker] Button tap recovery:", taps);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[DM Worker] Button tap recovery failed:", message);
+  } finally {
+    buttonTapScanRunning = false;
   }
 }
 
 // Kick off one sweep shortly after boot, then on a fixed interval.
 setTimeout(() => void poll(), 10_000);
 const pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+// Recent DMs get a short, bounded scan independent of the comment sweep.
+const buttonTapBootTimer = setTimeout(() => void pollButtonTaps(), 10_000);
+const buttonTapTimer = setInterval(() => void pollButtonTaps(), BUTTON_TAP_POLL_INTERVAL_MS);
 
 async function sweepPublishing() {
   try {
@@ -156,6 +173,8 @@ async function shutdown(signal: string) {
   console.log(`[DM Worker] ${signal} received, closing worker`);
   clearInterval(heartbeatTimer);
   clearInterval(pollTimer);
+  clearTimeout(buttonTapBootTimer);
+  clearInterval(buttonTapTimer);
   clearInterval(publishingSweepTimer);
   clearTimeout(webhookAuditBootTimer);
   clearInterval(webhookAuditTimer);
