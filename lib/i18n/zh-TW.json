@@ -815,5 +815,11 @@
   "Times shown in {timezone}.": "時間以 {timezone} 顯示。",
   "No publications scheduled for this month.": "本月尚無排程的貼文。",
   "MP4 or MOV videos. Up to {count} files at a time.": "MP4 或 MOV 影片。每次最多 {count} 個檔案。",
-  "JPEG images, MP4 or MOV videos. Up to {count} files at a time.": "JPEG 圖片、MP4 或 MOV 影片。每次最多 {count} 個檔案。"
+  "JPEG images, MP4 or MOV videos. Up to {count} files at a time.": "JPEG 圖片、MP4 或 MOV 影片。每次最多 {count} 個檔案。",
+  "Lifetime access": "終身使用權",
+  "Lifetime license with no expiry. No subscription payment is required. Monthly usage limits still apply.": "終身授權，無到期日且無須支付訂閱費。每月使用量限制仍然適用。",
+  "Your access is ready. Connect Instagram to continue.": "您的使用權已啟用。請連接 Instagram 以繼續。",
+  "Select all": "全選",
+  "Deselect all": "取消全選",
+  "Select all includes up to 100 videos per batch.": "全選最多包含每批 100 部影片。"
 }

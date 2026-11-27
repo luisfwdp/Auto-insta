@@ -815,5 +815,11 @@
   "Times shown in {timezone}.": "Horários exibidos em {timezone}.",
   "No publications scheduled for this month.": "Nenhuma publicação agendada para este mês.",
   "MP4 or MOV videos. Up to {count} files at a time.": "Vídeos MP4 ou MOV. Até {count} arquivos por vez.",
-  "JPEG images, MP4 or MOV videos. Up to {count} files at a time.": "Imagens JPEG, vídeos MP4 ou MOV. Até {count} arquivos por vez."
+  "JPEG images, MP4 or MOV videos. Up to {count} files at a time.": "Imagens JPEG, vídeos MP4 ou MOV. Até {count} arquivos por vez.",
+  "Lifetime access": "Acesso vitalício",
+  "Lifetime license with no expiry. No subscription payment is required. Monthly usage limits still apply.": "Licença vitalícia, sem vencimento e sem cobrança de assinatura. Os limites mensais de uso continuam valendo.",
+  "Your access is ready. Connect Instagram to continue.": "Seu acesso está pronto. Conecte o Instagram para continuar.",
+  "Select all": "Selecionar tudo",
+  "Deselect all": "Desmarcar tudo",
+  "Select all includes up to 100 videos per batch.": "Selecionar tudo inclui até 100 vídeos por lote."
 }

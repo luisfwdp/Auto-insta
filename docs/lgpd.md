@@ -45,6 +45,7 @@ A exclusão é irreversível. O workspace nunca é lido do cliente.
 - Não há tela para essas ações; hoje são chamadas de API.
 - Não há retenção automática de `WebhookEvent`, `DmLog` e `OperationalEvent`.
 - Exclusão de conta e de workspace é feita por solicitação ao suporte.
-- A política de privacidade pública ainda é o texto original em inglês e não
-  identifica o controlador nem o encarregado.
+- A política de privacidade pública está em português e informa o contato
+  `contato@pingchatbr.app`, mas ainda não traz razão social, CNPJ nem o nome do
+  encarregado. O texto não passou por revisão jurídica.
 - Não há endpoint para o callback de exclusão de dados da Meta.

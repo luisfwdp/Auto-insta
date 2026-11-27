@@ -151,6 +151,7 @@ model CommercialUsageReservation {
 enum CommercialUsageSubject {
   OWNER_TRIAL
   WORKSPACE_PAID
+  WORKSPACE_GRANT
 }
 
 enum CommercialUsageResource {
@@ -188,7 +189,25 @@ model WorkspaceBilling {
   checkouts BillingCheckout[]
   subscriptions BillingSubscription[] @relation("WorkspaceSubscriptions")
   currentSubscription BillingSubscription? @relation("CurrentSubscription", fields: [currentSubscriptionId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  lifetimeAccess WorkspaceLifetimeAccess?
   @@unique([currentSubscriptionId, workspaceId])
+}
+
+/// Administrative, audited license; never a payment or an extended trial.
+/// Runtime has SELECT only. Grant/revocation uses reviewed operator SQL.
+model WorkspaceLifetimeAccess {
+  workspaceId String @id
+  id String @unique @default(uuid()) @db.Uuid
+  ownerId String
+  planId String
+  grantedAt DateTime @default(now())
+  grantedBy String @db.VarChar(200)
+  reason String @db.VarChar(500)
+  approvalReference String @db.VarChar(500)
+  revokedAt DateTime?
+  revokedBy String? @db.VarChar(200)
+  revocationReason String? @db.VarChar(500)
+  billing WorkspaceBilling @relation(fields: [workspaceId], references: [workspaceId], onDelete: Restrict)
 }
 
 enum BillingEnvironment {

@@ -1,0 +1,152 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  automationFindMany: vi.fn(), dmLogFindFirst: vi.fn(), eventCreate: vi.fn(),
+  queueAdd: vi.fn(), redisSet: vi.fn(), getConversations: vi.fn(), createContext: vi.fn(),
+}));
+vi.mock("@/lib/db/client", () => ({ prisma: {
+  automation: { findMany: mocks.automationFindMany },
+  dmLog: { findFirst: mocks.dmLogFindFirst },
+  operationalEvent: { create: mocks.eventCreate },
+} }));
+vi.mock("@/lib/queue/client", () => ({
+  POSTBACK_JOB_NAME: "process-postback",
+  getDMQueue: () => ({ add: mocks.queueAdd }),
+  getRedisConnection: () => ({ set: mocks.redisSet }),
+}));
+vi.mock("@/lib/instagram/read-inbox", () => ({ getConversations: mocks.getConversations }));
+vi.mock("@/lib/instagram/context", () => ({
+  createInstagramContext: mocks.createContext,
+  hasInstagramCredentials: (account: { accessToken: string }) => Boolean(account.accessToken),
+}));
+
+import { reconcileButtonTaps, BUTTON_TAP_LOOKBACK_MS, BUTTON_TAP_RECOVERED_MESSAGE } from "@/lib/polling/button-tap-reconciler";
+
+const now = new Date("2026-11-25T03:00:00.000Z");
+const account = { id: "acct_1", instagramId: "ig_account", accessToken: "encrypted", provider: "META", workspaceId: "ws_1", zernioAccountId: null };
+const automation = (extra: Record<string, unknown> = {}) => ({
+  id: "auto_1", workspaceId: "ws_1", requireFollow: true, followPromptButtonLabel: "Já estou seguindo",
+  openingDmEnabled: false, openingDmMessage: null, openingDmButtonLabel: null, instagramAccount: account, ...extra,
+});
+// Anonymized shape of GET /{ig-user-id}/conversations?fields=participants,updated_time,messages.limit(1){message,from,created_time}
+const conversation = (extra: Record<string, unknown> = {}) => ({
+  id: "conv_1", updated_time: "2026-11-25T02:58:00+0000",
+  participants: { data: [{ id: "user_1", username: "anon_user" }, { id: "ig_account", username: "anon_account" }] },
+  messages: { data: [{ id: "mid_1", message: "Já estou seguindo", from: { id: "user_1", username: "anon_user" }, created_time: "2026-11-25T02:58:00+0000", ...extra }] },
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.automationFindMany.mockResolvedValue([automation()]);
+  // First call: "any recent prompt?"; later calls: "who prompted this person?"
+  mocks.dmLogFindFirst.mockImplementation(async (args: { where: { commenterId?: string } }) =>
+    args.where.commenterId ? { automationId: "auto_1" } : { id: "log_1" });
+  mocks.createContext.mockResolvedValue({ provider: "META", accessToken: "token", instagramId: "ig_account" });
+  mocks.getConversations.mockResolvedValue([conversation()]);
+  mocks.redisSet.mockResolvedValue("OK");
+  mocks.queueAdd.mockResolvedValue({});
+  mocks.eventCreate.mockResolvedValue({});
+});
+
+describe("button tap recovery from conversations", () => {
+  it("enqueues the follow check the missing postback webhook would have enqueued", async () => {
+    expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 1, errors: 0 });
+    expect(mocks.queueAdd).toHaveBeenCalledWith("process-postback",
+      { instagramAccountId: "ig_account", accountConnectionId: "acct_1", userId: "user_1", payload: "followcheck:auto_1", mid: "mid_1" },
+      { jobId: "postback_ig_account_user_1_mid_1" });
+    expect(mocks.redisSet).toHaveBeenCalledWith("button_tap_seen:ig_account:mid_1", "1", "EX", 172800, "NX");
+  });
+
+  it("only looks at active META campaigns that send a button", async () => {
+    await reconcileButtonTaps(now);
+    expect(mocks.automationFindMany.mock.calls[0][0].where).toEqual({
+      isActive: true, OR: [{ requireFollow: true }, { openingDmEnabled: true }], instagramAccount: { provider: "META" },
+    });
+  });
+
+  it("makes no Graph API call when the account prompted nobody recently", async () => {
+    mocks.dmLogFindFirst.mockResolvedValue(null);
+    expect(await reconcileButtonTaps(now)).toEqual({ accounts: 0, recovered: 0, errors: 0 });
+    expect(mocks.getConversations).not.toHaveBeenCalled();
+    expect(mocks.dmLogFindFirst.mock.calls[0][0].where.createdAt.gte).toEqual(new Date(now.getTime() - BUTTON_TAP_LOOKBACK_MS));
+  });
+
+  it.each([
+    ["a message sent by the account itself", { from: { id: "ig_account" } }],
+    ["any other text", { message: "oi, tudo bem?" }],
+    ["a tap older than the messaging window", { created_time: "2026-11-23T02:58:00+0000" }],
+    ["a message without an id", { id: undefined }],
+    ["a message dated in the future", { created_time: "2026-11-25T04:00:00+0000" }],
+  ])("ignores %s", async (_label, extra) => {
+    mocks.getConversations.mockResolvedValue([conversation(extra)]);
+    expect((await reconcileButtonTaps(now)).recovered).toBe(0);
+    expect(mocks.queueAdd).not.toHaveBeenCalled();
+  });
+
+  it("matches the button title regardless of case and surrounding spaces", async () => {
+    mocks.getConversations.mockResolvedValue([conversation({ message: "  JÁ ESTOU SEGUINDO " })]);
+    expect((await reconcileButtonTaps(now)).recovered).toBe(1);
+  });
+
+  it("does nothing for a person these campaigns never contacted before the tap", async () => {
+    mocks.dmLogFindFirst.mockImplementation(async (args: { where: { commenterId?: string } }) =>
+      args.where.commenterId ? null : { id: "log_1" });
+    expect((await reconcileButtonTaps(now)).recovered).toBe(0);
+    expect(mocks.queueAdd).not.toHaveBeenCalled();
+    const where = mocks.dmLogFindFirst.mock.calls[1][0].where;
+    expect(where.commenterId).toBe("user_1");
+    expect(where.createdAt.lte).toEqual(new Date("2026-11-25T02:58:00.000Z"));
+  });
+
+  it("handles each tap once across polls", async () => {
+    mocks.redisSet.mockResolvedValue(null);
+    expect((await reconcileButtonTaps(now)).recovered).toBe(0);
+    expect(mocks.queueAdd).not.toHaveBeenCalled();
+    expect(mocks.eventCreate).not.toHaveBeenCalled();
+  });
+
+  it("uses the campaign that contacted the person when two share the same button title", async () => {
+    mocks.automationFindMany.mockResolvedValue([automation(), automation({ id: "auto_2" })]);
+    mocks.dmLogFindFirst.mockImplementation(async (args: { where: { commenterId?: string } }) =>
+      args.where.commenterId ? { automationId: "auto_2" } : { id: "log_1" });
+    await reconcileButtonTaps(now);
+    expect(mocks.queueAdd.mock.calls[0][1].payload).toBe("followcheck:auto_2");
+  });
+
+  it.each([
+    [true, "followcheck:auto_1:open"],
+    [false, "reveal:auto_1:open"],
+  ])("recovers an opening-DM tap (requireFollow %s)", async (requireFollow, payload) => {
+    mocks.automationFindMany.mockResolvedValue([automation({
+      requireFollow, openingDmEnabled: true, openingDmMessage: "Quer o link?", openingDmButtonLabel: "Quero o link",
+    })]);
+    mocks.getConversations.mockResolvedValue([conversation({ message: "Quero o link" })]);
+    await reconcileButtonTaps(now);
+    expect(mocks.queueAdd.mock.calls[0][1].payload).toBe(payload);
+  });
+
+  it("records a count-only event and never the recipient or the text", async () => {
+    await reconcileButtonTaps(now);
+    expect(mocks.eventCreate).toHaveBeenCalledWith({ data: {
+      workspaceId: "ws_1", source: "SYSTEM", level: "INFO", message: BUTTON_TAP_RECOVERED_MESSAGE, payload: { recovered: 1 },
+    } });
+    const logged = JSON.stringify(mocks.eventCreate.mock.calls);
+    expect(logged).not.toContain("user_1");
+    expect(logged).not.toContain("seguindo");
+  });
+
+  it("counts a failing account and keeps going with the next one", async () => {
+    const second = { ...account, id: "acct_2", instagramId: "ig_account_2" };
+    mocks.automationFindMany.mockResolvedValue([automation(), automation({ id: "auto_2", instagramAccount: second })]);
+    mocks.dmLogFindFirst.mockImplementation(async (args: { where: { commenterId?: string } }) =>
+      args.where.commenterId ? { automationId: "auto_2" } : { id: "log_1" });
+    mocks.getConversations.mockRejectedValueOnce(new Error("Meta 190")).mockResolvedValueOnce([conversation()]);
+    expect(await reconcileButtonTaps(now)).toEqual({ accounts: 2, recovered: 1, errors: 1 });
+  });
+
+  it("skips an account without credentials", async () => {
+    mocks.automationFindMany.mockResolvedValue([automation({ instagramAccount: { ...account, accessToken: "" } })]);
+    expect(await reconcileButtonTaps(now)).toEqual({ accounts: 0, recovered: 0, errors: 0 });
+    expect(mocks.dmLogFindFirst).not.toHaveBeenCalled();
+  });
+});

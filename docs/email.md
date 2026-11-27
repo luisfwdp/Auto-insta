@@ -43,3 +43,20 @@ de um serviço de encaminhamento, com registros MX próprios na raiz do domínio
 O envio geral serve para avisos de serviço aos titulares de conta. Para
 comunicação promocional, a LGPD e as boas práticas pedem base legal adequada e
 opção de descadastro, que este envio não oferece.
+
+## Aviso de fim do teste grátis
+
+Quando o teste de 72 horas termina sem plano pago, o envio de DMs passa a ser
+recusado (`COMMERCIAL_ACCESS_DENIED`). O worker avisa o dono do workspace por
+e-mail, uma única vez, com o link para `/billing`
+(`lib/email/trial-ended.ts`, verificação a cada hora).
+
+- Só roda com `BILLING_ENABLED=true` e com `RESEND_API_KEY`, `EMAIL_FROM` e
+  `NEXTAUTH_URL` (ou `AUTH_URL`) **definidos no worker**. Sem eles, não faz nada.
+  `EMAIL_REPLY_TO` é opcional.
+- Considera testes encerrados nos últimos 3 dias, ainda `TRIALING` e sem
+  `paidThrough`. Workspaces com licença vitalícia válida são ignorados, porque
+  continuam com acesso.
+- O controle de "já avisado" é um `OperationalEvent` com a mensagem
+  `Trial ended notice sent`, sem o endereço de e-mail. Se o provedor recusar o
+  envio, nada é gravado e a próxima rodada tenta de novo.

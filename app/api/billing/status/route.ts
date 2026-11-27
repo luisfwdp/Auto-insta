@@ -4,6 +4,7 @@ import { getWorkspaceBillingStatus, isBillingEnabled } from "@/lib/billing/trial
 import { BillingError, hasBillingProviderScope } from "@/lib/billing/config";
 import { readBillingOverview } from "@/lib/billing/overview";
 import { assertBillingWorkspaceContext, billingFailure } from "@/lib/billing/http";
+import { readLifetimeBillingStatus } from "@/lib/billing/commercial-access";
 
 export async function GET(request?: Request) {
   const current = await getCurrentWorkspaceContext();
@@ -15,6 +16,8 @@ export async function GET(request?: Request) {
     const enabled = isBillingEnabled(), configured = hasBillingProviderScope();
     if (!enabled && !configured) return NextResponse.json({ success: true, data: { enabled: false } }, { headers });
     const data = configured ? await readBillingOverview(context.workspaceId) : await getWorkspaceBillingStatus(context.workspaceId);
+    const lifetime = enabled ? await readLifetimeBillingStatus(context.workspaceId) : null;
+    if (lifetime) return NextResponse.json({ success: true, data: { enabled, ...data, ...lifetime } }, { headers });
     const invalidPaidScope = !configured && data.hasAccess && data.status !== "TRIALING";
     return NextResponse.json({ success: true, data: { enabled, ...data, ...(invalidPaidScope ? { hasAccess: false, status: "REVIEW_REQUIRED" } : {}) } }, { headers });
   } catch (error) {
