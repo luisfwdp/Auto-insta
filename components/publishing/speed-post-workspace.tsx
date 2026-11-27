@@ -10,6 +10,11 @@ import MediaUploader from "./media-uploader";
 import { chronologicalDailySlots, orderBatchItems } from "@/lib/publishing/schedule";
 
 const DEFAULT_SLOTS = ["10:00", "12:00", "15:00", "18:00", "21:00"];
+const MAX_SELECTED_MEDIA = 100;
+
+export function selectAllSpeedPostMedia(selected: string[], availableVideoIds: string[]) {
+  return [...new Set([...selected, ...availableVideoIds])].slice(0, MAX_SELECTED_MEDIA);
+}
 
 export function fillUniqueTimeSlots(current: string[], count: number) {
   const slots = current.slice(0, count);
@@ -46,6 +51,8 @@ export default function SpeedPostWorkspace() {
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const effectiveAccount = accountId || data.accounts[0]?.id || "";
+  const videos = useMemo(() => data.media.filter(asset => asset.mediaType === "VIDEO"), [data.media]);
+  const canSelectMore = mediaIds.length < MAX_SELECTED_MEDIA && videos.some(asset => !mediaIds.includes(asset.id));
   const orderedMediaIds = useMemo(() => {
     const filenames = new Map(data.media.map(asset => [asset.id, asset.filename]));
     return orderBatchItems(
@@ -112,7 +119,21 @@ export default function SpeedPostWorkspace() {
         <button className={`${styles.button} ${styles.primary}`} disabled={submitting || !effectiveAccount || mediaIds.length === 0 || (scheduleMode === "CUSTOM" && mediaIds.some(id => !customDates[id]))} onClick={() => void createBatch()}>{t("Create automatic calendar")}</button>
       </div></section>
       <div className={styles.fields}>
-        <section className={styles.panel}><h2>{t("Select media")} · <span className={styles.counter}>{mediaIds.length}/100</span></h2><MediaUploader onUploaded={data.refresh} videosOnly />{data.loading ? <p className={styles.muted}>{t("Loading...")}</p> : data.media.filter(asset => asset.mediaType === "VIDEO").length === 0 ? <p className={styles.notice}>{t("No media uploaded yet. Use the secure uploader to add photos or videos.")}</p> : <div className={styles.mediaGrid}>{data.media.filter(asset => asset.mediaType === "VIDEO").map(asset => { const selected = mediaIds.includes(asset.id); return <button type="button" key={asset.id} aria-pressed={selected} className={`${styles.media} ${selected ? styles.mediaSelected : ""}`} onClick={() => setMediaIds(ids => selected ? ids.filter(id => id !== asset.id) : ids.length < 100 ? [...ids,asset.id] : ids)}><span className={styles.thumb}>▶</span><span className={styles.mediaName}>{asset.filename}</span></button>; })}</div>}</section>
+        <section className={styles.panel}>
+          <h2>{t("Select media")} · <span className={styles.counter} role="status" aria-live="polite" aria-atomic="true">{mediaIds.length}/{MAX_SELECTED_MEDIA}</span></h2>
+          <MediaUploader onUploaded={data.refresh} videosOnly />
+          <div className={styles.fields}>
+            <div className={styles.row} role="group" aria-label={t("Select media")}>
+              <button type="button" className={styles.button} disabled={submitting || data.loading || !canSelectMore} onClick={() => setMediaIds(ids => selectAllSpeedPostMedia(ids, videos.map(asset => asset.id)))}>{t("Select all")}</button>
+              <button type="button" className={styles.button} disabled={submitting || mediaIds.length === 0} onClick={() => setMediaIds([])}>{t("Deselect all")}</button>
+            </div>
+            {videos.length > MAX_SELECTED_MEDIA && <p className={styles.muted}>{t("Select all includes up to 100 videos per batch.")}</p>}
+            {data.loading ? <p className={styles.muted}>{t("Loading...")}</p> : videos.length === 0 ? <p className={styles.notice}>{t("No media uploaded yet. Use the secure uploader to add photos or videos.")}</p> : <div className={styles.mediaGrid}>{videos.map(asset => {
+              const selected = mediaIds.includes(asset.id);
+              return <button type="button" key={asset.id} aria-pressed={selected} disabled={submitting} className={`${styles.media} ${selected ? styles.mediaSelected : ""}`} onClick={() => setMediaIds(ids => ids.includes(asset.id) ? ids.filter(id => id !== asset.id) : ids.length < MAX_SELECTED_MEDIA ? [...ids,asset.id] : ids)}><span className={styles.thumb}>▶</span><span className={styles.mediaName}>{asset.filename}</span></button>;
+            })}</div>}
+          </div>
+        </section>
         <section className={styles.panel}><h2>{t("Generated calendar")} · {schedule.length ? Math.ceil(schedule.length / postsPerDay) : 0} {t("days")}</h2>{schedule.length === 0 ? <p className={styles.muted}>{t("Select media to preview the schedule.")}</p> : <div className={styles.list}>{schedule.slice(0,20).map((item,index) => <div className={styles.listItem} key={`${item.id}-${index}`}><span><strong>Reel {index+1}</strong><br/><span className={styles.muted}>{item.date.toLocaleString(locale,{dateStyle:"short",timeStyle:"short"})}</span></span><span className={styles.status}>{trialReels ? "Trial Reel" : "Reel"}</span></div>)}{schedule.length > 20 && <p className={styles.muted}>+ {schedule.length - 20} {t("scheduled items")}</p>}</div>}</section>
       </div>
     </div>
