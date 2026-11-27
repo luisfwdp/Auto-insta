@@ -13,4 +13,7 @@ describe("analytics URL privacy", () => {
   it.each(["invalid url", "data:text/plain,FAKE", "https://fake-user:fake-pass@example.test/scheduling"])("drops unsafe or malformed URL %s", (url) => {
     expect(sanitizeAnalyticsEvent({ type: "pageview", url })).toBeNull();
   });
+  it("does not share lead-form URLs with analytics", () => {
+    expect(sanitizeAnalyticsEvent({ type: "pageview", url: "https://example.test/material/private-link" })).toBeNull();
+  });
 });
