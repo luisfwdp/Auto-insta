@@ -648,6 +648,8 @@
   "Default caption": "預設說明文字",
   "Applied to every Reel unless an individual caption is set.": "套用至每個 Reel，已設定個別說明文字者除外。",
   "Use Trial Reels when the account is eligible": "帳號符合資格時使用 Trial Reels",
+  "Trial Reels reach non-followers first. In the Instagram app, find them on the publishing account beside its drafts. Share with everyone on Instagram to show them on the public profile.": "試用 Reels 會先觸及未追蹤帳號的人。請在 Instagram App 開啟發布帳號的個人檔案，在草稿旁查看。選擇「與所有人分享」即可顯示在公開個人檔案。",
+  "published as Trial Reels": "部以試用 Reels 發布",
   "Meta checks eligibility at publishing time. If the account is not eligible, the publication fails and is not silently published as a standard Reel.": "Meta 會在發布時檢查資格。若帳號不符合資格，發布會失敗，不會在未告知的情況下改為一般 Reels。",
   "Create automatic calendar": "建立自動日曆",
   "Select media": "選擇媒體",
