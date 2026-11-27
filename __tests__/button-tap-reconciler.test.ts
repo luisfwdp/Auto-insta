@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   automationFindMany: vi.fn(), dmLogFindFirst: vi.fn(), eventCreate: vi.fn(),
-  queueAdd: vi.fn(), redisEval: vi.fn(), redisExists: vi.fn(), redisSet: vi.fn(), getConversations: vi.fn(), createContext: vi.fn(),
+  queueAdd: vi.fn(), redisEval: vi.fn(), redisExists: vi.fn(), redisSet: vi.fn(), redisTtl: vi.fn(), getConversations: vi.fn(), createContext: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ prisma: {
   automation: { findMany: mocks.automationFindMany },
@@ -13,7 +13,7 @@ vi.mock("@/lib/queue/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/queue/client")>(),
   POSTBACK_JOB_NAME: "process-postback",
   getDMQueue: () => ({ add: mocks.queueAdd }),
-  getRedisConnection: () => ({ eval: mocks.redisEval, exists: mocks.redisExists, set: mocks.redisSet }),
+  getRedisConnection: () => ({ eval: mocks.redisEval, exists: mocks.redisExists, set: mocks.redisSet, ttl: mocks.redisTtl }),
 }));
 vi.mock("@/lib/meta/client", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/meta/client")>(),
@@ -52,6 +52,7 @@ beforeEach(() => {
   mocks.getConversations.mockResolvedValue([conversation()]);
   mocks.redisEval.mockResolvedValue(1);
   mocks.redisExists.mockResolvedValue(0);
+  mocks.redisTtl.mockResolvedValue(-2);
   mocks.redisSet.mockResolvedValue("OK");
   mocks.queueAdd.mockResolvedValue({});
   mocks.eventCreate.mockResolvedValue({});
@@ -93,6 +94,28 @@ describe("button tap recovery from conversations", () => {
       "token", account.instagramId, expect.objectContaining({ firstPageOnly: true, signal: expect.any(AbortSignal) }),
     );
     expect(mocks.dmLogFindFirst.mock.calls[1][0].where.dmSentAt.gte).toEqual(new Date(now.getTime() - BUTTON_TAP_LOOKBACK_MS));
+  });
+
+  it("checks the first Graph page on shorter ticks only for opening DMs in the past two minutes", async () => {
+    expect(await reconcileButtonTaps(now, "hot")).toEqual({ accounts: 1, recovered: 1, errors: 0 });
+    expect(mocks.dmLogFindFirst.mock.calls[0][0].where.dmSentAt.gte).toEqual(new Date(now.getTime() - 120_000));
+    expect(mocks.dmLogFindFirst.mock.calls[0][0].where.NOT).toEqual({ commentId: { startsWith: "reveal:" } });
+    expect(mocks.getConversations).toHaveBeenCalledWith(
+      "token", account.instagramId, expect.objectContaining({ firstPageOnly: true }),
+    );
+    expect(mocks.redisTtl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [539, 1],
+    [480, 0],
+    [-2, 0],
+  ])("checks a follow prompt on the shorter tick when enough marker TTL remains (%i)", async (ttl, scans) => {
+    mocks.dmLogFindFirst.mockResolvedValueOnce(null);
+    mocks.redisTtl.mockResolvedValueOnce(ttl);
+    expect((await reconcileButtonTaps(now, "hot")).accounts).toBe(scans);
+    expect(mocks.redisTtl).toHaveBeenCalledWith("button_tap_recent_prompt:acct_1");
+    expect(mocks.getConversations).toHaveBeenCalledTimes(scans);
   });
 
   it("keeps a recent follow prompt eligible after the opening DM ages out of the fast window", async () => {

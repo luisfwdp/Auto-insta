@@ -26,7 +26,8 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = Number(
   process.env.COMMENT_POLL_INTERVAL_MS ?? 5 * 60_000
 );
-const BUTTON_TAP_POLL_INTERVAL_MS = 30_000;
+const BUTTON_TAP_POLL_INTERVAL_MS = 15_000;
+const BUTTON_TAP_RECENT_SCAN_INTERVAL_MS = 30_000;
 const BUTTON_TAP_FULL_SCAN_INTERVAL_MS = 5 * 60_000;
 const PUBLISHING_SWEEP_INTERVAL_MS = Number(
   process.env.PUBLISHING_SWEEP_INTERVAL_MS ?? 30_000
@@ -82,6 +83,7 @@ async function poll() {
 
 let buttonTapScanRunning = false;
 let lastFullButtonScanAt = 0;
+let lastRecentButtonScanAt = 0;
 
 async function pollButtonTaps() {
   if (buttonTapScanRunning) return;
@@ -89,8 +91,10 @@ async function pollButtonTaps() {
   try {
     const now = new Date();
     const full = now.getTime() - lastFullButtonScanAt >= BUTTON_TAP_FULL_SCAN_INTERVAL_MS;
+    const recent = now.getTime() - lastRecentButtonScanAt >= BUTTON_TAP_RECENT_SCAN_INTERVAL_MS;
     if (full) lastFullButtonScanAt = now.getTime();
-    const taps = await reconcileButtonTaps(now, full ? "full" : "recent");
+    if (full || recent) lastRecentButtonScanAt = now.getTime();
+    const taps = await reconcileButtonTaps(now, full ? "full" : recent ? "recent" : "hot");
     if (taps.recovered > 0 || taps.errors > 0) console.log("[DM Worker] Button tap recovery:", taps);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
