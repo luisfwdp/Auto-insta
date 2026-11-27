@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isTrustedBrowserOrigin } from "@/lib/api/origin";
-import { requestIp } from "@/lib/api/request-ip";
+import { requestRateOrigin } from "@/lib/api/request-ip";
 import { requestLimitResponse, type RequestLimitPolicy } from "@/lib/api/request-rate-limit";
 
 // Every page under app/(dashboard). The layout there already refuses requests
@@ -47,7 +47,7 @@ export async function proxy(request: NextRequest) {
   else if (pathname === "/api/auth/callback/resend") policy = "authVerify";
   else if (pathname.startsWith("/api/") && !provider) policy = "api";
   if (policy) {
-    const denied = await requestLimitResponse(policy, requestIp(request.headers));
+    const denied = await requestLimitResponse(policy, requestRateOrigin(request.headers));
     if (denied) return denied;
   }
   const isProtected = PROTECTED_PREFIXES.some(
