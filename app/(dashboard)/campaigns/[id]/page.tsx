@@ -313,7 +313,7 @@ function LegacyCampaignDetailPage() {
           </div>
           <div className="flex items-center gap-2">
             <Link
-              href={`/campaigns/${campaign.id}/leads`}
+              href={`/campaigns/${encodeURIComponent(campaign.id)}/leads`}
               className="rounded border border-border px-3 py-1.5 text-sm text-muted hover:text-foreground"
             >
               {t("Campaign leads")}

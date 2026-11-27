@@ -6,7 +6,25 @@ import { Button } from "@/components/ui/primitives";
 
 type CapturedLead = { id: string; name: string; phone: string; email: string; createdAt: string };
 type CaptureLink = { id: string; label: string | null; requireLead: boolean };
-type LeadPage = { leads: CapturedLead[]; links: CaptureLink[]; nextCursor: string | null };
+type LeadPage = {
+  leads: CapturedLead[];
+  links: CaptureLink[];
+  nextCursor: string | null;
+  restartPagination?: boolean;
+};
+
+export function removeLeadFromPage(page: LeadPage, id: string): LeadPage {
+  const leads = page.leads.filter((lead) => lead.id !== id);
+  if (page.nextCursor !== id) return { ...page, leads };
+  // The API looks up the cursor row. Use the preceding surviving row after
+  // deleting it, or request the first page if no loaded contacts remain.
+  return {
+    ...page,
+    leads,
+    nextCursor: leads.at(-1)?.id ?? null,
+    restartPagination: leads.length === 0,
+  };
+}
 
 async function getLeads(endpoint: string, signal?: AbortSignal): Promise<LeadPage> {
   const response = await fetch(endpoint, { cache: "no-store", signal });
@@ -62,8 +80,7 @@ export function CampaignLeads({ campaignId }: { campaignId: string }) {
       const response = await fetch(`${endpoint}?id=${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!response.ok) throw new Error("Could not delete lead");
       setConfirmDelete(null);
-      setPage((current) => current && ({ ...current, leads: current.leads.filter((lead) => lead.id !== id) }));
-      setPage(await getLeads(endpoint));
+      setPage((current) => current && removeLeadFromPage(current, id));
     });
   }
 
@@ -92,7 +109,8 @@ export function CampaignLeads({ campaignId }: { campaignId: string }) {
         </section>
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">{t("Captured contacts")}</h2>
-          {!page.leads.length && <p className="text-sm text-muted-foreground">{t("No contacts captured yet.")}</p>}
+          {!page.leads.length && !page.restartPagination &&
+            <p className="text-sm text-muted-foreground">{t("No contacts captured yet.")}</p>}
           <ul className="space-y-3">
             {page.leads.map((lead) => (
               <li key={lead.id} className="flex flex-wrap justify-between gap-3 rounded-xl border border-border bg-card p-4">
@@ -116,9 +134,10 @@ export function CampaignLeads({ campaignId }: { campaignId: string }) {
               </li>
             ))}
           </ul>
-          {cursor && <Button variant="secondary" disabled={busy} onClick={() => perform(async () => {
-            const next = await getLeads(`${endpoint}?cursor=${encodeURIComponent(cursor)}`);
-            setPage({ ...next, leads: [...page.leads, ...next.leads] });
+          {(cursor || page.restartPagination) && <Button variant="secondary" disabled={busy} onClick={() => perform(async () => {
+            const url = cursor ? `${endpoint}?cursor=${encodeURIComponent(cursor)}` : endpoint;
+            const next = await getLeads(url);
+            setPage((current) => ({ ...next, leads: [...(current?.leads ?? []), ...next.leads] }));
           })}>{t("Show more contacts")}</Button>}
         </section>
       </>}
