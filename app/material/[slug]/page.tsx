@@ -8,7 +8,9 @@ import { issueLeadFormToken } from "@/lib/tracking/lead-capture";
 export const metadata: Metadata = {
   title: "PING CHAT",
   robots: { index: false, follow: false },
-  referrer: "no-referrer",
+  // Preserve Origin on a native same-origin POST. The redirect sets its own
+  // no-referrer policy for navigation to the campaign destination.
+  referrer: "same-origin",
 };
 
 const statusMessages: Record<string, StaticMessageKey> = {

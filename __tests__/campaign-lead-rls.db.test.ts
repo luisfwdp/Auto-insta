@@ -15,7 +15,7 @@ describe.skipIf(!url)("campaign lead database contract", () => {
   beforeAll(async () => {
     sql = new Client({ connectionString: url });
     await sql.connect();
-    await sql.query("BEGIN");
+    await sql.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
     await sql.query(`CREATE SCHEMA "${schema}"; SET LOCAL search_path TO "${schema}", public;
       CREATE TABLE "Automation" ("id" TEXT PRIMARY KEY, "workspaceId" TEXT NOT NULL);
       CREATE TABLE "TrackedLink" ("id" TEXT PRIMARY KEY);
@@ -44,10 +44,13 @@ describe.skipIf(!url)("campaign lead database contract", () => {
     ]);
     for (const { rolname } of roles.rows) {
       const rights = await sql.query(`
-        SELECT has_table_privilege($1, '"CampaignLead"', 'SELECT,INSERT,DELETE') AS read_or_write,
+        SELECT has_table_privilege($1, '"CampaignLead"', 'SELECT') AS can_select,
+               has_table_privilege($1, '"CampaignLead"', 'INSERT') AS can_insert,
+               has_table_privilege($1, '"CampaignLead"', 'DELETE') AS can_delete,
                has_table_privilege($1, '"CampaignLead"', 'UPDATE,TRUNCATE') AS elevated
       `, [rolname]);
-      expect(rights.rows).toEqual([{ read_or_write: rolname === "pingchat_runtime", elevated: false }]);
+      const runtime = rolname === "pingchat_runtime";
+      expect(rights.rows).toEqual([{ can_select: runtime, can_insert: runtime, can_delete: runtime, elevated: false }]);
     }
   });
 

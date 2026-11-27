@@ -14,6 +14,7 @@ vi.mock("@/lib/db/client", () => ({
 vi.mock("@/lib/api/request-rate-limit", () => ({ consumeRequestLimit: mocks.limit }));
 
 import { GET, POST } from "@/app/r/[slug]/route";
+import { metadata as formMetadata } from "@/app/material/[slug]/page";
 import { decryptLeadContact, issueLeadFormToken, verifyLeadFormToken } from "@/lib/tracking/lead-capture";
 
 const slug = "demo_link";
@@ -42,6 +43,10 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("tracked-link lead capture", () => {
+  it("uses a document policy that preserves Origin on the native same-origin POST", () => {
+    expect(formMetadata.referrer).toBe("same-origin");
+  });
+
   it("sends opt-in links to the form without revealing the destination", async () => {
     const response = await GET(new NextRequest(`${url}?r=${"a".repeat(22)}`), route);
     expect(response.status).toBe(302);
