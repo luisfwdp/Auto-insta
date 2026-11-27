@@ -6,7 +6,7 @@ export function sanitizeAnalyticsEvent(event: BeforeSendEvent): BeforeSendEvent 
     const url = new URL(event.url);
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
     const path = decodeURIComponent(url.pathname).toLowerCase();
-    if (path === "/invite" || path.startsWith("/invite/")) return null;
+    if (["/invite", "/material"].some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return null;
     url.search = "";
     url.hash = "";
     return { ...event, url: url.toString() };

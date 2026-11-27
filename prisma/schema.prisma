@@ -553,7 +553,9 @@ model Automation {
   dmLogs           DmLog[]
   trackedLinks     TrackedLink[]
   linkClicks       LinkClick[]
+  leads            CampaignLead[]
 
+  @@unique([id, workspaceId])
   @@index([workspaceId])
   @@index([instagramAccountId])
   @@index([postId])
@@ -617,6 +619,7 @@ model TrackedLink {
   slug           String   @unique
   label          String?
   destinationUrl String
+  requireLead    Boolean  @default(false)
   // Which DM button this link is, starting at 0. Read links with
   // TRACKED_LINK_ORDER (lib/tracking/link-order.ts), never by createdAt alone:
   // links saved in one request share a createdAt, and Postgres returns tied
@@ -631,6 +634,20 @@ model TrackedLink {
 
   @@index([workspaceId])
   @@index([automationId])
+}
+
+model CampaignLead {
+  id                String   @id @db.Uuid
+  workspaceId       String
+  automationId      String
+  // Keep the source identifier when a button is removed from the campaign.
+  sourceLinkId      String
+  contactCiphertext String
+  createdAt         DateTime @default(now())
+
+  automation Automation @relation(fields: [automationId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+
+  @@index([workspaceId, automationId, createdAt, id])
 }
 
 model LinkClick {

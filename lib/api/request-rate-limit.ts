@@ -14,6 +14,7 @@ export const REQUEST_LIMITS = {
   trial: { limit: 10, seconds: 900 },
   media: { limit: 360, seconds: 900 },
   publishing: { limit: 120, seconds: 60 },
+  leadCapture: { limit: 20, seconds: 600 },
 } as const;
 export type RequestLimitPolicy = keyof typeof REQUEST_LIMITS;
 const INCREMENT = `

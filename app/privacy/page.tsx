@@ -15,7 +15,7 @@ export default function PrivacyPage() {
     <LegalShell
       title="Política de Privacidade"
       description="O PING CHAT ajuda criadores e negócios a responder comentários do Instagram com mensagens privadas, usando apenas a integração oficial da Meta."
-      updatedAt="26 de novembro de 2026"
+      updatedAt="27 de novembro de 2026"
     >
       <section>
         <h2 className="text-xl font-bold text-foreground">Quem somos</h2>
@@ -37,6 +37,9 @@ export default function PrivacyPage() {
         </p>
         <p className="mt-3">
           Dados das campanhas: configurações, mensagens, links, comentários e mensagens recebidos nas contas conectadas, registros de envio e eventos enviados pela Meta.
+        </p>
+        <p className="mt-3">
+          Formulários de campanha: quando um link exige cadastro, guardamos cifrados o nome, o e-mail e o telefone informados. A equipe autorizada da campanha tem acesso a esses dados e define a finalidade da coleta. O cadastro libera o destino configurado pela campanha.
         </p>
         <p className="mt-3">
           Dados de cliques: contagem de cliques nos links das campanhas. Guardamos apenas versões irreversíveis (hash) do endereço IP e do destinatário, além do navegador e da página de origem.
