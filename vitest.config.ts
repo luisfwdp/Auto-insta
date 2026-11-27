@@ -10,6 +10,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "."),
+      // Next resolves this build marker itself. Node-only tests have no client
+      // bundle; the actual boundary is enforced by the production Next build.
+      "server-only": path.resolve(__dirname, "__tests__/fixtures/server-only.ts"),
     },
   },
 });

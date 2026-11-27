@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isTrustedBrowserOrigin } from "@/lib/api/origin";
 import { getCurrentWorkspaceContext, canManageBilling } from "@/lib/workspace-access";
 import { isBillingEnabled, startCardFreeTrial } from "@/lib/billing/trial";
-import { assertBillingWorkspaceContext, billingFailure } from "@/lib/billing/http";
+import { assertBillingWorkspaceContext, billingFailure, requireBillingRequestBudget } from "@/lib/billing/http";
 
 export async function POST(request: NextRequest) {
   if (!request.headers.get("origin") || !isTrustedBrowserOrigin(request)) return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
   const context = Object.freeze({ ...current });
   if (!canManageBilling(context.role)) return NextResponse.json({ success: false, error: "Only the workspace owner can start a trial" }, { status: 403 });
   if (!isBillingEnabled()) return NextResponse.json({ success: false, error: "Billing is not enabled" }, { status: 404 });
-  try { assertBillingWorkspaceContext(request, context.workspaceId, true); }
+  try { assertBillingWorkspaceContext(request, context.workspaceId, true); await requireBillingRequestBudget(context, "trial"); }
   catch (error) { return billingFailure(error); }
   const data = await startCardFreeTrial(context.workspaceId);
   return NextResponse.json({ success: true, data }, { headers: { "Cache-Control": "no-store" } });

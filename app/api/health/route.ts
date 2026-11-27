@@ -21,10 +21,10 @@ async function checkDatabase(): Promise<HealthCheck> {
   try {
     await prisma.$queryRaw`SELECT 1`;
     return { status: "ok" };
-  } catch (error) {
+  } catch {
     return {
       status: "error",
-      detail: error instanceof Error ? error.message : "Database check failed",
+      detail: "Database check failed",
     };
   }
 }
@@ -36,10 +36,10 @@ async function checkRedis(): Promise<HealthCheck> {
   try {
     const pong = await getRedisConnection().ping();
     return { status: pong === "PONG" ? "ok" : "error", detail: pong };
-  } catch (error) {
+  } catch {
     return {
       status: "error",
-      detail: error instanceof Error ? error.message : "Redis check failed",
+      detail: "Redis check failed",
     };
   }
 }
@@ -83,10 +83,10 @@ async function checkQueue(
       };
     }
     return { status: "ok", counts };
-  } catch (error) {
+  } catch {
     return {
       status: "error",
-      detail: error instanceof Error ? error.message : "Queue check failed",
+      detail: "Queue check failed",
     };
   }
 }
@@ -101,11 +101,11 @@ async function checkWorker() {
     };
   }
 
-  return getWorkerHealth().catch((error) => ({
+  return getWorkerHealth().catch(() => ({
     healthy: false,
     heartbeat: null,
     ageMs: null,
-    error: error instanceof Error ? error.message : "Worker check failed",
+    error: "Worker check failed",
   }));
 }
 
@@ -124,6 +124,14 @@ export async function GET() {
     queue.status === "ok" &&
     publishingQueue.status === "ok" &&
     worker.healthy;
+  const heartbeat = worker.heartbeat;
+  const publicWorker = {
+    healthy: worker.healthy, ageMs: worker.ageMs,
+    heartbeat: heartbeat ? { status: heartbeat.status, worker: heartbeat.worker,
+      startedAt: heartbeat.startedAt, checkedAt: heartbeat.checkedAt, consumerReadySince: heartbeat.consumerReadySince } : null,
+    ...("consumer" in worker ? { consumer: worker.consumer } : {}),
+    ...("error" in worker ? { error: worker.error } : {}),
+  };
 
   return NextResponse.json(
     {
@@ -133,9 +141,9 @@ export async function GET() {
         redis,
         queue,
         publishingQueue,
-        worker,
+        worker: publicWorker,
       },
     },
-    { status: healthy ? 200 : 503 }
+    { status: healthy ? 200 : 503, headers: { "Cache-Control": "no-store" } }
   );
 }

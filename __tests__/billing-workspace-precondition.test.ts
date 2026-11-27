@@ -1,6 +1,8 @@
 /** Route preconditions use server context only; no DB/provider is contacted. */
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const budget = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/api/request-rate-limit", () => ({ consumeRequestLimit: budget }));
 const state = vi.hoisted(() => ({ enabled: true, configured: true,
   context: null as { workspaceId: string; userId: string; role: "OWNER" | "ADMIN" | "MEMBER" } | null,
   getContext: vi.fn(), checkout: vi.fn(), readCheckout: vi.fn(), cancel: vi.fn(), readCancel: vi.fn(), trial: vi.fn(), status: vi.fn(), overview: vi.fn(), lifetime: vi.fn(), usage: vi.fn(), db: vi.fn() }));
@@ -34,6 +36,7 @@ async function failure(response: Response, status: number, code: string) {
   for (const call of services()) expect(call).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
 }
 beforeEach(() => {
+  budget.mockReset().mockResolvedValue({ allowed: true, retryAfter: 60 });
   vi.clearAllMocks(); state.enabled = true; state.configured = true; state.context = { workspaceId: "workspace-a", userId: "user-a", role: "OWNER" };
   state.getContext.mockReset().mockImplementation(async () => state.context);
   const checkout = { id, status: "OPEN", planId: "pro-v1", amountCents: 14900, url: "https://sandbox.asaas.com/fixture" };
@@ -42,6 +45,24 @@ beforeEach(() => {
   for (const call of [state.trial, state.status, state.overview, state.usage]) call.mockReset().mockResolvedValue({ hasAccess: true, status: "TRIALING" });
   state.lifetime.mockReset().mockResolvedValue(null);
   vi.stubEnv("NEXTAUTH_URL", origin); vi.stubEnv("AUTH_URL", ""); vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected provider access"));
+});
+describe.each(writes)("%s financial rate admission", (name, POST) => {
+  it("refuses before body parsing or any financial effect and returns Retry-After", async () => {
+    budget.mockResolvedValue({ allowed: false, retryAfter: 87 });
+    const req = request(name, "POST", "workspace-a"), read = vi.spyOn(req.body!, "getReader");
+    const response = await POST(req); await failure(response, 429, "RATE_LIMITED");
+    expect(response.headers.get("Retry-After")).toBe("87"); expect(read).not.toHaveBeenCalled();
+    expect(budget).toHaveBeenCalledWith(name === "cancel" ? "cancellation" : name, "workspace-a:user-a");
+  });
+  it("fails closed for Redis errors without leaving an unknown financial intent", async () => {
+    budget.mockRejectedValue(new Error("private-provider-secret"));
+    const response = await POST(request(name, "POST", "workspace-a"));
+    await failure(response, 503, "BILLING_RATE_LIMIT_UNAVAILABLE");
+  });
+  it("does not let unauthorized members consume an owner's financial budget", async () => {
+    state.context!.role = "MEMBER";
+    expect((await POST(request(name, "POST", "workspace-a"))).status).toBe(403); expect(budget).not.toHaveBeenCalled();
+  });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
