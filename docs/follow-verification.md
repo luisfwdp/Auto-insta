@@ -84,11 +84,11 @@ deve ser registrada antes de cada deploy aprovado.
 
 ## Recuperação de toques sem webhook
 
-Quando a Meta não entrega `messaging_postbacks` (por exemplo, enquanto a
-permissão de mensagens está só com Acesso Padrão), o toque no botão nunca chega
-e ninguém recebe o link. Em produção, em 25/11/2026, um toque real em "Já estou
-seguindo" não gerou nenhum evento, embora a conta estivesse inscrita em
-`messaging_postbacks`.
+Em produção, em 26/11/2026, um toque real em “Me envie o link” apareceu na
+API de conversas, mas não chegou como `messaging_postbacks` no callback. A
+conta estava inscrita nesse campo. O suporte Meta informou um incidente de
+entrega. O Acesso Padrão atende ao teste com papéis
+no próprio app; o Acesso Avançado atende a contas de clientes externos.
 
 O worker passa a recuperar esses toques pela mesma lista de conversas que a
 Caixa de entrada já lê (`lib/polling/button-tap-reconciler.ts`), no mesmo ciclo
@@ -99,24 +99,37 @@ de 5 minutos da varredura de comentários:
   chamada à Graph API é feita.
 - Só age quando a mensagem mais recente da conversa é da outra pessoa, tem até
   24 horas e o texto é exatamente o título do botão (sem diferenciar maiúsculas).
-- Só para quem a campanha já havia contatado antes do toque; a campanha mais
-  recente decide de qual botão se trata.
-- Cada mensagem é tratada uma única vez (marcador no Redis por 48 horas) e o job
-  usa o mesmo formato de `jobId` do webhook, de modo que um postback que chegue
-  para a mesma mensagem não gera um segundo job.
+- Só para quem tem uma DM registrada como `SENT`, anterior ao toque, na mesma
+  conta e workspace. A campanha do envio mais recente decide de qual botão
+  se trata.
+- Uma reserva Redis de um minuto evita varreduras simultâneas para o mesmo
+  toque. A reserva vira marcador de 48 horas após enfileirar. Uma falha de
+  fila libera a reserva; uma interrupção do processo permite retry após expirar.
+- Quando o ID de mensagem coincide com o `mid` do postback, ambas as entradas
+  usam a mesma identidade de job e a trava persistente de entrega. A fila
+  conserva as últimas 1.000 conclusões e a trava continua após a remoção do job.
+- Quando os IDs diferem e ambos os eventos incluem o horário, a trava usa
+  também a conta, a pessoa, o passo do fluxo e o instante fornecido pela
+  Meta. A tolerância cobre arredondamento de até dois segundos. Um segundo
+  toque para o mesmo passo nesse intervalo também é deduplicado.
 - Não envia nada por conta própria: enfileira o mesmo job `process-postback`, e
   o caminho existente continua exigindo `is_user_follow_business === true`,
   cota, deduplicação e janela de mensagens.
 
-Limites: só a mensagem mais recente de cada conversa é lida, então um toque
+Limites: digitar o título do botão também pode ser interpretado como um toque.
+As mesmas regras de envio anterior, janela e confirmação de follow se aplicam.
+Só a mensagem mais recente de cada conversa é lida, então um toque
 seguido de outra mensagem da pessoa não é recuperado; a lista cobre as 50
 conversas mais recentes; o atraso é de até 5 minutos. Não há chamada nova à
 Graph API nem permissão nova. O registro operacional
 (`Button taps recovered from conversations`) guarda só a contagem.
 
-Pressuposto ainda não comprovado em produção: que a API de conversas devolva o
-toque do botão como mensagem com o título do botão. Os testes usam payload
-anonimizado nesse formato. Se a API não devolver, a rotina não encontra nada e
-não tem efeito.
+O worker distingue limite de envio explícito (`FOLLOW_PROMPT_RATE_LIMITED`, com
+retry), rejeição confirmada (`FOLLOW_PROMPT_PROVIDER_REJECTED`) e entrega
+indeterminada (`FOLLOW_PROMPT_DELIVERY_UNCONFIRMED`, preservando a trava de
+envio). Esses diagnósticos não incluem o texto original do provedor. O registro
+de recuperação comprova o enfileiramento. Para confirmar a entrega do pedido
+para seguir e do link, verifique a conversa no Instagram do destinatário de
+teste.
 
 Referência: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/conversations-api

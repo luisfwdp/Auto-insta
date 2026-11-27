@@ -19,7 +19,7 @@ const {
 } = vi.hoisted(() => ({
   mockPrisma: {
     zernioConnection: { findUnique: vi.fn() },
-    postbackDelivery: { create: vi.fn(), delete: vi.fn() },
+    postbackDelivery: { create: vi.fn(), createMany: vi.fn(), delete: vi.fn(), deleteMany: vi.fn() },
     automation: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
@@ -1679,6 +1679,98 @@ describe("DM Worker — follow-gate re-check", () => {
     expect(mockSendDirectMessageWithButton).toHaveBeenCalledTimes(1);
     expect(mockSendDirectMessage).not.toHaveBeenCalled();
     expect(mockQueueAdd).not.toHaveBeenCalled();
+  });
+
+  it("allows a follow-prompt retry after Meta explicitly rate limits the send", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockSendDirectMessageWithButton.mockRejectedValueOnce(new RateLimitError("provider details"));
+    const processor = getProcessor();
+    const tap = { instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open" };
+
+    await expect(processor(createMockPostbackJob(tap))).rejects.toMatchObject({
+      name: "Error", message: "FOLLOW_PROMPT_RATE_LIMITED",
+    });
+    expect(mockPrisma.postbackDelivery.delete).toHaveBeenCalledOnce();
+    await processor(createMockPostbackJob(tap));
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledTimes(2);
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("reports an unconfirmed follow prompt without releasing the send claim", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockSendDirectMessageWithButton.mockRejectedValueOnce(new Error("provider details"));
+
+    await expect(getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open",
+    }))).rejects.toMatchObject({ name: "UnrecoverableError", message: "FOLLOW_PROMPT_DELIVERY_UNCONFIRMED" });
+    expect(mockPrisma.postbackDelivery.delete).not.toHaveBeenCalled();
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends one follow prompt when two ingress paths deliver the same message after queue eviction", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockPrisma.postbackDelivery.create
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce({ code: "P2002" });
+    const processor = getProcessor();
+    const tap = { instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open", mid: "same_mid" };
+
+    await processor({ ...createMockPostbackJob(tap), id: "reconciled_job" });
+    await processor({ ...createMockPostbackJob(tap), id: "webhook_job" });
+    expect(mockPrisma.postbackDelivery.create.mock.calls[0][0]).toEqual(mockPrisma.postbackDelivery.create.mock.calls[1][0]);
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledOnce();
+    expect(mockPrisma.postbackDelivery.delete).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates matching Meta taps with different message IDs and adjacent timestamps", async () => {
+    const metaGated = { ...gated, instagramAccount: { ...gated.instagramAccount, provider: "META" } };
+    mockPrisma.automation.findFirst.mockResolvedValue(metaGated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    const ids = new Set<string>();
+    mockPrisma.postbackDelivery.createMany.mockImplementation(async ({ data }: { data: { id: string }[] }) => {
+      if (data.some(({ id }) => ids.has(id))) throw { code: "P2002" };
+      for (const { id } of data) ids.add(id);
+    });
+    const processor = getProcessor();
+    const tap = { instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open" };
+    await processor(createMockPostbackJob({ ...tap, mid: "from_conversation", tapTimeSeconds: 1795560000 }));
+    await processor(createMockPostbackJob({ ...tap, mid: "from_webhook", tapTimeSeconds: 1795560001 }));
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledOnce();
+    expect(ids.size).toBe(4);
+
+    await processor(createMockPostbackJob({ ...tap, mid: "new_tap", tapTimeSeconds: 1795560005 }));
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases every alias on a confirmed send rejection", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue({
+      ...gated, instagramAccount: { ...gated.instagramAccount, provider: "META" },
+    });
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockPrisma.postbackDelivery.createMany.mockResolvedValueOnce({ count: 4 });
+    mockSendDirectMessageWithButton.mockRejectedValueOnce(new RateLimitError("provider details"));
+    await expect(getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open",
+      mid: "timestamped", tapTimeSeconds: 1795560000,
+    }))).rejects.toThrow("FOLLOW_PROMPT_RATE_LIMITED");
+    const data = mockPrisma.postbackDelivery.createMany.mock.calls[0][0].data as { id: string }[];
+    expect(data).toHaveLength(4);
+    expect(mockPrisma.postbackDelivery.deleteMany).toHaveBeenCalledWith({ where: { id: { in: data.map(({ id }) => id) } } });
+  });
+
+  it("retries a failed claim write before making a provider call", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue(gated);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockPrisma.postbackDelivery.create.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(getProcessor()(createMockPostbackJob({
+      instagramAccountId: "ig_456", userId: "commenter_999", payload: "followcheck:auto_789:open",
+    }))).rejects.toMatchObject({ name: "Error", message: "FOLLOW_PROMPT_PROCESSING_FAILED" });
+    expect(mockSendDirectMessageWithButton).not.toHaveBeenCalled();
+    expect(mockPrisma.postbackDelivery.delete).not.toHaveBeenCalled();
   });
 
   it("re-checks a first false follow later instead of rejecting the tap", async () => {

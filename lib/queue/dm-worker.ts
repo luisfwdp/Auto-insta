@@ -817,13 +817,22 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
 
 async function sendPostbackOnce({
   operationId,
+  relatedIds = [],
   send,
 }: {
   operationId: string;
+  relatedIds?: string[];
   send: () => Promise<unknown>;
 }): Promise<boolean> {
+  const claimIds = [operationId, ...relatedIds];
   try {
-    await prisma.postbackDelivery.create({ data: { id: operationId } });
+    if (relatedIds.length) {
+      // An overlapping claim rejects the entire insert. A failed duplicate
+      // must not leave new claims that block a later, independent action.
+      await prisma.postbackDelivery.createMany({ data: claimIds.map((id) => ({ id })) });
+    } else {
+      await prisma.postbackDelivery.create({ data: { id: operationId } });
+    }
   } catch (error) {
     if (
       typeof error === "object" &&
@@ -841,7 +850,11 @@ async function sendPostbackOnce({
     // A durable claim survives queue eviction, concurrent redelivery, and a
     // process crash during delivery. Only confirmed rejections permit retry.
     if (isConfirmedNoSend(error)) {
-      await prisma.postbackDelivery.delete({ where: { id: operationId } });
+      if (relatedIds.length) {
+        await prisma.postbackDelivery.deleteMany({ where: { id: { in: claimIds } } });
+      } else {
+        await prisma.postbackDelivery.delete({ where: { id: operationId } });
+      }
       throw error;
     }
     throw classifySendError(error);
@@ -979,6 +992,17 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     ]))
     .digest("hex");
 
+  // The same Meta tap may be recovered before its delayed webhook arrives.
+  // The APIs can expose different IDs for the action. Use the event time,
+  // not arrival time, with adjacent seconds to absorb timestamp rounding.
+  const tapTime = job.data.tapTimeSeconds;
+  const relatedIds = automation.instagramAccount.provider === "META" &&
+    typeof tapTime === "number" && Number.isSafeInteger(tapTime) && tapTime > 0
+    ? [tapTime - 1, tapTime, tapTime + 1].map((second) => createHash("sha256")
+      .update(JSON.stringify(["meta-tap", automation.instagramAccountId, userId, payload, second]))
+      .digest("hex"))
+    : [];
+
   // Every reveal path must honor the current requirement, including buttons
   // sent before it was enabled. A tap is consent to check, not proof of a follow:
   // only an explicit true may unlock the link. Unknown status uses the same
@@ -1074,6 +1098,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
       try {
         await sendPostbackOnce({
           operationId,
+          relatedIds,
           send: () =>
             sendDirectMessageWithButton({
               context: withCommercialMessagePurpose(accessToken, "primary"),
@@ -1086,10 +1111,17 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
             }),
         });
       } catch (error) {
-        console.log(
-          "[DM Worker] Failed to re-send follow prompt:",
-          formatError(error),
-        );
+        // Preserve the durable claim on ambiguous sends, and make the queue
+        // report that outcome instead of marking the prompt as completed.
+        if (isDeliveryUnconfirmed(error)) {
+          throw new UnrecoverableError("FOLLOW_PROMPT_DELIVERY_UNCONFIRMED");
+        }
+        if (error instanceof BillingError) throw error;
+        if (error instanceof RateLimitError) throw new Error("FOLLOW_PROMPT_RATE_LIMITED");
+        if (isConfirmedSendRejection(error)) {
+          throw new UnrecoverableError("FOLLOW_PROMPT_PROVIDER_REJECTED");
+        }
+        throw new Error("FOLLOW_PROMPT_PROCESSING_FAILED");
       }
       return;
     }
@@ -1123,6 +1155,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
   try {
     const delivered = await sendPostbackOnce({
       operationId,
+      relatedIds,
       send: () =>
         sendRevealDirectMessage({
           accessToken: accessToken,

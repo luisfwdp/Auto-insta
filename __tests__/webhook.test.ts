@@ -9,9 +9,28 @@ import {
   verifyWebhookSignature,
   parseCommentEvents,
   parseMessageEvents,
+  parsePostbackEvents,
   parseReadEvents,
 } from "../lib/meta/webhook";
 import { createHmac } from "crypto";
+
+it.each([1795560000123, 1795560000])("normalizes a postback timestamp of %d to event seconds", (timestamp) => {
+  const events = parsePostbackEvents({
+    object: "instagram",
+    entry: [{
+      id: "ig_456",
+      time: 1,
+      messaging: [{
+        sender: { id: "user_999" }, timestamp,
+        postback: { mid: "test_mid", payload: "followcheck:test_campaign:open" },
+      }],
+    }],
+  });
+  expect(events).toEqual([{
+    instagramAccountId: "ig_456", userId: "user_999", mid: "test_mid",
+    payload: "followcheck:test_campaign:open", tapTimeSeconds: 1795560000,
+  }]);
+});
 
 // Mock the environment variable
 beforeEach(() => {

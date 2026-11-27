@@ -102,6 +102,7 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
           userId: event.userId,
           payload: event.payload,
           mid: event.mid,
+          ...(event.tapTimeSeconds === undefined ? {} : { tapTimeSeconds: event.tapTimeSeconds }),
         },
         {
           // BullMQ forbids ":" in custom job ids, and the payload is
