@@ -192,6 +192,36 @@ If creation times out, the signed payment notification can recover the
 original `orderId` from Pulso. For a sales rollback, set
 `BILLING_SALES_ENABLED=false` so Pulso can still reconcile existing subscriptions.
 
+### Worker local para o Pulso Sandbox
+
+O worker financeiro pode processar uma rodada da fila de homologação sem iniciar
+o worker de mensagens nem provisionar outra máquina na Fly.io. Use o mesmo
+commit e o mesmo banco vazio de homologação do receptor web, com as migrações
+do Ping Chat aplicadas nesse banco. No Supabase, use a referência da branch
+isolada e a conexão direta ou o pooler de sessão com TLS.
+[Conexões do Supabase](https://supabase.com/docs/guides/database/connecting-to-postgres)
+
+Guarde as configurações em `.env.pulso-sandbox.local` com modo `0600`. O comando
+lê apenas `DATABASE_URL`, `PING_CHAT_SANDBOX_DATABASE_REF`, `ASAAS_ENVIRONMENT`,
+`ASAAS_ACCOUNT_SCOPE`, `PULSO_CHECKOUT_ENABLED`, `PULSO_CHECKOUT_ENVIRONMENT`,
+`PULSO_CHECKOUT_ORIGIN`, `PULSO_APP_TOKEN` e `PULSO_PROTECTION_BYPASS`. Selecione
+`sandbox` nos dois campos de ambiente, `true` no checkout e o endereço protegido
+`https://pulso-central-de-cobrancas.vercel.app` na origem. A referência do banco
+é a da branch isolada ou `loopback` para um PostgreSQL local descartável com
+o banco `ping_chat_pulso_sandbox`. Use o mesmo `ASAAS_ACCOUNT_SCOPE` no receptor
+web e no comando. A credencial de assinatura do webhook fica no receptor.
+
+```sh
+node --import tsx scripts/billing/pulso-sandbox-worker.ts --check
+node --import tsx scripts/billing/pulso-sandbox-worker.ts --once
+```
+
+`--check` consulta o cadastro na central e o banco sem processar eventos. Depois
+que o Asaas Sandbox entregar a notificação verdadeira e o receptor registrá-la,
+`--once` executa uma rodada da conciliação e das ações já reservadas no Sandbox.
+A saída contém apenas estados e contagens. Use o checkout e os eventos do teste
+para conferir o pagamento e a vigência antes de considerar o fluxo validado.
+
 ## Official references
 
 - [Checkout and callbacks](https://docs.asaas.com/reference/criar-novo-checkout)
