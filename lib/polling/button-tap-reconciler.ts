@@ -18,13 +18,17 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db/client";
 import {
-  getDMQueue, getRedisConnection, POSTBACK_JOB_NAME, RECENT_BUTTON_PROMPT_SECONDS, recentButtonPromptKey,
+  getDMQueue, getRedisConnection, MESSAGE_JOB_NAME, POSTBACK_JOB_NAME, RECENT_BUTTON_PROMPT_SECONDS, recentButtonPromptKey,
 } from "@/lib/queue/client";
+import { messageJobId } from "@/lib/queue/message-job-id";
 import { createInstagramContext, hasInstagramCredentials } from "@/lib/instagram/context";
 import { iterateConversations, MetaApiError, RateLimitError } from "@/lib/meta/client";
+import { matchKeywords } from "@/lib/utils/keyword-matcher";
 
 export const BUTTON_TAP_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 export const BUTTON_TAP_RECOVERED_MESSAGE = "Button taps recovered from conversations";
+const DIRECT_MESSAGE_RECOVERED_MESSAGE = "Keyword DMs recovered from conversations";
+const DIRECT_MESSAGE_LOOKBACK_MS = 10 * 60 * 1000;
 const SEEN_TTL_SECONDS = 48 * 60 * 60;
 const PENDING_TTL_SECONDS = 60;
 const CONVERSATION_SCAN_TIMEOUT_MS = 35_000;
@@ -56,7 +60,11 @@ export async function reconcileButtonTaps(
   const automations = await prisma.automation.findMany({
     where: {
       isActive: true,
-      OR: [{ requireFollow: true }, { openingDmEnabled: true }],
+      OR: [
+        { requireFollow: true },
+        { openingDmEnabled: true },
+        { dmTriggerEnabled: true, directMessageSince: { not: null } },
+      ],
       instagramAccount: { provider: "META" },
     },
     select: {
@@ -67,6 +75,11 @@ export async function reconcileButtonTaps(
       openingDmEnabled: true,
       openingDmMessage: true,
       openingDmButtonLabel: true,
+      dmTriggerEnabled: true,
+      directMessageSince: true,
+      matchAnyWord: true,
+      keywords: true,
+      wholeWordMatch: true,
       instagramAccount: {
         select: {
           id: true, instagramId: true, accessToken: true, provider: true,
@@ -87,6 +100,10 @@ export async function reconcileButtonTaps(
   for (const group of byAccount.values()) {
     const account = group[0].instagramAccount;
     if (!hasInstagramCredentials(account)) continue;
+    const directCampaigns = group.filter((campaign) =>
+      campaign.dmTriggerEnabled && campaign.directMessageSince && !campaign.matchAnyWord && campaign.keywords.length > 0,
+    );
+    const checkKeywordMessages = directCampaigns.length > 0 && ["recent", "full"].includes(mode);
 
     // Button title -> the campaigns on this account that send that button.
     const labels = new Map<string, Candidate[]>();
@@ -120,13 +137,15 @@ export async function reconcileButtonTaps(
       instagramAccountId: account.id,
       status: "SENT" as const,
     };
-    const pending = await prisma.dmLog.findFirst({
+    const recentPrompt = await prisma.dmLog.findFirst({
       where: { ...sentByAccount, automationId: { in: automationIds }, dmSentAt: { gte: promptedSince } },
       select: { id: true },
     });
+    const pending = checkKeywordMessages || Boolean(recentPrompt);
     if (!pending && !recentOnly) continue;
 
     let recovered = 0;
+    let recoveredMessages = 0;
     const redis = getRedisConnection();
     const rateLimitKey = `button_tap_scan_rate_limit:${account.id}`;
     try {
@@ -139,6 +158,7 @@ export async function reconcileButtonTaps(
         context.accessToken, account.instagramId, {
           signal: AbortSignal.timeout(recentOnly ? RECENT_SCAN_TIMEOUT_MS : CONVERSATION_SCAN_TIMEOUT_MS),
           firstPageOnly: recentOnly,
+          ...(checkKeywordMessages ? { includeMessageType: true } : {}),
         },
       );
       for await (const conversation of conversations) {
@@ -148,11 +168,17 @@ export async function reconcileButtonTaps(
         const sentAt = message.created_time ? new Date(message.created_time) : null;
         if (!sentAt || Number.isNaN(sentAt.getTime()) || sentAt < since || sentAt > now) continue;
         const candidates = labels.get(normalize(message.message));
-        if (!candidates?.length) continue;
+        const messageText = message.message;
+        const isKeywordMessage = checkKeywordMessages && messageText?.trim()
+          && !message.story && !message.is_unsupported
+          && now.getTime() - sentAt.getTime() <= DIRECT_MESSAGE_LOOKBACK_MS
+          && directCampaigns.some((campaign) => campaign.directMessageSince && sentAt >= campaign.directMessageSince
+            && matchKeywords(messageText, campaign.keywords, campaign.wholeWordMatch).matched);
+        if (!candidates?.length && !isKeywordMessage) continue;
 
         // The campaign that most recently contacted this person before the
         // tap decides which button it was. No prior contact, no action.
-        const prompted = await prisma.dmLog.findFirst({
+        const prompted = candidates?.length ? await prisma.dmLog.findFirst({
           where: {
             ...sentByAccount,
             automationId: { in: candidates.map((candidate) => candidate.automationId) },
@@ -161,16 +187,16 @@ export async function reconcileButtonTaps(
           },
           orderBy: [{ dmSentAt: "desc" }, { id: "desc" }],
           select: { automationId: true },
-        });
-        const candidate = candidates.find((item) => item.automationId === prompted?.automationId);
-        if (!candidate) continue;
+        }) : null;
+        const candidate = candidates?.find((item) => item.automationId === prompted?.automationId);
+        if (!candidate && !isKeywordMessage) continue;
 
-        const seenKey = `button_tap_seen:${account.instagramId}:${message.id}`;
+        const seenKey = `${candidate ? "button_tap_seen" : "keyword_dm_seen"}:${account.instagramId}:${message.id}`;
         const claim = randomUUID();
         if (await redis.set(seenKey, claim, "EX", PENDING_TTL_SECONDS, "NX") !== "OK") continue;
 
         try {
-          await getDMQueue().add(
+          if (candidate) await getDMQueue().add(
             POSTBACK_JOB_NAME,
             {
               instagramAccountId: account.instagramId,
@@ -182,6 +208,18 @@ export async function reconcileButtonTaps(
             },
             // Same job identity as the webhook when Meta supplies the same mid.
             { jobId: `postback_${account.instagramId}_${userId}_${message.id.replace(/:/g, "_")}` }
+          ); else await getDMQueue().add(
+            MESSAGE_JOB_NAME,
+            {
+              instagramAccountId: account.instagramId,
+              accountConnectionId: account.id,
+              senderId: userId,
+              messageId: message.id,
+              messageText: messageText!,
+              messageSentAt: sentAt.getTime(),
+              recoveredFromConversation: true,
+            },
+            { jobId: messageJobId(account.instagramId, message.id) },
           );
         } catch (error) {
           await redis.eval(RESOLVE_CLAIM, 1, seenKey, claim, 0).catch(() => {});
@@ -190,7 +228,10 @@ export async function reconcileButtonTaps(
 
         // If a process or Redis fails here, the short claim expires. The job
         // id and the DM worker's durable per-tap send claim cover a retry.
-        if (await redis.eval(RESOLVE_CLAIM, 1, seenKey, claim, SEEN_TTL_SECONDS) === 1) recovered += 1;
+        if (await redis.eval(RESOLVE_CLAIM, 1, seenKey, claim, SEEN_TTL_SECONDS) === 1) {
+          if (candidate) recovered += 1;
+          else recoveredMessages += 1;
+        }
       }
     } catch (error) {
       result.errors += 1;
@@ -200,8 +241,12 @@ export async function reconcileButtonTaps(
       }
     }
 
-    if (recovered > 0) {
-      result.recovered += recovered;
+    result.recovered += recovered + recoveredMessages;
+    for (const [message, count] of [
+      [BUTTON_TAP_RECOVERED_MESSAGE, recovered],
+      [DIRECT_MESSAGE_RECOVERED_MESSAGE, recoveredMessages],
+    ] as const) {
+      if (!count) continue;
       // Counts only: no recipient id, name or message text.
       await prisma.operationalEvent
         .create({
@@ -209,8 +254,8 @@ export async function reconcileButtonTaps(
             workspaceId: group[0].workspaceId,
             source: "SYSTEM",
             level: "INFO",
-            message: BUTTON_TAP_RECOVERED_MESSAGE,
-            payload: { recovered },
+            message,
+            payload: { recovered: count },
           },
         })
         .catch(() => {});

@@ -1328,13 +1328,12 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
 /**
  * Reply to an inbound DM whose text matches a campaign's keywords.
  *
- * The user has messaged us, so the conversation is already open: this path
- * skips the opening DM (which exists to work around private-reply limits from
- * comments) and delivers the reveal directly, honouring the follow gate.
+ * DM-only campaigns may explicitly start with a button. Campaigns that also
+ * handle comments still go directly to the follow prompt or the link.
  * Dedup is per inbound message id, so each message triggers at most one reply.
  */
 async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
-  const { instagramAccountId, messageId, messageText, senderId, storyId } = job.data;
+  const { instagramAccountId, messageId, messageText, senderId, storyId, messageSentAt, recoveredFromConversation } = job.data;
 
   const automations = await prisma.automation.findMany({
     where: {
@@ -1355,8 +1354,15 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   });
 
   const dedupeId = `dm:${messageId}`;
+  const directCampaign = storyId || messageSentAt === undefined ? undefined : automations.find((automation) =>
+    automation.directMessageSince && !automation.matchAnyWord
+    && automation.directMessageSince.getTime() <= messageSentAt
+    && matchKeywords(messageText, automation.keywords, automation.wholeWordMatch).matched
+  );
+  if (recoveredFromConversation && !directCampaign) return;
 
-  for (const automation of automations) {
+  for (const automation of directCampaign ? [directCampaign] : automations) {
+    if (automation.directMessageSince && !directCampaign) continue;
     // When a story permalink is configured, reject ordinary DMs and replies to
     // every other Story. An absent Meta story ID must fail closed.
     if (!matchesStoryReplyScope({ postUrl: automation.postUrl, postId: automation.postId, incomingStoryId: storyId })) continue;
@@ -1459,8 +1465,10 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
     // the link, with the same `followcheck:` button that re-verifies on tap.
     // `null` (unverifiable) prompts too: claiming to follow never substitutes
     // for a positive provider check, on first contact or a later button tap.
+    const sendOpening = Boolean(directCampaign && automation.openingDmEnabled
+      && automation.openingDmMessage?.trim() && automation.openingDmButtonLabel?.trim());
     let sendFollowPrompt = false;
-    if (automation.requireFollow) {
+    if (automation.requireFollow && !sendOpening) {
       const follows = await getUserFollowStatus({
         context: accessToken,
         recipientId: senderId,
@@ -1492,7 +1500,16 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
 
     try {
       const send = async () => {
-        if (sendFollowPrompt) {
+        if (sendOpening) {
+          await sendDirectMessageWithButton({
+            context: withCommercialMessagePurpose(accessToken, "primary"),
+            instagramAccountId: automation.instagramAccount.instagramId,
+            userId: senderId,
+            text: renderMessageWithoutLink({ message: automation.openingDmMessage!, commenterName }),
+            buttonTitle: automation.openingDmButtonLabel!,
+            payload: `${automation.requireFollow ? "followcheck" : "reveal"}:${automation.id}:open`,
+          });
+        } else if (sendFollowPrompt) {
           const promptText = renderMessageWithoutLink({
             message:
               automation.followPromptMessage ||
@@ -1517,7 +1534,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           });
         }
       };
-      if (isBillingEnabled()) {
+      if (isBillingEnabled() || directCampaign) {
         // One durable claim covers primary AND a proven template fallback.
         // Queue IDs/configuration may change while a stalled send is in flight;
         // the inbound message identity cannot create another provider effect.
@@ -1536,7 +1553,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
       // The link has been delivered, so the appreciation follow-up applies
       // here exactly as it does after a button tap. Not scheduled behind the
       // follow prompt — no link went out yet in that branch.
-      if (!sendFollowPrompt && automation.followUpEnabled && automation.followUpMessage?.trim()) {
+      if (!sendOpening && !sendFollowPrompt && automation.followUpEnabled && automation.followUpMessage?.trim()) {
         await getDMQueue().add(
           FOLLOWUP_JOB_NAME,
           {

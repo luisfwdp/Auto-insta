@@ -26,6 +26,7 @@ interface Campaign {
   keywords: string[];
   matchAnyWord: boolean;
   dmTriggerEnabled: boolean;
+  directMessageSince?: string | null;
   dmMessage: string;
   openingDmEnabled: boolean;
   openingDmMessage: string | null;
@@ -160,7 +161,8 @@ function LegacyCampaignDetailPage() {
   const hasLink = Boolean(campaign.trackedLinks?.[0]?.destinationUrl);
   const hasSecondLink = Boolean(campaign.trackedLinks?.[1]?.destinationUrl);
 
-  const trigger = campaign.matchAnyPost
+  const isDirect = Boolean(campaign.directMessageSince);
+  const trigger = isDirect ? t("Only incoming DMs") : campaign.matchAnyPost
     ? t("Any post or reel")
     : campaign.pendingNextReel
       ? t("Your next reel")
@@ -201,7 +203,7 @@ function LegacyCampaignDetailPage() {
           </span>
         </div>
 
-        <Summary title={t("When someone comments on")}>
+        <Summary title={t(isDirect ? "Campaign trigger" : "When someone comments on")}>
           <div className="flex items-center gap-3">
             {postThumb ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -219,7 +221,7 @@ function LegacyCampaignDetailPage() {
           </div>
         </Summary>
 
-        <Summary title={t("And this comment has")}>
+        <Summary title={t(isDirect ? "Keywords" : "And this comment has")}>
           <FieldBox>{matchText}</FieldBox>
           {campaign.dmTriggerEnabled && (
             <p className="text-xs text-muted">

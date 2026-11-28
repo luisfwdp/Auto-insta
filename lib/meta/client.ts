@@ -533,6 +533,8 @@ export interface InstagramMessage {
   message?: string;
   from?: InstagramParticipant;
   to?: { data: InstagramParticipant[] };
+  story?: unknown;
+  is_unsupported?: boolean;
 }
 
 export interface InstagramConversation {
@@ -567,10 +569,10 @@ export async function getConversations(
 export async function* iterateConversations(
   accessToken: string,
   igUserId: string,
-  recovery?: { signal: AbortSignal; firstPageOnly?: boolean },
+  recovery?: { signal: AbortSignal; firstPageOnly?: boolean; includeMessageType?: boolean },
 ): AsyncGenerator<InstagramConversation> {
-  const fields =
-    "participants,updated_time,messages.limit(1){message,from,created_time}";
+  const messageFields = recovery?.includeMessageType ? "message,from,created_time,story,is_unsupported" : "message,from,created_time";
+  const fields = `participants,updated_time,messages.limit(1){${messageFields}}`;
   type Page = {
     data?: InstagramConversation[];
     paging?: { next?: string; cursors?: { after?: string } };

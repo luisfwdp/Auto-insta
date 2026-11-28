@@ -22,6 +22,13 @@ describe("campaign wizard preflight against existing API limits", () => {
     expect(validateCampaignDraft({ ...draft, keywords: [] })).toBe("Add at least one keyword, or switch to any word.");
     expect(validateCampaignDraft({ ...draft, matchMode: "any", keywords: [] })).toBeNull();
   });
+  it("maps a DM-only campaign to a keyword trigger with no post", () => {
+    expect(campaignTriggerFields({ triggerScope: "dm", postId: "stale-post", postUrl: "https://www.instagram.com/reel/test/", dmTriggerEnabled: false })).toEqual({
+      postId: null, postUrl: null, matchAnyPost: false, pendingNextReel: false, dmTriggerEnabled: true,
+    });
+    expect(validateCampaignDraft({ ...draft, triggerScope: "dm", postId: null }, 0)).toBeNull();
+    expect(validateCampaignDraft({ ...draft, triggerScope: "dm", postId: null, matchMode: "any" }, 0)).toBe("Add at least one keyword for a DM-only campaign.");
+  });
   it("checks keyword, name, message and opening button limits", () => {
     expect(validateCampaignDraft({ ...draft, keywords: Array(11).fill("link") })).not.toBeNull();
     expect(validateCampaignDraft({ ...draft, keywords: ["x".repeat(51)] })).not.toBeNull();

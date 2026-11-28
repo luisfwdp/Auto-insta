@@ -99,6 +99,8 @@ export interface ProcessMessageJob {
   messageText: string;
   senderId: string;
   storyId?: string;
+  messageSentAt?: number;
+  recoveredFromConversation?: boolean;
 }
 
 export type DmQueueJob =

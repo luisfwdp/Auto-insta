@@ -95,6 +95,7 @@ export interface WebhookMessageEvent {
   messageId: string;
   messageText: string;
   senderId: string;
+  messageSentAt?: number;
   /** Populated only for a reply to an Instagram Story. */
   storyId?: string;
 }
@@ -239,11 +240,16 @@ export function parseMessageEvents(
       // Ignore anything the connected account sent to itself.
       if (senderId === accountId) continue;
 
+      const timestamp = messaging.timestamp;
+      const messageSentAt = typeof timestamp === "number" && Number.isSafeInteger(timestamp) && timestamp > 0
+        ? (timestamp > 9999999999 ? timestamp : timestamp * 1000)
+        : undefined;
       events.push({
         instagramAccountId: accountId,
         messageId,
         messageText: text,
         senderId,
+        ...(messageSentAt === undefined ? {} : { messageSentAt }),
         ...(message.reply_to?.story?.id ? { storyId: message.reply_to.story.id } : {}),
       });
     }
