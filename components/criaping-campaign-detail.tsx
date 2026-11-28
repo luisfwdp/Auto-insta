@@ -11,6 +11,7 @@ interface Campaign {
   id: string; name: string; isActive: boolean;
   instagramAccount: { username: string };
   matchAnyPost: boolean; pendingNextReel: boolean; postUrl: string | null;
+  directMessageSince?: string | null;
   matchAnyWord: boolean; keywords: string[]; dmMessage: string;
   openingDmEnabled: boolean; openingDmMessage: string | null; openingDmButtonLabel: string | null;
   requireFollow: boolean; followPromptMessage: string | null; followPromptButtonLabel: string | null;
@@ -61,6 +62,9 @@ export default function CriapingCampaignDetail() {
       : <Button onClick={retry}>{t("Try again")}</Button>}{back}</div>} /></div>;
   if (!campaign) return <div className={styles.page}><EmptyState title={t("Campaign not found.")} action={back} /></div>;
 
+  const isDirect = Boolean(campaign.directMessageSince);
+  const trigger = isDirect ? "Only incoming DMs" : campaign.matchAnyPost
+    ? "Any post or reel" : campaign.pendingNextReel ? "Your next reel" : "A specific post or reel";
   const messages = [
     ...(campaign.openingDmEnabled ? [[t("They will get an opening DM"), campaign.openingDmMessage, campaign.openingDmButtonLabel]] : []),
     ...(campaign.requireFollow ? [[t("They must follow first"), campaign.followPromptMessage, campaign.followPromptButtonLabel]] : []),
@@ -88,8 +92,8 @@ export default function CriapingCampaignDetail() {
     <Card><h2>{t("Insights")}</h2><dl className={styles.metrics}>{metrics.map(([name, value]) =>
       <div key={name}><dt>{name}</dt><dd>{Number.isFinite(value) ? value.toLocaleString(locale) + (name === t("CTR") ? "%" : "") : t("not available")}</dd></div>)}</dl></Card>
     <Card><h2>{t("Configuration")}</h2><dl className={styles.summary}>
-      <dt>{t("When someone comments on")}</dt><dd>{t(campaign.matchAnyPost ? "Any post or reel" : campaign.pendingNextReel ? "Your next reel" : "A specific post or reel")}</dd>
-      <dt>{t("Keywords")}</dt><dd>{campaign.matchAnyWord ? t("Any comment") : campaign.keywords.join(", ") || t("No keywords")}</dd>
+      <dt>{t(isDirect ? "Campaign trigger" : "When someone comments on")}</dt><dd>{t(trigger)}</dd>
+      <dt>{t("Keywords")}</dt><dd>{campaign.matchAnyWord ? t(isDirect ? "any word" : "Any comment") : campaign.keywords.join(", ") || t("No keywords")}</dd>
     </dl>{campaign.postUrl && <a className={styles.link} href={campaign.postUrl} target="_blank" rel="noreferrer">{t("Open on Instagram")}</a>}</Card>
     <Card><h2>{t("Messages")}</h2><div className={styles.stack}>{messages.map(([name, message, button], index) =>
       <div key={index}><h3>{name}</h3><p className={styles.message}>{message || t("No text configured")}</p>{button && <p className={styles.wrap}>{button}</p>}</div>)}
