@@ -46,9 +46,20 @@ describe("webhook workspace isolation", () => {
     mocks.dmLogFindMany.mockResolvedValue([]);
   });
 
-  it("stores one filtered event per workspace", async () => {
-    const entryA = { id: "ig-a", time: 1, messaging: [] };
-    const entryB = { id: "ig-b", time: 2, messaging: [] };
+  it("stores only the metadata needed by each workspace", async () => {
+    const entryA = {
+      id: "ig-a", time: 1, messaging: [{
+        sender: { id: "contact-a" },
+        message: { text: "private DM", attachments: [{ payload: { url: "https://example.test/private" } }] },
+      }],
+    };
+    const media = { id: "ad-copy", original_media_id: "organic-post" };
+    const entryB = {
+      id: "ig-b", time: 2, changes: [{
+        field: "comments",
+        value: { text: "private comment", from: { id: "contact-b", username: "private-handle" }, media },
+      }],
+    };
 
     await processInstagramWebhook({
       payload: { object: "instagram", entry: [entryA, entryB] },
@@ -61,7 +72,7 @@ describe("webhook workspace isolation", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           workspaceId: "workspace-a",
-          payload: { object: "instagram", entry: [entryA] },
+          payload: { object: "instagram", entry: [{ id: "ig-a", messaging: [{ sender: { id: "contact-a" } }] }] },
         }),
       })
     );
@@ -70,7 +81,10 @@ describe("webhook workspace isolation", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           workspaceId: "workspace-b",
-          payload: { object: "instagram", entry: [entryB] },
+          payload: { object: "instagram", entry: [{
+            id: "ig-b",
+            changes: [{ field: "comments", value: { from: { id: "contact-b" }, media } }],
+          }] },
         }),
       })
     );

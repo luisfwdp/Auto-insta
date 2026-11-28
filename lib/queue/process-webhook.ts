@@ -2,11 +2,37 @@ import { prisma } from '@/lib/db/client';
 import { getDMQueue, MESSAGE_JOB_NAME, POSTBACK_JOB_NAME } from '@/lib/queue/client';
 import { messageJobId } from '@/lib/queue/message-job-id';
 import { parseCommentEvents, parseMessageEvents, parsePostbackEvents, parseReadEvents } from '@/lib/meta/webhook';
-import { Prisma, type InstagramProvider } from '@/app/generated/prisma/client';
+import type { Prisma, InstagramProvider } from '@/app/generated/prisma/client';
 import { recordUnmatchedWebhook, recordUnsupportedWebhookObject } from './webhook-diagnostics';
 
 const OPENING_DM_READ_FALLBACK_DELAY_MS = 5 * 60 * 1000;
 type InstagramPayload = Parameters<typeof parseCommentEvents>[0];
+
+// Keep the fields needed by contact erasure, delivery counts and ad reconciliation.
+// Message text and attachment URLs are only needed while processing the event.
+function webhookMetadata(entries: InstagramPayload['entry']): Prisma.InputJsonObject {
+  return {
+    object: 'instagram',
+    entry: entries.map((entry) => ({
+      id: entry.id,
+      ...(Array.isArray(entry.changes) && { changes: entry.changes.map((change) => {
+        const isComment = change?.field === 'comments';
+        const value: Prisma.InputJsonObject = {
+          ...(typeof change?.value?.from?.id === 'string' && { from: { id: change.value.from.id } }),
+          ...(isComment &&
+            typeof change.value?.media?.id === 'string' &&
+            typeof change.value.media.original_media_id === 'string' && {
+              media: { id: change.value.media.id, original_media_id: change.value.media.original_media_id },
+            }),
+        };
+        return { ...(isComment && { field: 'comments' }), value };
+      }) }),
+      ...(Array.isArray(entry.messaging) && { messaging: entry.messaging.map((event) => (
+        typeof event?.sender?.id === 'string' ? { sender: { id: event.sender.id } } : {}
+      )) }),
+    })),
+  };
+}
 
 export async function processInstagramWebhook({ payload: incoming, provider, workspaceId }: {
   payload: InstagramPayload; provider: InstagramProvider; workspaceId?: string;
@@ -43,14 +69,8 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
     [...entriesByWorkspace.entries()].map(([eventWorkspaceId, entries]) =>
       prisma.webhookEvent.create({
         data: {
-          object:
-            typeof payload === "object" && payload && "object" in payload
-              ? String(payload.object)
-              : null,
-          payload: {
-            ...payload,
-            entry: entries,
-          } as unknown as Prisma.InputJsonValue,
+          object: 'instagram',
+          payload: webhookMetadata(entries),
           workspaceId: eventWorkspaceId,
           status: "PENDING",
         },
@@ -206,12 +226,11 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
     await recordUnmatchedWebhook(diagnostic);
     return;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
     await prisma.webhookEvent.updateMany({
       where: { id: { in: webhookEventIds } },
       data: {
         status: "FAILED",
-        errorMessage: message,
+        errorMessage: "WEBHOOK_PROCESSING_FAILED",
         processedAt: new Date(),
       },
     });

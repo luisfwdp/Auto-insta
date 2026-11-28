@@ -10,12 +10,6 @@ interface DiagnosticsData {
   workerHealth: {
     healthy: boolean;
     ageMs: number | null;
-    heartbeat: {
-      checkedAt: string;
-      hostname?: string;
-      pid: number;
-      startedAt?: string;
-    } | null;
   };
   workerAlerts: Array<{
     level: string;
@@ -27,7 +21,6 @@ interface DiagnosticsData {
   webhookFailures: Array<{
     id: string;
     object: string | null;
-    errorMessage: string | null;
     createdAt: string;
   }>;
   dmFailures: Array<{
@@ -256,9 +249,6 @@ export default function DiagnosticsPage() {
                 <div key={event.id} className="border-b border-border pb-3 last:border-0">
                   <p className="text-sm font-semibold text-foreground">
                     {event.object ?? t("Instagram webhook")}
-                  </p>
-                  <p className="mt-1 text-xs text-error">
-                    {event.errorMessage ?? t("Unknown error")}
                   </p>
                   <p className="mt-1 text-xs text-muted">
                     {formatDate(event.createdAt, locale)}

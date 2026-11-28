@@ -22,7 +22,7 @@ const envelopeSchema = z.object({
 });
 
 export function verifyZernioSignature({ rawBody, signature, secret }: {
-  rawBody: string; signature: string | null; secret: string;
+  rawBody: string | Uint8Array; signature: string | null; secret: string;
 }): boolean {
   if (!signature || !secret || !/^[a-f0-9]{64}$/i.test(signature)) return false;
   const expected = createHmac('sha256', secret).update(rawBody).digest();

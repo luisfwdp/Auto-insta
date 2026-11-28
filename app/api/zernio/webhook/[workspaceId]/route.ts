@@ -4,19 +4,26 @@ import { prisma } from '@/lib/db/client';
 import { decryptToken } from '@/lib/meta/oauth';
 import { normalizeZernioEvent, verifyZernioSignature } from '@/lib/zernio/normalize-event';
 import { processInstagramWebhook } from '@/lib/queue/process-webhook';
+import { readSignedWebhookBody } from '@/lib/http/signed-webhook-body';
 
 const eventEnvelopeSchema = z.object({ account: z.object({ id: z.string().min(1), platform: z.literal('instagram') }) });
 
 export async function POST(request: Request, segmentData: { params: Promise<{ workspaceId: string }> }) {
+  const body = await readSignedWebhookBody(request);
+  if (body.status) return NextResponse.json({ error: 'Webhook body rejected' }, { status: body.status });
   const { workspaceId } = await segmentData.params;
-  const connection = await prisma.zernioConnection.findUnique({ where: { workspaceId } });
+  const connection = await prisma.zernioConnection.findUnique({
+    where: { workspaceId }, select: { webhookId: true, webhookSecret: true },
+  });
   if (!connection?.webhookId) return NextResponse.json({ error: 'Unknown subscription' }, { status: 404 });
-  const rawBody = await request.text();
+  const rawBody = body.bytes;
   if (!verifyZernioSignature({ rawBody, signature: request.headers.get('x-zernio-signature'), secret: decryptToken(connection.webhookSecret) })) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
   let payload: unknown;
-  try { payload = JSON.parse(rawBody); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  try { payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(rawBody)); } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
   const parsed = eventEnvelopeSchema.safeParse(payload);
   if (!parsed.success) return NextResponse.json({ success: true, ignored: true });
   // Zernio subscriptions are account-wide. Drop other profiles before persisting any payload.

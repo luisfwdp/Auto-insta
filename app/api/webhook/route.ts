@@ -7,6 +7,7 @@ import {
 } from "@/lib/meta/webhook";
 import { processInstagramWebhook } from "@/lib/queue/process-webhook";
 import { createRepeatedErrorThrottle } from "@/lib/ops/repeated-error-throttle";
+import { readSignedWebhookBody } from "@/lib/http/signed-webhook-body";
 
 // Reject every invalid signature, but persist at most one rejection per minute
 // per warm instance. Use a fixed key so changing the attacker-controlled body
@@ -30,7 +31,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const rawBody = await request.text();
+  const body = await readSignedWebhookBody(request);
+  if (body.status) {
+    return NextResponse.json({ success: false, error: "Webhook body rejected" }, { status: body.status });
+  }
+  const rawBody = body.bytes;
   const signature = request.headers.get("x-hub-signature-256");
 
   if (!verifyWebhookSignature(rawBody, signature)) {
@@ -46,7 +51,7 @@ export async function POST(request: NextRequest) {
             message: "Webhook signature verification failed",
             payload: {
               hadSignatureHeader: Boolean(signature),
-              bodyLength: rawBody.length,
+              bodyLength: rawBody.byteLength,
               bodySha256: createHash("sha256").update(rawBody).digest("hex"),
             },
           },
@@ -61,7 +66,10 @@ export async function POST(request: NextRequest) {
 
   let payload: unknown;
   try {
-    payload = JSON.parse(rawBody);
+    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return NextResponse.json({ success: false, error: "Invalid webhook envelope" }, { status: 400 });
+    }
   } catch {
     return NextResponse.json(
       { success: false, error: "Invalid JSON" },
