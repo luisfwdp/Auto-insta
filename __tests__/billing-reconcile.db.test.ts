@@ -1,7 +1,7 @@
 /** Canonical financial reconciliation on PostgreSQL; gateway calls are mocked.
  * No checkout, charge, cancellation or HTTP request leaves this process.
  */
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
@@ -18,6 +18,7 @@ import { claimBillingSync } from "../lib/billing/sync-lease";
 import { billingStatusDTO } from "../lib/billing/trial";
 import { saoPauloDate } from "../lib/billing/config";
 import { monthlyInvoicePeriod } from "../lib/billing/financial-policy";
+import { parsePulsoNotification } from "../lib/billing/pulso-webhook";
 import { requestCheckout } from "../lib/billing/checkout";
 import { AsaasError, type AsaasPaymentDTO, type AsaasPaymentPageDTO, type AsaasSubscriptionDTO, type createAsaasClient } from "../lib/billing/asaas-client";
 
@@ -117,6 +118,56 @@ describe.skipIf(!url)("canonical billing reconciliation", () => {
     expect(await state.db.billingPayment.count()).toBe(1);
     expect((await paidState()).paidThrough).toEqual(first.paidThrough);
     expect(first.paidThrough).toEqual(monthlyInvoicePeriod(today, anchor).endsAt);
+  });
+
+  it("rebuilds the paid interval from canonical records after signed chargebacks and reversals", async () => {
+    const link = await checkout({ firstChargeDate: invoiceDate(-1) });
+    const oldPayment = payment(link, { id: "pay_previous", dueDate: invoiceDate(-1), status: "RECEIVED" });
+    const currentPayment = payment(link, { status: "RECEIVED" });
+    const fake = gateway(link, [oldPayment, currentPayment]);
+    const secret = "synthetic-pulso-card-dispute-secret";
+    const occurredAt = new Date().toISOString();
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const notify = async (eventType: string, status: string, paymentId: string, id: string, disputeId?: string) => {
+      const body = JSON.stringify({ app: "ping-chat", orderId: link.id, id, paymentId, event: eventType,
+        status, billingType: "CREDIT_CARD", occurredAt, disputeId });
+      const signed = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
+      const parsed = parsePulsoNotification(new Headers({ "idempotency-key": id, "x-pulso-timestamp": timestamp,
+        "x-pulso-signature": `sha256=${signed}` }), body, secret);
+      return ingestBillingEvent({ id: parsed.id, event: parsed.event,
+        payment: { id: parsed.paymentId, checkoutSession: link.providerCheckoutId } });
+    };
+
+    await event("PAYMENT_RECEIVED", { paymentId: currentPayment.id });
+    await processBillingInbox(5, fake.provider);
+    const original = await paidState();
+    expect(billingStatusDTO(original).hasAccess).toBe(true);
+    const oldDispute = randomUUID();
+    fake.ledger.set(oldPayment.id, { ...oldPayment, status: "CHARGEBACK_REQUESTED" });
+    await notify("payment.chargeback_requested", "CHARGEBACK_REQUESTED", oldPayment.id, oldDispute);
+    await processBillingInbox(5, fake.provider);
+    expect((await paidState()).paidThrough).toEqual(original.paidThrough);
+
+    const currentDispute = randomUUID();
+    fake.ledger.set(currentPayment.id, { ...currentPayment, status: "CHARGEBACK_REQUESTED" });
+    await notify("payment.chargeback_requested", "CHARGEBACK_REQUESTED", currentPayment.id, currentDispute);
+    await processBillingInbox(5, fake.provider);
+    expect(billingStatusDTO(await paidState()).hasAccess).toBe(false);
+
+    fake.ledger.set(currentPayment.id, currentPayment);
+    const reversal = randomUUID();
+    await notify("payment.chargeback_reversed", "RECEIVED", currentPayment.id, reversal, currentDispute);
+    expect((await notify("payment.chargeback_reversed", "RECEIVED", currentPayment.id, reversal, currentDispute)).duplicate).toBe(true);
+    await processBillingInbox(5, fake.provider);
+    expect((await paidState()).paidThrough).toEqual(original.paidThrough);
+    expect(await state.db.billingPayment.count()).toBe(2);
+
+    fake.ledger.set(currentPayment.id, { ...currentPayment, status: "REFUNDED" });
+    await notify("payment.chargeback_reversed", "RECEIVED", currentPayment.id, randomUUID(), currentDispute);
+    await processBillingInbox(5, fake.provider);
+    expect(billingStatusDTO(await paidState()).hasAccess).toBe(false);
+    expect(fake.provider.createHostedCheckout).not.toHaveBeenCalled();
+    expect(fake.provider.cancelSubscription).not.toHaveBeenCalled();
   });
   it("uses all canonical pages without adding periods for distinct IDs in the same paid interval", async () => {
     const link = await checkout(), records = Array.from({ length: 21 }, (_, i) => payment(link, { id: `pay_page_${i}` })), fake = gateway(link, [records[0]]);
