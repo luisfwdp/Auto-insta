@@ -15,6 +15,9 @@ e a chave de assinatura do Pulso, a credencial de proteção da Vercel e o segre
 checkout da Batida. Uma variável privada com prefixo `NEXT_PUBLIC_` também
 bloqueia o build. A mensagem de erro identifica apenas a variável. Dados
 produzidos em tempo de resposta seguem os controles de acesso de cada rota.
+O verificador procura valores configurados com pelo menos 16 caracteres nas
+formas original, serializada em JSON e codificada para URL. Ele não inspeciona
+transformações arbitrárias nem respostas geradas em tempo de execução.
 
 ## Orçamentos independentes
 

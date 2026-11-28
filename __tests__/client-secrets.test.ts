@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
 const checker = fileURLToPath(new URL("../scripts/check-client-secrets.mjs", import.meta.url));
-const value = "synthetic-ping-backend-only-token!";
+const value = "synthetic/ping+backend-only=token";
 
 function fixture(run: (write: (relative: string, contents: string) => void, check: () => SpawnSyncReturns<string>) => void) {
   const cwd = mkdtempSync(path.join(tmpdir(), "ping-client-output-"));
@@ -33,6 +33,7 @@ it.each([
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("public output: " + key);
     expect(result.stderr + result.stdout).not.toContain(value);
+    expect(result.stderr + result.stdout).not.toContain(encodeURIComponent(value));
   });
 });
 
