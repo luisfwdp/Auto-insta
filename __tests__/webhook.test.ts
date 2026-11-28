@@ -397,6 +397,13 @@ describe("parseMessageEvents", () => {
     ]);
   });
 
+  it.each([1_795_831_862, 1_795_831_862_000])("keeps the verified DM timestamp in milliseconds (%i)", (timestamp) => {
+    expect(parseMessageEvents(messagingPayload([{
+      sender: { id: "user_999" }, recipient: { id: "ig_456" }, timestamp,
+      message: { mid: "mid_abc", text: "Mercado" },
+    }]))[0]?.messageSentAt).toBe(1_795_831_862_000);
+  });
+
   it("captures the originating Story ID from an inbound Story reply", () => {
     const payload = messagingPayload([
       {

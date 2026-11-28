@@ -2215,6 +2215,26 @@ describe("stable commercial message purposes in worker flows", () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); delete process.env.FOLLOW_RECHECK_ACK_MESSAGE; });
 
+  it("starts a DM-only campaign with the opening button and deduplicates webhook and recovery", async () => {
+    const updatedAt = new Date("2026-11-25T02:55:00Z");
+    mockPrisma.automation.findMany.mockResolvedValue([{
+      ...mockAutomation, dmTriggerEnabled: true, postId: null, matchAnyPost: false, pendingNextReel: false,
+      requireFollow: true, openingDmEnabled: true, openingDmMessage: "Want the links?",
+      openingDmButtonLabel: "Send me the link", trackedLinks: links, updatedAt,
+    }]);
+    const processor = getProcessor();
+    const job = messageJob();
+    await processor({ ...job, data: { ...job.data, messageSentAt: updatedAt.getTime() - 1000 } });
+    expect(mockSendDirectMessageWithButton).not.toHaveBeenCalled();
+    await processor({ ...job, data: { ...job.data, messageSentAt: updatedAt.getTime() + 1000 } });
+    await processor({ ...job, data: { ...job.data, messageSentAt: updatedAt.getTime() + 1000, recoveredFromConversation: true } });
+    expect(mockSendDirectMessageWithButton).toHaveBeenCalledExactlyOnceWith(
+      "decrypted_token", "ig_456", "commenter_999", "Want the links?", "Send me the link", "followcheck:auto_789:open",
+    );
+    expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
+    expect(mockGetUserFollowStatus).not.toHaveBeenCalled();
+  });
+
   it("uses a stable reveal stage for both plain and link-template variants", async () => {
     const seen = new Map<string, string>();
     gateway().mockImplementation(async (input, send) => {

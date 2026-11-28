@@ -1,7 +1,7 @@
 import type { StaticMessageKey } from "@/lib/i18n";
 import { storyIdFromPermalink } from "@/lib/automation/story-reply-scoping";
 
-export type TriggerScope = "specific" | "any" | "next" | "story";
+export type TriggerScope = "specific" | "any" | "next" | "story" | "dm";
 
 export type CampaignDraft = {
   selectedAccountId: string; triggerScope: TriggerScope; postId: string | null; postUrl?: string | null;
@@ -13,7 +13,7 @@ export type CampaignDraft = {
   followUpEnabled: boolean; followUpMessage: string; followUpDelayMinutes: number;
 };
 
-/** Uses the existing Story-reply API contract; no new server trigger enum. */
+/** Uses the existing post, Story and DM fields without a new server enum. */
 export function campaignTriggerFields({ triggerScope, postId, postUrl, dmTriggerEnabled }: {
   triggerScope: TriggerScope; postId: string | null; postUrl: string | null; dmTriggerEnabled: boolean;
 }) {
@@ -23,7 +23,7 @@ export function campaignTriggerFields({ triggerScope, postId, postUrl, dmTrigger
     postUrl: specific ? postUrl?.trim() || null : null,
     matchAnyPost: triggerScope === "any",
     pendingNextReel: triggerScope === "next",
-    dmTriggerEnabled: triggerScope === "story" || dmTriggerEnabled,
+    dmTriggerEnabled: triggerScope === "story" || triggerScope === "dm" || dmTriggerEnabled,
   };
 }
 
@@ -32,6 +32,7 @@ export function validateCampaignDraft(draft: CampaignDraft, step = 2): StaticMes
   if (!draft.selectedAccountId) return "Connect an Instagram account first.";
   if (draft.triggerScope === "specific" && !draft.postId) return "Pick a post or reel to trigger the campaign.";
   if (draft.triggerScope === "story" && (!storyIdFromPermalink(draft.postUrl?.trim()) || storyIdFromPermalink(draft.postUrl?.trim()) !== draft.postId)) return "Enter the original HTTPS Instagram Story link with its numeric Story ID.";
+  if (draft.triggerScope === "dm" && (draft.matchMode === "any" || !draft.keywords.some((word) => word.trim()))) return "Add at least one keyword for a DM-only campaign.";
   if (draft.matchMode === "specific" && !draft.keywords.length) return "Add at least one keyword, or switch to any word.";
   if (draft.name.trim().length > 100 || (draft.matchMode === "specific" && (draft.keywords.length > 10 || draft.keywords.some((k) => k.length > 50)))) return "Use up to 10 keywords of 50 characters and a name of up to 100 characters.";
   if (step === 0) return null;

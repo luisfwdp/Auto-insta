@@ -148,4 +148,25 @@ tempo no orçamento de 35 segundos por conta. O ciclo recente usa até 18
 segundos por conta. Se outra página falhar, os jobs já gravados continuam na
 fila. A Caixa de entrada mantém sua consulta usual.
 
+## Campanhas que começam por DM
+
+O gatilho **Só por DM** exige pelo menos uma palavra-chave e dispensa
+publicação ou Reel. Pode começar com um botão de abertura. Se o seguidor já
+for confirmado no clique, os links são liberados. Para quem ainda não segue,
+o botão de confirmação faz a consulta antes de liberar os links.
+
+Em contas Meta com esse gatilho ativo, o worker também verifica a mensagem
+mais recente das conversas. Recupera mensagens de texto recebidas nos últimos
+dez minutos e posteriores à última gravação da campanha. Ignora mensagens da
+própria conta, respostas a Stories, conteúdo não suportado e os rótulos dos
+botões usados pela recuperação de cliques. A fila usa a mesma identidade de
+mensagem do webhook e mantém as verificações de envio.
+
+A primeira página é consultada no ciclo de 30 segundos, dentro da mesma
+varredura e do mesmo cooldown de cliques por conta. O ciclo amplo dá cobertura
+às páginas seguintes. Uma mensagem pode ficar fora da recuperação se deixar
+de ser a mais recente da conversa ou se a Meta não a retornar a tempo.
+O webhook continua sendo a entrada principal. O gatilho exclusivo exige um
+horário de origem válido no evento para evitar responder a mensagens antigas.
+
 Limites de taxa: https://developers.facebook.com/docs/graph-api/overview/rate-limiting/

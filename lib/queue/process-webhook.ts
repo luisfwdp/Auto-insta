@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db/client';
 import { getDMQueue, MESSAGE_JOB_NAME, POSTBACK_JOB_NAME } from '@/lib/queue/client';
+import { messageJobId } from '@/lib/queue/message-job-id';
 import { parseCommentEvents, parseMessageEvents, parsePostbackEvents, parseReadEvents } from '@/lib/meta/webhook';
 import { Prisma, type InstagramProvider } from '@/app/generated/prisma/client';
 import { recordUnmatchedWebhook, recordUnsupportedWebhookObject } from './webhook-diagnostics';
@@ -132,15 +133,10 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
           messageText: event.messageText,
           senderId: event.senderId,
           storyId: event.storyId,
+          ...(event.messageSentAt === undefined ? {} : { messageSentAt: event.messageSentAt }),
         },
         {
-          // Message ids can contain characters BullMQ rejects in a job id (":"
-          // in particular). base64url encodes into exactly the allowed alphabet
-          // and stays injective — substituting invalid characters would let two
-          // distinct mids collapse onto one job id, silently dropping a reply.
-          jobId: `message_${event.instagramAccountId}_${Buffer.from(
-            event.messageId
-          ).toString("base64url")}`,
+          jobId: messageJobId(event.instagramAccountId, event.messageId),
         }
       );
     }

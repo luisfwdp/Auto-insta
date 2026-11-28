@@ -161,6 +161,24 @@ async function moveOlderLinksOnDisk(automationId: string) {
 let accountId = "";
 
 describe.skipIf(!DATABASE_URL)("tracked link order on a real Postgres", () => {
+  it("creates a DM-only draft with two links and rejects a catch-all edit", async () => {
+    const response = await POST(jsonRequest("POST", "http://localhost/api/automations", {
+      name: "Quinteto keyword draft", instagramAccountId: accountId, dmTriggerEnabled: true,
+      keywords: ["Mercado"], dmMessage: "Aqui estão os links", requireFollow: true,
+      openingDmEnabled: true, openingDmMessage: "Quer receber os links?", openingDmButtonLabel: "Me envie o link",
+      trackedDestinationUrl: PRIMARY, secondaryDestinationUrl: SECOND,
+      publicReplyEnabled: true, publicReplyMessage: "Confere a DM", isActive: false,
+    }));
+    expect(response.status).toBe(201);
+    const saved = (await response.json()).data;
+    expect(saved).toMatchObject({
+      isActive: false, dmTriggerEnabled: true, postId: null, postUrl: null,
+      publicReplyEnabled: false, publicReplyMessages: [], publicReplyMessage: null,
+    });
+    expect(saved.trackedLinks).toHaveLength(2);
+    const edit = await PATCH(jsonRequest("PATCH", `http://localhost/api/automations?id=${saved.id}`, { matchAnyWord: true }));
+    expect(edit.status).toBe(400);
+  });
   beforeAll(async () => {
     sql = new Client({ connectionString: DATABASE_URL });
     await sql.connect();

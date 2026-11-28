@@ -58,6 +58,36 @@ beforeEach(() => {
 });
 
 describe("button tap recovery from conversations", () => {
+  const direct = automation({
+    dmTriggerEnabled: true, postId: null, matchAnyPost: false, pendingNextReel: false,
+    matchAnyWord: false, wholeWordMatch: true, keywords: ["mercado"],
+    updatedAt: new Date("2026-11-25T02:55:00Z"),
+  });
+
+  it("recovers an incoming keyword DM before any campaign prompt and uses the webhook job ID", async () => {
+    mocks.automationFindMany.mockResolvedValue([direct]);
+    mocks.dmLogFindFirst.mockResolvedValue(null);
+    mocks.getConversations.mockResolvedValue([conversation({ id: "mid:1", message: "Mercado" })]);
+    expect(await reconcileButtonTaps(now, "recent")).toEqual({ accounts: 1, recovered: 1, errors: 0 });
+    expect(mocks.queueAdd).toHaveBeenCalledWith("process-message", expect.objectContaining({
+      accountConnectionId: "acct_1", messageId: "mid:1", messageText: "Mercado",
+      messageSentAt: Date.parse("2026-11-25T02:58:00Z"), recoveredFromConversation: true,
+    }), { jobId: "message_ig_account_bWlkOjE" });
+  });
+
+  it.each([
+    { message: "mercado", story: { id: "story-1" } },
+    { message: "mercado", is_unsupported: true },
+    { message: "mercado", created_time: "2026-11-25T02:54:00Z" },
+    { message: "obrigado" },
+  ])("does not recover an out-of-scope or pre-activation message (%j)", async (message) => {
+    mocks.automationFindMany.mockResolvedValue([direct]);
+    mocks.dmLogFindFirst.mockResolvedValue(null);
+    mocks.getConversations.mockResolvedValue([conversation(message)]);
+    expect(await reconcileButtonTaps(now, "recent")).toEqual({ accounts: 1, recovered: 0, errors: 0 });
+    expect(mocks.queueAdd).not.toHaveBeenCalled();
+  });
+
   it("enqueues the follow check the missing postback webhook would have enqueued", async () => {
     expect(await reconcileButtonTaps(now)).toEqual({ accounts: 1, recovered: 1, errors: 0 });
     expect(mocks.queueAdd).toHaveBeenCalledWith("process-postback",
@@ -69,10 +99,13 @@ describe("button tap recovery from conversations", () => {
     expect(mocks.redisEval).toHaveBeenCalledWith(expect.any(String), 1, "button_tap_seen:ig_account:mid_1", claim, 172800);
   });
 
-  it("only looks at active META campaigns that send a button", async () => {
+  it("only looks at active META campaigns with buttons or a DM-only trigger", async () => {
     await reconcileButtonTaps(now);
     expect(mocks.automationFindMany.mock.calls[0][0].where).toEqual({
-      isActive: true, OR: [{ requireFollow: true }, { openingDmEnabled: true }], instagramAccount: { provider: "META" },
+      isActive: true, OR: [
+        { requireFollow: true }, { openingDmEnabled: true },
+        { dmTriggerEnabled: true, postId: null, matchAnyPost: false, pendingNextReel: false },
+      ], instagramAccount: { provider: "META" },
     });
   });
 

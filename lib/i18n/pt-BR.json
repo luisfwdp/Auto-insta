@@ -683,6 +683,8 @@
   "Only matching text replies to this Story can receive the DM. Mentions and reactions are not supported here.": "Somente respostas de texto a este Story que correspondam ao gatilho podem receber a DM. Menções e reações não são compatíveis aqui.",
   "Story campaigns start paused by default. You can explicitly activate them after confirming the original Story link and received Story ID in a real test.": "Campanhas de Story começam pausadas por padrão. Você pode ativá-las explicitamente após confirmar o link original e o ID do Story recebido em um teste real.",
   "And this reply has": "E esta resposta contém",
+  "Only incoming DMs": "Só por DM",
+  "Add at least one keyword for a DM-only campaign.": "Informe pelo menos uma palavra-chave para uma campanha só por DM.",
   "Enter the original HTTPS Instagram Story link with its numeric Story ID.": "Informe o link HTTPS original do Story do Instagram com o ID numérico do Story.",
   "Billing and subscription": "Cobrança e assinatura",
   "Manage your trial, subscription and renewal.": "Gerencie seu teste gratuito, assinatura e renovação.",

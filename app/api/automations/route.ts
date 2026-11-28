@@ -20,6 +20,7 @@ import {
   getCurrentWorkspaceContext,
 } from "@/lib/workspace-access";
 import { httpUrl } from "@/lib/api/http-url";
+import { isDirectMessageOnly } from "@/lib/automation/direct-message-scope";
 
 // This list is read-your-writes (created/imported campaigns must show up
 // immediately), so never cache it at the route or CDN layer.
@@ -71,9 +72,8 @@ const createAutomationSchema = z
     isActive: z.boolean().optional().default(true),
     wholeWordMatch: z.boolean().optional().default(true),
   })
-  // A campaign must target a specific post, any post, or the next reel.
   .refine(
-    (d) => d.matchAnyPost || d.pendingNextReel || Boolean(d.postId),
+    (d) => d.dmTriggerEnabled || d.matchAnyPost || d.pendingNextReel || Boolean(d.postId),
     { message: "Choose which post(s) trigger the campaign", path: ["postId"] }
   )
   // And it must match either specific words or any word.
@@ -81,6 +81,9 @@ const createAutomationSchema = z
     message: "Add at least one keyword, or match any word",
     path: ["keywords"],
   })
+  .refine((d) => !isDirectMessageOnly({ ...d, postId: d.postId ?? null }) || (
+    !d.matchAnyWord && d.keywords.some((word) => word.trim())
+  ), { message: "Add at least one keyword for a DM-only campaign", path: ["keywords"] })
   // An opening DM needs both a message and a button label.
   .refine(
     (d) =>
@@ -361,7 +364,8 @@ export async function POST(request: NextRequest) {
   const { pendingNextReel, matchAnyPost, matchAnyWord, openingDmEnabled } =
     parsed.data;
   // A post is only stored for the "specific post" trigger.
-  const isSpecificPost = !pendingNextReel && !matchAnyPost;
+  const isSpecificPost = !pendingNextReel && !matchAnyPost && Boolean(parsed.data.postId);
+  const publicReplyEnabled = (isSpecificPost || pendingNextReel || matchAnyPost) && parsed.data.publicReplyEnabled;
   const publicReplyList = (
     parsed.data.publicReplyMessages.length > 0
       ? parsed.data.publicReplyMessages
@@ -407,11 +411,11 @@ export async function POST(request: NextRequest) {
       followUpDelayMinutes: parsed.data.followUpEnabled
         ? parsed.data.followUpDelayMinutes
         : 0,
-      publicReplyEnabled: parsed.data.publicReplyEnabled,
-      publicReplyMessages: parsed.data.publicReplyEnabled
+      publicReplyEnabled,
+      publicReplyMessages: publicReplyEnabled
         ? publicReplyList
         : [],
-      publicReplyMessage: parsed.data.publicReplyEnabled
+      publicReplyMessage: publicReplyEnabled
         ? publicReplyList[0] ?? parsed.data.publicReplyMessage ?? null
         : null,
       isActive: parsed.data.isActive,
@@ -511,6 +515,14 @@ export async function PATCH(request: NextRequest) {
   if (automationData.matchAnyPost === true || automationData.pendingNextReel === true) {
     automationData.postId = null;
     automationData.postUrl = null;
+  }
+  const trigger = { ...existing, ...automationData };
+  if (isDirectMessageOnly(trigger)) {
+    if (trigger.matchAnyWord || !trigger.keywords.some((word) => word.trim())) {
+      return NextResponse.json({ success: false, error: "Add at least one keyword for a DM-only campaign" }, { status: 400 });
+    }
+    automationData.postUrl = null;
+    automationData.publicReplyEnabled = false;
   }
   // Keep the public-reply variations list and the legacy single field in sync.
   if (automationData.publicReplyMessages !== undefined) {
