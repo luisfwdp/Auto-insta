@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ enabled: true, newDesign: true }));
 const mocks = vi.hoisted(() => ({ signIn: vi.fn(), context: vi.fn(), access: vi.fn(), transaction: vi.fn(), redirect: vi.fn(), limit: vi.fn() }));
-vi.mock("@/lib/auth", () => ({ EMAIL_PROVIDER_ID: "resend", signIn: mocks.signIn }));
+vi.mock("@/lib/auth", () => ({ auth: async () => null, EMAIL_PROVIDER_ID: "resend", signIn: mocks.signIn }));
 vi.mock("next-auth", () => ({ AuthError: class AuthError extends Error {} }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers({ host: "app.example.test" }) }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));

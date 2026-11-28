@@ -59,6 +59,12 @@ em texto bruto ao navegador. OAuth persiste/loga códigos permitidos em vez do
 objeto de exceção; Zernio mantém orientação segura para erros conhecidos.
 `/api/health` mantém estado, fila e tempos para monitoramento, sem
 hostname/PID, stack, credenciais ou texto bruto de exceção.
+Respostas da caixa de entrada usam `Cache-Control: no-store`. Conversas e textos
+de DMs ficam na memória da página e não são gravados no armazenamento da aba.
+Falhas de Instagram e Resend usam códigos ou mensagens fixas nas rotas e nos logs
+de atendimento, sem copiar o conteúdo da resposta do provedor.
+Na tela de login, o redirecionamento para o painel exige uma sessão validada no
+banco. Um cookie vencido ou revogado permite abrir a tela e entrar novamente.
 
 ## Verificação e implantação
 

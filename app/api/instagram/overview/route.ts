@@ -9,6 +9,7 @@ import {
   type InstagramMedia,
 } from "@/lib/instagram/provider";
 import { createInstagramContext } from "@/lib/instagram/provider";
+import { instagramErrorCode } from "@/lib/instagram/provider-error-output";
 import {
   ensureFollowerHistory,
   getFollowerHistory,
@@ -262,7 +263,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data });
   } catch (err) {
-    console.error("[Instagram Overview] Error:", err);
+    console.error("[Instagram Overview] Error:", instagramErrorCode(err));
     return NextResponse.json(
       { success: false, error: "Failed to load Instagram overview" },
       { status: 500 }

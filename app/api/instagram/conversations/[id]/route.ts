@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { getWorkspaceInstagramAccount } from "@/lib/instagram-accounts";
-import {
-  getConversationMessages,
-  MetaApiError,
-} from "@/lib/instagram/provider";
-import { createInstagramContext } from "@/lib/instagram/provider";
+import { createInstagramContext, getConversationMessages } from "@/lib/instagram/provider";
+import { instagramErrorCode } from "@/lib/instagram/provider-error-output";
 
 export interface ThreadMessage {
   id: string;
@@ -63,13 +60,11 @@ export async function GET(request: NextRequest, { params }: RouteProps) {
       .reverse();
 
     const data: ThreadResponse = { messages };
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({ success: true, data }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
-    console.error("[Conversation Messages] Error:", err);
-    const message =
-      err instanceof MetaApiError ? err.message : "Failed to load messages";
+    console.error("[Conversation Messages] Error:", instagramErrorCode(err));
     return NextResponse.json(
-      { success: false, error: message },
+      { success: false, error: "Failed to load messages" },
       { status: 500 }
     );
   }

@@ -1,4 +1,4 @@
-import { EMAIL_PROVIDER_ID, signIn } from "@/lib/auth";
+import { auth, EMAIL_PROVIDER_ID, signIn } from "@/lib/auth";
 import { getI18n } from "@/lib/i18n/server";
 import { getCampaignTemplate } from "@/lib/templates/campaign-templates";
 import { DemoNotice } from "@/components/demo-notice";
@@ -62,6 +62,9 @@ export default async function LoginPage({
     );
   }
 
+  // Only redirect after validating the database session. An expired cookie can
+  // still be present when the dashboard sends someone back to sign in.
+  if ((await auth())?.user?.id) redirect("/dashboard");
   const params = await searchParams;
   const billingEnabled = isBillingEnabled();
   const signup = billingEnabled && params.mode === "signup";
