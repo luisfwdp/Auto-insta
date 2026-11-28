@@ -23,6 +23,7 @@
     "@auth/prisma-adapter": "^2.11.2",
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/server": "2.4.0",
+    "@next/env": "16.4.6",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "@vercel/analytics": "^2.0.1",
