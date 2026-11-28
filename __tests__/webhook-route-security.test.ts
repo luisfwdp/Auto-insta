@@ -99,4 +99,13 @@ describe("webhook rejection logging", () => {
     expect(processInstagramWebhook).toHaveBeenCalledWith({ payload, provider: "META" });
     expect(createOperationalEvent).toHaveBeenCalledOnce();
   });
+
+  it("authenticates the original UTF-8 bytes before decoding the payload", async () => {
+    verifyWebhookSignature.mockReturnValue(true);
+    const payload = { object: "instagram", entry: [], label: "Olá 🎵" };
+    const raw = "\ufeff" + JSON.stringify(payload) + "\n";
+    expect((await POST(request(raw, "sha256=valid"))).status).toBe(200);
+    expect(verifyWebhookSignature).toHaveBeenCalledWith(Buffer.from(raw), "sha256=valid");
+    expect(processInstagramWebhook).toHaveBeenCalledWith({ payload, provider: "META" });
+  });
 });

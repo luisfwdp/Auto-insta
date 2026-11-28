@@ -182,7 +182,7 @@ async function sweepCampaign({
   const mediaIds: string[] = [];
   if (automation.postId) {
     mediaIds.push(automation.postId);
-    mediaIds.push(...(await adMediaFor(automation.postId)));
+    mediaIds.push(...(await adMediaFor(automation.postId, account)));
   } else if (automation.matchAnyPost) {
     try {
       const media = await getUserMedia({
@@ -316,14 +316,19 @@ async function sweepCampaign({
  * a single comment on it has arrived. That is enough for the failure being
  * covered here, where some webhooks arrive and others do not.
  */
-export async function adMediaFor(postId: string): Promise<string[]> {
+export async function adMediaFor(
+  postId: string,
+  account: { workspaceId: string; instagramId: string }
+): Promise<string[]> {
   try {
     const rows = await prisma.$queryRaw<{ mediaId: string | null }[]>`
       SELECT DISTINCT change->'value'->'media'->>'id' AS "mediaId"
       FROM "WebhookEvent" w,
            jsonb_array_elements(w.payload::jsonb->'entry') entry,
            jsonb_array_elements(entry->'changes') change
-      WHERE change->>'field' = 'comments'
+      WHERE w."workspaceId" = ${account.workspaceId}
+        AND entry->>'id' = ${account.instagramId}
+        AND change->>'field' = 'comments'
         AND change->'value'->'media'->>'original_media_id' = ${postId}
         AND w."createdAt" > now() - interval '90 days'
     `;

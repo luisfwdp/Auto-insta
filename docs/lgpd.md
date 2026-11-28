@@ -17,10 +17,16 @@ clientes precisam de revisão de um profissional habilitado.
 | --- | --- | --- |
 | E-mail e nome do usuário | `User`, `Session`, `WorkspaceInvitation` | Autenticação e convites |
 | ID, nome de usuário e texto do comentário do contato | `DmLog` | Enviar a resposta e evitar envio duplicado |
-| Payload dos webhooks da Meta | `WebhookEvent` | Processar e diagnosticar entregas |
+| Identificadores da conta e do contato, tipo de comentário e vínculo entre anúncio e publicação | `WebhookEvent` | Diagnosticar entregas, reconciliar comentários em anúncios e localizar eventos para exclusão |
 | Hash de IP, hash do destinatário, user agent e referrer | `LinkClick` | Contar cliques sem expor a identidade |
 | Tokens da conta Instagram (cifrados) | `InstagramAccount` | Agir pela conta autorizada |
 | Dados de cobrança | tabelas `Billing*` | Assinatura e pagamentos |
+
+Novos registros de `WebhookEvent` da Meta e do Zernio guardam somente esses
+metadados. O texto necessário à automação é encaminhado para a fila do worker.
+O histórico anterior segue as regras de retenção e exclusão aplicáveis.
+O painel de diagnóstico mostra o estado e a idade do heartbeat. Erros brutos
+de webhook e payloads de falha na renovação de token ficam fora da resposta.
 
 ## Direitos do titular (art. 18)
 

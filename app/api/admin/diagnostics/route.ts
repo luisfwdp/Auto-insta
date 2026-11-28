@@ -54,7 +54,6 @@ export async function GET() {
       select: {
         id: true,
         object: true,
-        errorMessage: true,
         createdAt: true,
         processedAt: true,
       },
@@ -91,7 +90,6 @@ export async function GET() {
         id: true,
         message: true,
         createdAt: true,
-        payload: true,
       },
     }),
     prisma.operationalEvent.findMany({
@@ -117,12 +115,12 @@ export async function GET() {
     success: true,
     data: {
       queueCounts,
-      workerHealth,
+      workerHealth: { healthy: workerHealth.healthy, ageMs: workerHealth.ageMs },
       workerAlerts,
       webhookFailures,
       dmFailures,
       tokenRefreshFailures,
       operationalEvents,
     },
-  });
+  }, { headers: { "Cache-Control": "no-store" } });
 }

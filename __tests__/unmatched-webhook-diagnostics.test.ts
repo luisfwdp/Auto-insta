@@ -17,6 +17,9 @@ const unknown = {
   changes: [{ field: "private-field-name", value: { text: "private-comment" } }],
   messaging: [{ sender: { id: "private-sender" }, recipient: { id: "private-recipient" }, message: { mid: "private-mid", text: "private-message" } }],
 };
+const connectedMetadata = {
+  id: "connected", changes: [{ value: {} }], messaging: [{ sender: { id: "private-sender" } }],
+};
 let processWebhook: typeof import("@/lib/queue/process-webhook").processInstagramWebhook;
 beforeEach(async () => {
   vi.resetModules();
@@ -56,7 +59,7 @@ describe("signed unmatched Instagram webhook diagnostics", () => {
     const matched = { ...unknown, id: "connected" };
     await processWebhook({ provider: "META", payload: { object: "instagram", entry: [unknown, matched] } });
     expect(mocks.eventCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
-      workspaceId: "workspace", payload: { object: "instagram", entry: [matched] },
+      workspaceId: "workspace", payload: { object: "instagram", entry: [connectedMetadata] },
     }) }));
     expect(mocks.queueAdd).toHaveBeenCalledOnce();
     expect(mocks.queueAdd.mock.calls[0][1]).toEqual(expect.objectContaining({ instagramAccountId: "connected", accountConnectionId: "connection" }));
@@ -119,7 +122,7 @@ describe("signed unmatched Instagram webhook diagnostics", () => {
     await expect(processWebhook({ provider: "META", payload })).resolves.toBeUndefined();
     expect(mocks.operationalCreate).not.toHaveBeenCalled();
     expect(mocks.eventCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
-      workspaceId: "workspace", payload: { object: "instagram", entry: [matched] },
+      workspaceId: "workspace", payload: { object: "instagram", entry: [connectedMetadata] },
     }) }));
     expect(mocks.queueAdd).toHaveBeenCalledOnce();
     expect(mocks.queueAdd.mock.calls[0][1]).toEqual(expect.objectContaining({

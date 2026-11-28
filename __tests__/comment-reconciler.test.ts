@@ -38,6 +38,7 @@ import {
 
 const POST = "18023946917554990";
 const AD = "17899788633163100";
+const account = { workspaceId: "workspace", instagramId: "owner" };
 
 describe("adMediaFor", () => {
   beforeEach(() => {
@@ -46,7 +47,13 @@ describe("adMediaFor", () => {
 
   it("returns the ad media ids seen for the post", async () => {
     mockPrisma.$queryRaw.mockResolvedValue([{ mediaId: AD }]);
-    await expect(adMediaFor(POST)).resolves.toEqual([AD]);
+    await expect(adMediaFor(POST, account)).resolves.toEqual([AD]);
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.stringContaining('w."workspaceId" = '), expect.stringContaining("entry->>'id' = ")]),
+      account.workspaceId,
+      account.instagramId,
+      POST
+    );
   });
 
   it("never returns the post itself, so it is not swept twice", async () => {
@@ -54,7 +61,7 @@ describe("adMediaFor", () => {
       { mediaId: AD },
       { mediaId: POST },
     ]);
-    await expect(adMediaFor(POST)).resolves.toEqual([AD]);
+    await expect(adMediaFor(POST, account)).resolves.toEqual([AD]);
   });
 
   it("drops rows without a media id", async () => {
@@ -62,17 +69,17 @@ describe("adMediaFor", () => {
       { mediaId: null },
       { mediaId: AD },
     ]);
-    await expect(adMediaFor(POST)).resolves.toEqual([AD]);
+    await expect(adMediaFor(POST, account)).resolves.toEqual([AD]);
   });
 
   it("returns nothing when the post was never boosted", async () => {
     mockPrisma.$queryRaw.mockResolvedValue([]);
-    await expect(adMediaFor(POST)).resolves.toEqual([]);
+    await expect(adMediaFor(POST, account)).resolves.toEqual([]);
   });
 
   it("swallows a query failure, leaving the post itself still swept", async () => {
     mockPrisma.$queryRaw.mockRejectedValue(new Error("connection lost"));
-    await expect(adMediaFor(POST)).resolves.toEqual([]);
+    await expect(adMediaFor(POST, account)).resolves.toEqual([]);
   });
 });
 
