@@ -2,6 +2,7 @@ import { randomUUID, createHmac } from "node:crypto";
 import Redis from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { consumeRequestLimit, type RequestLimitPolicy } from "../lib/api/request-rate-limit";
+import { AUTH_RATE_LIMITS, checkMagicLinkRateLimit } from "../lib/api/auth-rate-limit";
 const url = process.env.TEST_REDIS_URL;
 const secret = `disposable-rate-test-${randomUUID()}`;
 let redis: Redis;
@@ -36,5 +37,29 @@ describe.skipIf(!url)("atomic budgets on disposable Redis", () => {
     keys.add(`security:v1:cancellation:${createHmac("sha256", secret).update(`${process.env.VERCEL_ENV ?? "self-hosted"}\0cancellation\0${id}`).digest("hex")}`);
     expect((await consumeRequestLimit("cancellation", id, redis)).allowed).toBe(true);
     expect((await consumeRequestLimit("checkout", id, redis)).allowed).toBe(false);
+  });
+  it("shares the auth origin quota across one IPv6 prefix and restores its expiry", async () => {
+    vi.stubEnv("VERCEL", "1");
+    const origin = "2001:db8:42:1";
+    const authKey = (type: "ip" | "account", value: string) => {
+      const key = `auth:magic-link:${type}:${createHmac("sha256", secret).update(value).digest("hex")}`;
+      keys.add(key);
+      return key;
+    };
+    const key = authKey("ip", `${origin}::/64`);
+    const otherOrigin = "2001:db8:42:2";
+    authKey("ip", `${otherOrigin}::/64`);
+    await redis.set(key, String(AUTH_RATE_LIMITS.ip - 1));
+    const signIn = (prefix: string, host: string, email: string) => {
+      authKey("account", email);
+      return checkMagicLinkRateLimit({ headers: new Headers({ "x-vercel-forwarded-for": `${prefix}::${host}` }), email, redis });
+    };
+
+    expect((await signIn(origin, "1", "one@example.test")).allowed).toBe(true);
+    const denied = await signIn(origin, "2", "two@example.test");
+    expect(denied).toMatchObject({ allowed: false, retryAfter: expect.any(Number) });
+    expect(await redis.ttl(key)).toBeGreaterThan(0);
+    expect(await redis.ttl(key)).toBeLessThanOrEqual(AUTH_RATE_LIMITS.windowSeconds);
+    expect((await signIn(otherOrigin, "2", "two@example.test")).allowed).toBe(true);
   });
 });

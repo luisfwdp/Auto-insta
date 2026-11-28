@@ -22,6 +22,8 @@ qualquer codificação/obfuscação deliberada ou segredo emitido apenas em runt
 | Solicitações de login, inclusive Server Action | 30/15 minutos | IP |
 | Verificações de magic link | 30/15 minutos | IP |
 | Envio efetivo de magic link (já existente) | 10/IP e 5/e-mail por 15 minutos | IP e e-mail normalizado |
+| Registro e troca de token MCP OAuth | 30/15 minutos | IP |
+| Formulário público de leads | 20/10 minutos | IP |
 | Novo checkout | 10/15 minutos | Workspace e usuário autenticado OWNER |
 | Cancelamento de renovação | 10/15 minutos | Workspace e usuário autenticado OWNER; separado do checkout |
 | Ativação de trial | 10/15 minutos | Workspace e usuário autenticado OWNER |
@@ -48,6 +50,10 @@ Na Vercel, usa-se preferencialmente `x-vercel-forwarded-for`. Fora dela,
 headers de IP só são aceitos com `TRUST_PROXY_HEADERS=true`, depois de configurar
 um proxy que os sobrescreva e impedir acesso direto à origem. Sem isso, usa-se
 um único bucket `unknown`, conservador. Não definir essa opção no frontend.
+As cotas por origem agrupam endereços IPv6 do mesmo prefixo `/64`. Um endereço
+IPv4 mapeado em IPv6 compartilha a cota do IPv4 correspondente. A cota por e-mail
+continua valendo independentemente da origem. O limitador de autenticação bloqueia
+a admissão quando a resposta do Redis é inválida e repõe o TTL de uma chave sem expiração.
 
 Webhooks Meta/Asaas/Zernio e cron não entram no bucket geral do navegador:
 mantêm suas assinaturas/tokens, limites de corpo, deduplicação e autorização.

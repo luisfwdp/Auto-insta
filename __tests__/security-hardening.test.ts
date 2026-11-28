@@ -69,6 +69,14 @@ describe("magic-link brute-force protection", () => {
       })
     ).resolves.toMatchObject({ allowed: false });
   });
+
+  it.each([null, ["not-an-integer", 900], [1, -1], [1, 901], [1, null]])(
+    "blocks magic-link admission after an invalid Redis answer: %j", async invalid => {
+      const redis = { eval: vi.fn().mockResolvedValueOnce([1, 900]).mockResolvedValueOnce(invalid) };
+      await expect(checkMagicLinkRateLimit({ headers: new Headers(), email: "person@example.test", redis: redis as never }))
+        .rejects.toThrow("Rate limit store unavailable");
+    }
+  );
 });
 
 describe("browser origin allowlist", () => {

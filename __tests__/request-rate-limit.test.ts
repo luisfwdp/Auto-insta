@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 const state = vi.hoisted(() => ({ eval: vi.fn(), get: vi.fn() }));
-vi.mock("@/lib/api/rate-limit-store", () => ({ getRateLimitRedis: () => state.get() }));
+vi.mock("@/lib/api/rate-limit-store", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/api/rate-limit-store")>(), getRateLimitRedis: () => state.get(),
+}));
 import { consumeRequestLimit, requestLimitResponse, REQUEST_LIMITS } from "../lib/api/request-rate-limit";
-import { requestIp } from "../lib/api/request-ip";
+import { requestIp, requestRateOrigin } from "../lib/api/request-ip";
 import { proxy } from "../proxy";
 import { createBrowserCheckout } from "../lib/billing/browser-contract";
 import { BILLING_PLANS } from "../lib/billing/catalog";
@@ -78,6 +80,24 @@ describe("proxy admission precedes protected work", () => {
     state.eval.mockResolvedValue([1000, 60]);
     expect((await proxy(new NextRequest("https://app.example/api/billing/webhook-other"))).status).toBe(429);
   });
+  it("shares the login admission quota across one IPv6 prefix", async () => {
+    const counts = new Map<string, number>();
+    state.eval.mockImplementation(async (_script, _keys, key, seconds) => {
+      const count = (counts.get(key) ?? 0) + 1;
+      counts.set(key, count);
+      return [count, seconds];
+    });
+    const signIn = (ip: string) => proxy(new NextRequest("https://app.example/login", {
+      method: "POST", headers: { "x-vercel-forwarded-for": ip },
+    }));
+    const quota = REQUEST_LIMITS.authRequest.limit;
+    for (let attempt = 1; attempt <= quota; attempt++) {
+      expect((await signIn(`2001:db8:42:1::${attempt.toString(16)}`)).status).toBe(200);
+    }
+    expect((await signIn("2001:db8:42:1::abcd")).status).toBe(429);
+    expect((await signIn("2001:db8:42:2::abcd")).status).toBe(200);
+    expect(counts.size).toBe(2);
+  });
 });
 describe("trusted IP boundary", () => {
   it("prefers the Vercel proxy IP over a supplied forwarding chain", () => {
@@ -90,5 +110,16 @@ describe("trusted IP boundary", () => {
   it("rejects malformed addresses and normalizes IPv6 aliases", () => {
     expect(requestIp(new Headers({ "x-vercel-forwarded-for": "attacker-controlled-text" }))).toBe("unknown");
     expect(requestIp(new Headers({ "x-vercel-forwarded-for": "2001:0DB8:0000:0000:0000:0000:0000:0001" }))).toBe("2001:db8::1");
+  });
+  it.each([
+    ["2001:db8::5:0:1", "2001:db8:0:0::/64"],
+    ["2001:db8:1:2:3:4:5:6", "2001:db8:1:2::/64"],
+    ["2001:0DB8:0:0:1234:0:0:1", "2001:db8:0:0::/64"],
+    ["::ffff:203.0.113.10", "203.0.113.10"],
+    ["203.0.113.10", "203.0.113.10"],
+    ["fe80::1%en0", "unknown"],
+  ])("canonicalizes %s for the origin budget", (address, subject) => {
+    const headers = new Headers({ "x-vercel-forwarded-for": address });
+    expect(requestRateOrigin(headers)).toBe(subject);
   });
 });

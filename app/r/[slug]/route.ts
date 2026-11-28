@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { httpUrl } from "@/lib/api/http-url";
 import { consumeRequestLimit } from "@/lib/api/request-rate-limit";
-import { requestIp } from "@/lib/api/request-ip";
+import { requestRateOrigin } from "@/lib/api/request-ip";
 import { prisma } from "@/lib/db/client";
 import { encryptLeadContact, leadContact, verifyLeadFormToken } from "@/lib/tracking/lead-capture";
 import {
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest, { params }: RedirectRouteProps)
     NextResponse.redirect(formUrl(request, slug, status), { status: 303, headers: PRIVATE_HEADERS });
 
   try {
-    if (!(await consumeRequestLimit("leadCapture", requestIp(request.headers))).allowed) return back("limit");
+    if (!(await consumeRequestLimit("leadCapture", requestRateOrigin(request.headers))).allowed) return back("limit");
     const form = await readSmallForm(request);
     if (!form) return back("invalid");
     const { token, ...values } = Object.fromEntries(form);
