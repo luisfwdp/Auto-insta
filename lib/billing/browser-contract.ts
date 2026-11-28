@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { safePulsoCheckoutUrl } from "./checkout-links";
 
 // Browser-only contract: no server configuration, provider SDK or Prisma import.
 export type BillingRole = "OWNER" | "ADMIN" | "MEMBER";
@@ -35,9 +36,12 @@ export function safeAsaasCheckoutUrl(value: unknown): string | null {
     return value;
   } catch { return null; }
 }
+export function safeBillingCheckoutUrl(value: unknown): string | null {
+  return safePulsoCheckoutUrl(value) ?? safeAsaasCheckoutUrl(value);
+}
 export const checkoutSchema = z.object({ id: z.uuid(), status: z.enum(["CREATING", "OPEN", "UNKNOWN", "COMPLETED", "CANCELED", "EXPIRED", "REJECTED"]),
   planId, amountCents: count.refine(value => value > 0), url: z.string().nullable(),
-}).refine(value => value.url === null || (value.status === "OPEN" && safeAsaasCheckoutUrl(value.url) !== null));
+}).refine(value => value.url === null || (value.status === "OPEN" && safeBillingCheckoutUrl(value.url) !== null));
 export const cancellationSchema = z.object({ id: z.uuid(), status: z.enum(["PENDING", "PROCESSING", "RETRY", "PROCESSED", "DEAD"]) });
 export type BillingStatus = z.infer<typeof billingStatusSchema>;
 export type BillingPlan = z.infer<typeof billingPlansSchema>["plans"][number];

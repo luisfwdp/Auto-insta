@@ -88,7 +88,8 @@ export async function requestCheckout(workspaceId: string, value: CheckoutReques
         code: affiliateCode, orderId: row.id, offer: row.planId, cents: row.amountCents,
         date: row.firstChargeDate, mode: scope.environment,
       })
-      : await gateway.createHostedCheckout({ reference: row.id, name: `PING CHAT — ${plan.name}`, amountCents: row.amountCents, firstChargeDate: row.firstChargeDate });
+      : await gateway.createHostedCheckout({ reference: row.id, name: `PING CHAT — ${plan.name}`, planId: input.planId,
+        amountCents: row.amountCents, firstChargeDate: row.firstChargeDate });
     const encryptedUrl = encryptToken(result.url);
     const saved = await prisma.billingCheckout.updateMany({ where: { id: row.id, workspaceId, status: { in: ["CREATING", "UNKNOWN"] }, OR: [{ providerCheckoutId: null }, { providerCheckoutId: result.id }] }, data: { providerCheckoutId: result.id, checkoutUrlCiphertext: encryptedUrl, status: "OPEN", lastErrorCode: null } });
     if (saved.count !== 1) throw new BillingError("CHECKOUT_CONFLICT");
