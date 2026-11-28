@@ -89,12 +89,13 @@ describe("operator broadcast email", () => {
   });
 
   it("reports provider failure instead of claiming delivery", async () => {
-    fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ message: "domain is not verified" }), { status: 403 }));
+    fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ message: "Invalid recipient a@example.test" }), { status: 403 }));
     const response = await post(valid);
     expect(response.status).toBe(502);
     const body = await response.json();
     expect(body.success).toBe(false);
-    expect(body.data).toMatchObject({ sent: 0, failed: 2 });
+    expect(body.data).toMatchObject({ sent: 0, failed: 2, errors: ["Resend HTTP 403"] });
+    expect(JSON.stringify(mocks.eventCreate.mock.calls)).not.toContain("a@example.test");
   });
 
   it("escapes operator text and builds the welcome message", () => {

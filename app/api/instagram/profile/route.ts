@@ -3,6 +3,7 @@ import { getCurrentWorkspaceId } from "@/lib/auth";
 import { getWorkspaceInstagramAccount } from "@/lib/instagram-accounts";
 import { getUserInfo } from "@/lib/instagram/provider";
 import { createInstagramContext } from "@/lib/instagram/provider";
+import { instagramErrorCode } from "@/lib/instagram/provider-error-output";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +43,7 @@ export async function GET(request: NextRequest) {
       { headers: { "Cache-Control": "private, max-age=300" } }
     );
   } catch (err) {
-    console.error("[Instagram Profile] Error:", err);
+    console.error("[Instagram Profile] Error:", instagramErrorCode(err));
     return NextResponse.json(
       { success: false, error: "Failed to load profile" },
       { status: 500 }

@@ -5,6 +5,7 @@ import {
   getUserMedia,
   type InstagramMedia,
 } from "@/lib/instagram/provider";
+import { instagramErrorCode } from "@/lib/instagram/provider-error-output";
 
 function isReel(media: InstagramMedia): boolean {
   return media.media_product_type === "REELS";
@@ -65,7 +66,7 @@ export async function attachPendingNextReels(): Promise<AttachNextReelResult> {
         );
     } catch (error) {
       failures.push(account.id);
-      console.error("[attach-next-reel] media fetch failed", account.id, error);
+      console.error("[attach-next-reel] media fetch failed", account.id, instagramErrorCode(error));
       continue;
     }
 

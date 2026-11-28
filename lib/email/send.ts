@@ -40,12 +40,12 @@ async function post(path: string, body: unknown, apiKey: string): Promise<SendRe
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = (await response.json().catch(() => null)) as
-      | { id?: string; data?: Array<{ id?: string }>; message?: string }
-      | null;
     if (!response.ok) {
-      return { ok: false, error: `Resend ${response.status}: ${(data?.message ?? "request failed").slice(0, 200)}` };
+      return { ok: false, error: `Resend HTTP ${response.status}` };
     }
+    const data = (await response.json().catch(() => null)) as
+      | { id?: string; data?: Array<{ id?: string }> }
+      | null;
     const ids = data?.data ? data.data.map((item) => item.id ?? "") : data?.id ? [data.id] : [];
     return { ok: true, ids };
   } catch {

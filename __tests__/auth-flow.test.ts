@@ -157,4 +157,12 @@ describe("login redirect for dashboard pages", () => {
     });
     expect((await proxy(request)).headers.get("location")).toBeNull();
   });
+
+  it("lets the sign-in page validate expired or revoked session cookies", async () => {
+    const { proxy } = await import("../proxy");
+    const request = new NextRequest("https://app.example/login", {
+      headers: { cookie: "__Secure-authjs.session-token=stale" },
+    });
+    expect((await proxy(request)).headers.get("location")).toBeNull();
+  });
 });

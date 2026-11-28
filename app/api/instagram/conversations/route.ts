@@ -14,6 +14,7 @@ import {
   MetaApiError,
 } from "@/lib/instagram/provider";
 import { createInstagramContext } from "@/lib/instagram/provider";
+import { instagramErrorCode } from "@/lib/instagram/provider-error-output";
 
 export interface ConversationListItem {
   id: string;
@@ -125,15 +126,11 @@ export async function GET(request: NextRequest) {
         instagramId: account.instagramId,
       },
     };
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({ success: true, data }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
-    console.error("[Conversations] Error:", err);
-    const message =
-      err instanceof MetaApiError
-        ? err.message
-        : "Failed to load conversations";
+    console.error("[Conversations] Error:", instagramErrorCode(err));
     return NextResponse.json(
-      { success: false, error: message },
+      { success: false, error: "Failed to load conversations" },
       { status: 500 }
     );
   }
@@ -247,11 +244,7 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ success: true, data: result });
   } catch (err) {
-    if (!commercial) console.error("[Conversations] Send error:", err);
-    // Surface Meta's own message — the common case is the 24-hour messaging
-    // window having closed, which the user needs to see explicitly.
-    const message =
-      err instanceof MetaApiError ? err.message : "Failed to send message";
+    if (!commercial) console.error("[Conversations] Send error:", instagramErrorCode(err));
     await recordManualDmAudit({
       workspaceId: context.workspaceId,
       userId: context.userId,
@@ -263,8 +256,14 @@ export async function POST(request: NextRequest) {
       success: false, error: "Message service temporarily unavailable.",
       code: err instanceof BillingError ? err.code : "DELIVERY_UNCONFIRMED",
     }, { status: err instanceof BillingError ? err.httpStatus : 503 });
+    if (err instanceof MetaApiError && /outside of allowed window/i.test(err.message)) {
+      return NextResponse.json(
+        { success: false, code: "MESSAGING_WINDOW_CLOSED", error: "The 24-hour Instagram messaging window has closed." },
+        { status: 502 }
+      );
+    }
     return NextResponse.json(
-      { success: false, error: message },
+      { success: false, error: "Failed to send message" },
       { status: 502 }
     );
   }

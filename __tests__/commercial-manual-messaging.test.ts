@@ -9,8 +9,12 @@ vi.mock("@/lib/billing/trial", () => ({ isBillingEnabled: () => state.enabled })
 vi.mock("@/lib/instagram-accounts", () => ({ getWorkspaceInstagramAccount: deps.account }));
 vi.mock("@/lib/api/manual-dm-rate-limit", () => ({ checkManualDmRateLimit: deps.rate }));
 vi.mock("@/lib/db/client", () => ({ prisma: { operationalEvent: { create: deps.audit } } }));
-vi.mock("@/lib/instagram/provider", () => ({ createInstagramContext: deps.createContext, sendDirectMessage: deps.send, getConversations: vi.fn(), MetaApiError: class extends Error {} }));
-import { POST } from "../app/api/instagram/conversations/route";
+vi.mock("@/lib/instagram/provider", async () => ({
+  createInstagramContext: deps.createContext, sendDirectMessage: deps.send, getConversations: vi.fn(),
+  MetaApiError: (await import("@/lib/meta/client")).MetaApiError,
+}));
+import { GET, POST } from "../app/api/instagram/conversations/route";
+import { MetaApiError } from "@/lib/meta/client";
 import { BillingError } from "../lib/billing/config";
 import { DeliveryUnconfirmedError } from "../lib/instagram/delivery-errors";
 const account = { id: "account_a", instagramId: "ig_a", workspaceId: "workspace_a", provider: "META", accessToken: "fake" };
@@ -52,5 +56,25 @@ describe("manual commercial send contract", () => {
     expect(response.status).toBe(error instanceof BillingError ? 402 : 503); const output = await response.json();
     expect(output.code).toBe(error instanceof BillingError ? "COMMERCIAL_QUOTA_EXCEEDED" : "DELIVERY_UNCONFIRMED");
     expect(JSON.stringify(output)).not.toContain("fake_sensitive_detail"); expect(JSON.stringify(deps.audit.mock.calls)).not.toContain(body.text);
+  });
+  it("gives a fixed messaging-window explanation without provider details", async () => {
+    deps.send.mockRejectedValue(new MetaApiError(10, undefined, "private-trace", "outside of allowed window for private-contact"));
+    const response = await POST(req(body));
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      success: false, code: "MESSAGING_WINDOW_CLOSED", error: "The 24-hour Instagram messaging window has closed.",
+    });
+  });
+  it("does not send provider messages or stacks to the browser or logs when the inbox fails to load", async () => {
+    deps.createContext.mockRejectedValue(new MetaApiError(190, undefined, "private-trace", "private provider details"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await GET(new NextRequest("https://app.example.test/api/instagram/conversations"));
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ success: false, error: "Failed to load conversations" });
+      expect(log.mock.calls).toEqual([["[Conversations] Error:", "INSTAGRAM_PROVIDER_190"]]);
+    } finally {
+      log.mockRestore();
+    }
   });
 });
