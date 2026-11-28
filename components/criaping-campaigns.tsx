@@ -13,6 +13,7 @@ type Campaign = {
   id: string; name: string; keywords: string[]; dmMessage: string; isActive: boolean;
   instagramAccountId: string; instagramAccount: { username: string };
   matchAnyPost: boolean; pendingNextReel: boolean; postUrl: string | null; reportUrl: string | null; reportShareEnabled: boolean;
+  directMessageSince?: string | null;
   analytics: { sent: number; clicks: number; ctr: number; failed: number; skipped: number };
 };
 
@@ -95,7 +96,8 @@ export default function CriapingCampaigns() {
       <p role="status">{t("{count} campaigns", { count: filtered.length })}</p>
       <div className={styles.list}>{filtered.map((c) => <Card key={c.id} aria-labelledby={`campaign-${c.id}`}>
         <div className={styles.header}><div><h2 id={`campaign-${c.id}`}><Link href={`/campaigns/${encodeURIComponent(c.id)}`}>{c.name}</Link></h2><p>@{c.instagramAccount.username}</p></div><Badge tone={c.isActive ? "success" : "neutral"}>{c.isActive ? t("Active") : t("Paused")}</Badge></div>
-        <p>{c.matchAnyPost ? t("any post or reel") : c.pendingNextReel ? t("next post or reel") : t("a specific post or reel")}</p><p className={styles.wrap}>{c.keywords.join(", ") || t("any word")}</p><p className={styles.message}>{c.dmMessage}</p>
+        <p>{t(c.directMessageSince ? "Only incoming DMs" : c.matchAnyPost ? "any post or reel" : c.pendingNextReel ? "next post or reel" : "a specific post or reel")}</p>
+        <p className={styles.wrap}>{c.keywords.join(", ") || t("any word")}</p><p className={styles.message}>{c.dmMessage}</p>
         <dl className={styles.metrics}>{[[t("sent"), c.analytics.sent], [t("clicks"), c.analytics.clicks], [t("% CTR"), c.analytics.ctr], [t("failed"), c.analytics.failed], [t("skipped"), c.analytics.skipped]].map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{Number(value).toLocaleString(locale)}</dd></div>)}</dl>
         <div className={styles.actions}><Link className={styles.link} href={`/campaigns/${encodeURIComponent(c.id)}/edit`}>{t("Edit campaign")}</Link><Link className={styles.link} href={`/campaigns/${encodeURIComponent(c.id)}`}>{t("View report")}</Link>{c.reportUrl && c.reportShareEnabled && <a className={styles.link} href={c.reportUrl} target="_blank" rel="noreferrer">{t("Public report")}</a>}{c.postUrl && <a className={styles.link} href={c.postUrl} target="_blank" rel="noreferrer">{t("Open on Instagram")}</a>}
           <Button variant="secondary" disabled={pending !== null} onClick={() => void mutate(c, "toggle")}>{c.isActive ? t("Pause") : t("Activate")}</Button><Button variant="secondary" disabled={pending !== null} onClick={() => void mutate(c, "duplicate")}>{t("Duplicate")}</Button><Button variant="danger" disabled={pending !== null} onClick={() => setDeleting(c)}>{t("Delete")}</Button>
