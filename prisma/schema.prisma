@@ -524,6 +524,8 @@ model Automation {
   // keywords above. Independent of the post trigger — a DM has no media, so
   // postId / matchAnyPost do not apply to it.
   dmTriggerEnabled Boolean @default(false)
+  // Marks an explicit DM-only campaign and filters delayed pre-activation messages.
+  directMessageSince DateTime?
   dmMessage      String
   openingDmEnabled     Boolean @default(false)
   openingDmMessage     String?

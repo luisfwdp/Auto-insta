@@ -15,7 +15,6 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
-import { isDirectMessageOnly } from "@/lib/automation/direct-message-scope";
 
 interface Campaign {
   id: string;
@@ -27,6 +26,7 @@ interface Campaign {
   keywords: string[];
   matchAnyWord: boolean;
   dmTriggerEnabled: boolean;
+  directMessageSince?: string | null;
   dmMessage: string;
   openingDmEnabled: boolean;
   openingDmMessage: string | null;
@@ -161,7 +161,7 @@ function LegacyCampaignDetailPage() {
   const hasLink = Boolean(campaign.trackedLinks?.[0]?.destinationUrl);
   const hasSecondLink = Boolean(campaign.trackedLinks?.[1]?.destinationUrl);
 
-  const isDirect = isDirectMessageOnly(campaign);
+  const isDirect = Boolean(campaign.directMessageSince);
   const trigger = isDirect ? t("Only incoming DMs") : campaign.matchAnyPost
     ? t("Any post or reel")
     : campaign.pendingNextReel

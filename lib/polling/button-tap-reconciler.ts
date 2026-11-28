@@ -17,7 +17,6 @@
  */
 import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db/client";
-import { isDirectMessageOnly } from "@/lib/automation/direct-message-scope";
 import {
   getDMQueue, getRedisConnection, MESSAGE_JOB_NAME, POSTBACK_JOB_NAME, RECENT_BUTTON_PROMPT_SECONDS, recentButtonPromptKey,
 } from "@/lib/queue/client";
@@ -64,7 +63,7 @@ export async function reconcileButtonTaps(
       OR: [
         { requireFollow: true },
         { openingDmEnabled: true },
-        { dmTriggerEnabled: true, postId: null, matchAnyPost: false, pendingNextReel: false },
+        { dmTriggerEnabled: true, directMessageSince: { not: null } },
       ],
       instagramAccount: { provider: "META" },
     },
@@ -77,13 +76,10 @@ export async function reconcileButtonTaps(
       openingDmMessage: true,
       openingDmButtonLabel: true,
       dmTriggerEnabled: true,
-      postId: true,
-      matchAnyPost: true,
-      pendingNextReel: true,
+      directMessageSince: true,
       matchAnyWord: true,
       keywords: true,
       wholeWordMatch: true,
-      updatedAt: true,
       instagramAccount: {
         select: {
           id: true, instagramId: true, accessToken: true, provider: true,
@@ -105,7 +101,7 @@ export async function reconcileButtonTaps(
     const account = group[0].instagramAccount;
     if (!hasInstagramCredentials(account)) continue;
     const directCampaigns = group.filter((campaign) =>
-      isDirectMessageOnly(campaign) && !campaign.matchAnyWord && campaign.keywords.length > 0,
+      campaign.dmTriggerEnabled && campaign.directMessageSince && !campaign.matchAnyWord && campaign.keywords.length > 0,
     );
     const checkKeywordMessages = directCampaigns.length > 0 && ["recent", "full"].includes(mode);
 
@@ -173,10 +169,10 @@ export async function reconcileButtonTaps(
         if (!sentAt || Number.isNaN(sentAt.getTime()) || sentAt < since || sentAt > now) continue;
         const candidates = labels.get(normalize(message.message));
         const messageText = message.message;
-        const isKeywordMessage = checkKeywordMessages && !candidates?.length && messageText?.trim()
+        const isKeywordMessage = checkKeywordMessages && messageText?.trim()
           && !message.story && !message.is_unsupported
           && now.getTime() - sentAt.getTime() <= DIRECT_MESSAGE_LOOKBACK_MS
-          && directCampaigns.some((campaign) => sentAt >= campaign.updatedAt
+          && directCampaigns.some((campaign) => campaign.directMessageSince && sentAt >= campaign.directMessageSince
             && matchKeywords(messageText, campaign.keywords, campaign.wholeWordMatch).matched);
         if (!candidates?.length && !isKeywordMessage) continue;
 

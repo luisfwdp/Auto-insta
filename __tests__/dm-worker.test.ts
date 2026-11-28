@@ -2215,24 +2215,43 @@ describe("stable commercial message purposes in worker flows", () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); delete process.env.FOLLOW_RECHECK_ACK_MESSAGE; });
 
-  it("starts a DM-only campaign with the opening button and deduplicates webhook and recovery", async () => {
-    const updatedAt = new Date("2026-11-25T02:55:00Z");
-    mockPrisma.automation.findMany.mockResolvedValue([{
-      ...mockAutomation, dmTriggerEnabled: true, postId: null, matchAnyPost: false, pendingNextReel: false,
-      requireFollow: true, openingDmEnabled: true, openingDmMessage: "Want the links?",
-      openingDmButtonLabel: "Send me the link", trackedLinks: links, updatedAt,
-    }]);
+  it.each([true, false])("starts a DM-only campaign with the correct opening (follow required: %s)", async (requireFollow) => {
+    const directMessageSince = new Date("2026-11-25T02:55:00Z");
+    const campaign = {
+      ...mockAutomation, dmTriggerEnabled: true, postId: null, directMessageSince,
+      requireFollow, openingDmEnabled: true, openingDmMessage: "Want the links?",
+      openingDmButtonLabel: "Send me the link", trackedLinks: links,
+      updatedAt: new Date("2026-11-25T02:55:05Z"),
+    };
+    // A later content edit does not invalidate a pending event. The dedicated
+    // DM also takes precedence over the hybrid when both match.
+    mockPrisma.automation.findMany.mockResolvedValue([
+      { ...mockAutomation, id: "hybrid", dmTriggerEnabled: true }, campaign,
+    ]);
     const processor = getProcessor();
     const job = messageJob();
-    await processor({ ...job, data: { ...job.data, messageSentAt: updatedAt.getTime() - 1000 } });
-    expect(mockSendDirectMessageWithButton).not.toHaveBeenCalled();
-    await processor({ ...job, data: { ...job.data, messageSentAt: updatedAt.getTime() + 1000 } });
-    await processor({ ...job, data: { ...job.data, messageSentAt: updatedAt.getTime() + 1000, recoveredFromConversation: true } });
+    await processor({ ...job, data: { ...job.data, messageSentAt: directMessageSince.getTime() + 1000 } });
+    await processor({ ...job, data: { ...job.data, messageSentAt: directMessageSince.getTime() + 1000, recoveredFromConversation: true } });
+    const payload = `${requireFollow ? "followcheck" : "reveal"}:auto_789:open`;
     expect(mockSendDirectMessageWithButton).toHaveBeenCalledExactlyOnceWith(
-      "decrypted_token", "ig_456", "commenter_999", "Want the links?", "Send me the link", "followcheck:auto_789:open",
+      "decrypted_token", "ig_456", "commenter_999", "Want the links?", "Send me the link", payload,
     );
     expect(mockSendDirectMessageWithLinkButton).not.toHaveBeenCalled();
     expect(mockGetUserFollowStatus).not.toHaveBeenCalled();
+    if (!requireFollow) {
+      mockPrisma.automation.findFirst.mockResolvedValue(campaign);
+      await processor(createMockPostbackJob({ instagramAccountId: "ig_456", userId: "commenter_999", payload }));
+      expect(mockSendDirectMessageWithLinkButton).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("ignores a delayed direct-message event from before activation", async () => {
+    mockPrisma.automation.findMany.mockResolvedValue([{
+      ...mockAutomation, dmTriggerEnabled: true, directMessageSince: new Date("2026-11-25T02:55:00Z"),
+    }]);
+    const job = messageJob();
+    await getProcessor()({ ...job, data: { ...job.data, messageSentAt: Date.parse("2026-11-25T02:54:00Z") } });
+    expect(mockReserveWorkspaceDMSend).not.toHaveBeenCalled();
   });
 
   it("uses a stable reveal stage for both plain and link-template variants", async () => {

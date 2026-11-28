@@ -59,9 +59,9 @@ beforeEach(() => {
 
 describe("button tap recovery from conversations", () => {
   const direct = automation({
-    dmTriggerEnabled: true, postId: null, matchAnyPost: false, pendingNextReel: false,
+    dmTriggerEnabled: true,
     matchAnyWord: false, wholeWordMatch: true, keywords: ["mercado"],
-    updatedAt: new Date("2026-11-25T02:55:00Z"),
+    directMessageSince: new Date("2026-11-25T02:55:00Z"),
   });
 
   it("recovers an incoming keyword DM before any campaign prompt and uses the webhook job ID", async () => {
@@ -104,7 +104,7 @@ describe("button tap recovery from conversations", () => {
     expect(mocks.automationFindMany.mock.calls[0][0].where).toEqual({
       isActive: true, OR: [
         { requireFollow: true }, { openingDmEnabled: true },
-        { dmTriggerEnabled: true, postId: null, matchAnyPost: false, pendingNextReel: false },
+        { dmTriggerEnabled: true, directMessageSince: { not: null } },
       ], instagramAccount: { provider: "META" },
     });
   });

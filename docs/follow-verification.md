@@ -157,7 +157,7 @@ o botão de confirmação faz a consulta antes de liberar os links.
 
 Em contas Meta com esse gatilho ativo, o worker também verifica a mensagem
 mais recente das conversas. Recupera mensagens de texto recebidas nos últimos
-dez minutos e posteriores à última gravação da campanha. Ignora mensagens da
+dez minutos e posteriores à ativação da campanha. Ignora mensagens da
 própria conta, respostas a Stories, conteúdo não suportado e os rótulos dos
 botões usados pela recuperação de cliques. A fila usa a mesma identidade de
 mensagem do webhook e mantém as verificações de envio.
@@ -168,5 +168,7 @@ varredura e do mesmo cooldown de cliques por conta. O ciclo amplo dá cobertura
 de ser a mais recente da conversa ou se a Meta não a retornar a tempo.
 O webhook continua sendo a entrada principal. O gatilho exclusivo exige um
 horário de origem válido no evento para evitar responder a mensagens antigas.
+A migração adiciona uma data de ativação opcional. Campanhas antigas não são
+reclassificadas. Editar o texto de uma campanha ativa preserva essa data.
 
 Limites de taxa: https://developers.facebook.com/docs/graph-api/overview/rate-limiting/

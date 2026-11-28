@@ -176,6 +176,16 @@ describe.skipIf(!DATABASE_URL)("tracked link order on a real Postgres", () => {
       publicReplyEnabled: false, publicReplyMessages: [], publicReplyMessage: null,
     });
     expect(saved.trackedLinks).toHaveLength(2);
+    // An older draft retains its marker while paused. Activation refreshes it,
+    // but the later copy edit must leave that new cutoff alone.
+    expect(saved.directMessageSince).toEqual(expect.any(String));
+    await state.db.automation.update({ where: { id: saved.id }, data: { directMessageSince: new Date("2026-01-01T00:00:00Z") } });
+    const url = `http://localhost/api/automations?id=${saved.id}`;
+    const activated = await PATCH(jsonRequest("PATCH", url, { isActive: true }));
+    const cutoff = (await activated.json()).data.directMessageSince;
+    expect(cutoff).not.toBe("2026-01-01T00:00:00.000Z");
+    const renamed = await PATCH(jsonRequest("PATCH", url, { name: "Quinteto DM" }));
+    expect((await renamed.json()).data.directMessageSince).toBe(cutoff);
     const edit = await PATCH(jsonRequest("PATCH", `http://localhost/api/automations?id=${saved.id}`, { matchAnyWord: true }));
     expect(edit.status).toBe(400);
   });

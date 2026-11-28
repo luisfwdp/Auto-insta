@@ -103,6 +103,7 @@ const updateAutomationSchema = z.object({
   keywords: z.array(z.string().min(1).max(50)).max(10).optional(),
   matchAnyWord: z.boolean().optional(),
   dmTriggerEnabled: z.boolean().optional(),
+  directMessagesOnly: z.boolean().optional(),
   dmMessage: z.string().min(1).max(1000).optional(),
   openingDmEnabled: z.boolean().optional(),
   openingDmMessage: z.string().max(1000).optional().nullable(),
@@ -388,6 +389,7 @@ export async function POST(request: NextRequest) {
       keywords: matchAnyWord ? [] : parsed.data.keywords,
       matchAnyWord,
       dmTriggerEnabled: parsed.data.dmTriggerEnabled,
+      directMessageSince: isSpecificPost || pendingNextReel || matchAnyPost ? null : new Date(),
       dmMessage: parsed.data.dmMessage,
       openingDmEnabled,
       openingDmMessage: openingDmEnabled
@@ -493,6 +495,7 @@ export async function PATCH(request: NextRequest) {
     trackedDestinationUrl,
     secondaryDestinationUrl,
     secondaryButtonLabel,
+    directMessagesOnly,
     ...automationData
   } = parsed.data;
 
@@ -517,12 +520,23 @@ export async function PATCH(request: NextRequest) {
     automationData.postUrl = null;
   }
   const trigger = { ...existing, ...automationData };
-  if (isDirectMessageOnly(trigger)) {
+  const isDirect = isDirectMessageOnly(trigger);
+  let directMessageSince: Date | null | undefined;
+  if ((directMessagesOnly === true && !isDirect)
+      || (directMessagesOnly === false && existing.directMessageSince && isDirect)) {
+    return NextResponse.json({ success: false, error: "Invalid DM-only campaign scope" }, { status: 400 });
+  }
+  if (isDirect && (directMessagesOnly ?? Boolean(existing.directMessageSince))) {
     if (trigger.matchAnyWord || !trigger.keywords.some((word) => word.trim())) {
       return NextResponse.json({ success: false, error: "Add at least one keyword for a DM-only campaign" }, { status: 400 });
     }
     automationData.postUrl = null;
     automationData.publicReplyEnabled = false;
+    if (!existing.directMessageSince || (!existing.isActive && trigger.isActive)) {
+      directMessageSince = new Date();
+    }
+  } else if (existing.directMessageSince) {
+    directMessageSince = null;
   }
   // Keep the public-reply variations list and the legacy single field in sync.
   if (automationData.publicReplyMessages !== undefined) {
@@ -540,10 +554,15 @@ export async function PATCH(request: NextRequest) {
   // One transaction, so a save never lands half applied. Updating the campaign
   // first locks its row, which makes a second save of the same campaign wait
   // for this one before it reads the links.
+  const checkActivation = Boolean(existing.directMessageSince || directMessagesOnly);
   const updated = await prisma.$transaction(async (tx) => {
     const campaign = await tx.automation.update({
-      where: { id: automationId },
-      data: automationData,
+      where: {
+        id: automationId,
+        workspaceId,
+        ...(checkActivation ? { directMessageSince: existing.directMessageSince, isActive: existing.isActive } : {}),
+      },
+      data: { ...automationData, directMessageSince },
     });
 
     await syncCampaignLinks(tx, {
@@ -555,7 +574,16 @@ export async function PATCH(request: NextRequest) {
     });
 
     return campaign;
+  }).catch((error: unknown) => {
+    if (checkActivation && typeof error === "object" && error !== null && "code" in error && error.code === "P2025") {
+      return null;
+    }
+    throw error;
   });
+
+  if (!updated) {
+    return NextResponse.json({ success: false, error: "Campaign activation changed. Reload and try again." }, { status: 409 });
+  }
 
   return NextResponse.json({ success: true, data: updated });
 }

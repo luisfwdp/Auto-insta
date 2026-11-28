@@ -16,7 +16,6 @@ import { useNewDesign } from "./dashboard-shell";
 import CampaignWizard from "./campaign-wizard";
 import { campaignTriggerFields, validateCampaignDraft, type TriggerScope } from "./campaign-validation";
 import { storyIdFromPermalink } from "@/lib/automation/story-reply-scoping";
-import { isDirectMessageOnly } from "@/lib/automation/direct-message-scope";
 import { Button, EmptyState, Skeleton } from "./ui/primitives";
 import { Input, Select, Textarea, Toggle as UiToggle } from "./ui/fields";
 import wizardStyles from "./campaigns.module.css";
@@ -45,6 +44,7 @@ interface LoadedCampaign {
   keywords: string[];
   matchAnyWord: boolean;
   dmTriggerEnabled: boolean;
+  directMessageSince?: string | null;
   dmMessage: string;
   openingDmEnabled: boolean;
   openingDmMessage: string | null;
@@ -273,13 +273,13 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setName(c.name);
         setSelectedAccountId(c.instagramAccountId);
         setTriggerScope(
-          isDirectMessageOnly(c) ? "dm" : storyIdFromPermalink(c.postUrl) ? "story" : c.matchAnyPost ? "any" : c.pendingNextReel ? "next" : "specific"
+          c.directMessageSince ? "dm" : storyIdFromPermalink(c.postUrl) ? "story" : c.matchAnyPost ? "any" : c.pendingNextReel ? "next" : "specific"
         );
         setPostId(c.postId);
         setPostUrl(c.postUrl);
         setMatchMode(c.matchAnyWord ? "any" : "specific");
         setKeywordText(c.keywords.join(", "));
-        setDmTriggerEnabled(!isDirectMessageOnly(c) && c.dmTriggerEnabled);
+        setDmTriggerEnabled(!c.directMessageSince && c.dmTriggerEnabled);
         setPublicReplyEnabled(!storyIdFromPermalink(c.postUrl) && c.publicReplyEnabled);
         setPublicReplyMessages(
           c.publicReplyMessages?.length
@@ -443,6 +443,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       name: name.trim() || (newDesign ? t("Campaign for @{username}", { username }) : `Campaign for @${username}`),
       instagramAccountId: selectedAccountId,
       ...triggerFields,
+      directMessagesOnly: isDirect,
       matchAnyWord: matchMode === "any",
       keywords: matchMode === "any" ? [] : keywords,
       dmMessage,
@@ -625,7 +626,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       {followUpEnabled && <><Textarea label={t("Follow-up message")} maxLength={1000} value={followUpMessage} onChange={(e) => setFollowUpMessage(e.target.value)} /><Input label={t("Follow-up delay in minutes")} type="number" min={0} max={1440} step={1} value={followUpDelayMinutes} onChange={(e) => setFollowUpDelayMinutes(Number(e.target.value))} /></>}
     </>;
     const review = <><h2>{t("Review campaign settings")}</h2><dl className={wizardStyles.summary}>
-      {[[t("Campaign name"), name.trim() || t("Campaign for @{username}", { username })], [t("Instagram account"), `@${username}`], [t("Campaign trigger"), isDirect ? t("Only incoming DMs") : isStory ? `${t("Text reply to a specific Story")} ${postUrl ?? ""}` : triggerScope === "specific" ? `${postId ?? ""} ${postUrl ?? ""}` : t(triggerScope === "any" ? "any post or reel" : "next post or reel")], [t("Keywords"), matchMode === "any" ? t("any word") : keywords.join(", ")], [t(isStory ? "Text reply to a specific Story" : "also reply when someone DMs"), t(triggerFields.dmTriggerEnabled ? "Enabled" : "Disabled")], [t("Public reply"), publicReplyEnabled ? publicReplyMessages.map((m) => m.trim()).filter(Boolean).join("\n\n") : t("Disabled")], [t("Opening DM message"), openingDmEnabled ? openingDmMessage : t("Disabled")], [t("Opening button label"), openingDmEnabled ? openingDmButtonLabel : t("Disabled")], [t("Main DM message"), dmMessage], [t("Link URL"), trackedDestinationUrl || t("Disabled")], [t("Link button label"), trackedDestinationUrl ? linkButtonLabel.trim() || t("Open link") : t("Disabled")], [t("Second link URL"), secondaryDestinationUrl || t("Disabled")], [t("Second button label"), secondaryDestinationUrl ? secondaryButtonLabel.trim() || t("Open link") : t("Disabled")], [t("Follow prompt message"), requireFollow ? followPromptMessage || t("No text configured") : t("Disabled")], [t("Follow button label"), requireFollow ? followPromptButtonLabel.trim() || t("i'm following") : t("Disabled")], [t("Follow-up message"), followUpEnabled ? followUpMessage || t("No text configured") : t("Disabled")], [t("Follow-up delay in minutes"), followUpEnabled ? String(followUpDelayMinutes) : t("Disabled")]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || t("No text configured")}</dd></div>)}
+      {[[t("Campaign name"), name.trim() || t("Campaign for @{username}", { username })], [t("Instagram account"), `@${username}`], [t("Campaign trigger"), isDirect ? t("Only incoming DMs") : isStory ? `${t("Text reply to a specific Story")} ${postUrl ?? ""}` : triggerScope === "specific" ? `${postId ?? ""} ${postUrl ?? ""}` : t(triggerScope === "any" ? "any post or reel" : "next post or reel")], [t("Keywords"), matchMode === "any" ? t("any word") : keywords.join(", ")], ...(!isDirect ? [[t(isStory ? "Text reply to a specific Story" : "also reply when someone DMs"), t(triggerFields.dmTriggerEnabled ? "Enabled" : "Disabled")]] : []), [t("Public reply"), publicReplyEnabled ? publicReplyMessages.map((m) => m.trim()).filter(Boolean).join("\n\n") : t("Disabled")], [t("Opening DM message"), openingDmEnabled ? openingDmMessage : t("Disabled")], [t("Opening button label"), openingDmEnabled ? openingDmButtonLabel : t("Disabled")], [t("Main DM message"), dmMessage], [t("Link URL"), trackedDestinationUrl || t("Disabled")], [t("Link button label"), trackedDestinationUrl ? linkButtonLabel.trim() || t("Open link") : t("Disabled")], [t("Second link URL"), secondaryDestinationUrl || t("Disabled")], [t("Second button label"), secondaryDestinationUrl ? secondaryButtonLabel.trim() || t("Open link") : t("Disabled")], [t("Follow prompt message"), requireFollow ? followPromptMessage || t("No text configured") : t("Disabled")], [t("Follow button label"), requireFollow ? followPromptButtonLabel.trim() || t("i'm following") : t("Disabled")], [t("Follow-up message"), followUpEnabled ? followUpMessage || t("No text configured") : t("Disabled")], [t("Follow-up delay in minutes"), followUpEnabled ? String(followUpDelayMinutes) : t("Disabled")]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || t("No text configured")}</dd></div>)}
     </dl><UiToggle label={t("Activate after confirmation")} checked={isActive} onChange={(e) => setIsActive(e.target.checked)} /><p className={wizardStyles.muted}>{t("Activation allows future matching events to run. Confirmation does not send a test DM.")}</p></>;
     return <CampaignWizard key={importQueue ? importQueue.length : "draft"} configuration={configuration} messages={messages} review={review} preview={<CampaignPreview tab={previewTab} onTabChange={setPreviewTab} username={username} avatarUrl={avatarUrl} postThumb={postThumb} caption={postCaption} sampleComment={keywords[0] ?? ""} dmTriggerEnabled={triggerFields.dmTriggerEnabled} publicReplyEnabled={publicReplyEnabled} publicReplyMessage={publicReplyMessages.find((m) => m.trim()) ?? ""} openingDmEnabled={openingDmEnabled} openingDmMessage={openingDmMessage} openingDmButtonLabel={openingDmButtonLabel} revealMessage={dmMessage} hasLink={!!trackedDestinationUrl.trim()} linkButtonLabel={linkButtonLabel} linkUrl={trackedDestinationUrl.trim() || undefined} hasSecondLink={!!secondaryDestinationUrl.trim()} secondLinkButtonLabel={secondaryButtonLabel} requireFollow={requireFollow} followPromptMessage={followPromptMessage} followPromptButtonLabel={followPromptButtonLabel} followUpEnabled={followUpEnabled} followUpMessage={followUpMessage} followUpDelayMinutes={followUpDelayMinutes} />} error={error} saving={saving} editing={mode === "edit"} validate={(step) => { const issue = validateCampaignDraft(draft, step); setError(issue ? t(issue) : null); return !issue; }} onCancel={() => router.push("/campaigns")} onSave={() => void handleSubmit(isActive)} />;
   }
@@ -780,13 +781,13 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           {isStory && storySettings}
         </Section>
 
-        <Section title={t(isDirect ? "Keywords" : isStory ? "And this reply has" : "And this comment has")}>
-          {!isDirect && <Radio
+        <Section title={t(isStory ? "And this reply has" : "And this comment has")}>
+          <Radio
             checked={matchMode === "specific"}
             onSelect={() => setMatchMode("specific")}
           >
             {t("a specific word or words")}
-          </Radio>}
+          </Radio>
           {matchMode === "specific" && (
             <div className="space-y-1">
               <input
@@ -798,13 +799,13 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               <p className="text-xs text-muted">{t("Use commas to separate words")}</p>
             </div>
           )}
-          {!isDirect && <Radio
+          <Radio
             checked={matchMode === "any"}
             onSelect={() => setMatchMode("any")}
           >
             {t("any word")}
-          </Radio>}
-          {!isDirect && <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+          </Radio>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
             <span className="text-sm text-foreground">
               {t("also reply when someone DMs")}{" "}
               {matchMode === "any" ? t("anything") : t("these words")}
@@ -814,15 +815,15 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               disabled={isStory}
               onToggle={() => setDmTriggerEnabled(!dmTriggerEnabled)}
             />
-          </div>}
-          {!isStory && (isDirect || dmTriggerEnabled) && (
+          </div>
+          {!isStory && dmTriggerEnabled && (
             <p className="text-xs text-muted">
-              {!isDirect && matchMode === "any"
+              {matchMode === "any"
                 ? t("Every DM to this account gets the reply below — use with care.")
                 : t("A DM containing any of these words gets the same reply, no comment needed.")}
             </p>
           )}
-          {!isDirect && <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+          <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
             <span className="text-sm text-foreground">
               {t("reply to their comments under the post")}
             </span>
@@ -831,8 +832,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               disabled={isStory}
               onToggle={() => setPublicReplyEnabled(!publicReplyEnabled)}
             />
-          </div>}
-          {!isDirect && publicReplyEnabled && (
+          </div>
+          {publicReplyEnabled && (
             <div className="space-y-2">
               {publicReplyMessages.map((msg, i) => (
                 <div key={i} className="flex items-center gap-2">

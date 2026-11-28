@@ -23,7 +23,6 @@ import {
   type ProcessFollowUpJob,
 } from "./client";
 import { prisma } from "@/lib/db/client";
-import { isDirectMessageOnly } from "@/lib/automation/direct-message-scope";
 import {
   MetaApiError,
   RateLimitError,
@@ -1356,14 +1355,14 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
 
   const dedupeId = `dm:${messageId}`;
   const directCampaign = storyId || messageSentAt === undefined ? undefined : automations.find((automation) =>
-    isDirectMessageOnly(automation) && !automation.matchAnyWord
-    && automation.updatedAt.getTime() <= messageSentAt
+    automation.directMessageSince && !automation.matchAnyWord
+    && automation.directMessageSince.getTime() <= messageSentAt
     && matchKeywords(messageText, automation.keywords, automation.wholeWordMatch).matched
   );
   if (recoveredFromConversation && !directCampaign) return;
 
   for (const automation of directCampaign ? [directCampaign] : automations) {
-    if (isDirectMessageOnly(automation) && !directCampaign) continue;
+    if (automation.directMessageSince && !directCampaign) continue;
     // When a story permalink is configured, reject ordinary DMs and replies to
     // every other Story. An absent Meta story ID must fail closed.
     if (!matchesStoryReplyScope({ postUrl: automation.postUrl, postId: automation.postId, incomingStoryId: storyId })) continue;
