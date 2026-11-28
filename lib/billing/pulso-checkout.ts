@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { AsaasError, checkedAsaasCheckoutLink, getAsaasCheckoutOrigin, readBoundedJson, type HostedCheckoutInput } from "./asaas-client";
+import { BILLING_PLANS } from "./catalog";
+import { safePulsoCheckoutUrl } from "./checkout-links";
 
 export const PULSO_APP = "ping-chat";
 const checkout = z.object({
+  id: z.uuid().optional(),
   app: z.literal(PULSO_APP),
   orderId: z.uuid(),
   externalReference: z.string(),
@@ -14,6 +17,8 @@ const checkout = z.object({
   value: z.number(),
   dueDate: z.iso.date(),
 });
+const publicLink = z.object({ checkoutUrl: z.string(), expiresAt: z.iso.datetime({ offset: true }) });
+const publicLinkFields = z.tuple([z.literal(PULSO_APP), z.string(), z.number().int(), z.uuid(), z.number().int()]);
 
 export function createPulsoClient(
   environment: "sandbox" | "production",
@@ -33,12 +38,13 @@ export function createPulsoClient(
       || (bypass && !/^[A-Za-z0-9_-]{16,256}$/.test(bypass))) throw new Error();
   } catch { throw new AsaasError("CONFIGURATION"); }
 
-  function send(path: string, options: RequestInit) {
+  function send(path: string, options: RequestInit, offerReference?: string) {
     return fetcher(new URL(path, url), {
       ...options, redirect: "error", cache: "no-store",
       headers: {
         Authorization: `Bearer ${token}`, "Content-Type": "application/json",
         "x-pulso-environment": environment,
+        ...(offerReference && { "x-pulso-offer-ref": offerReference }),
         ...(bypass && { "x-vercel-protection-bypass": bypass }),
       },
     });
@@ -48,26 +54,55 @@ export function createPulsoClient(
     const result = checkout.parse(value);
     if (result.orderId !== input.reference || result.externalReference !== `${PULSO_APP}:${input.reference}`
       || result.value !== input.amountCents / 100 || result.dueDate !== input.firstChargeDate) throw new Error();
-    return { id: result.providerId, url: checkedAsaasCheckoutLink(result.paymentUrl, environment) };
+    const paymentUrl = checkedAsaasCheckoutLink(result.paymentUrl, environment);
+    const checkoutUrl = new URL(paymentUrl);
+    if (checkoutUrl.pathname !== "/checkoutSession/show" || checkoutUrl.searchParams.size !== 1
+      || checkoutUrl.searchParams.get("id") !== result.providerId) throw new Error();
+    return { chargeId: result.id, id: result.providerId, url: paymentUrl };
+  }
+
+  async function catalogLink(chargeId: string, providerId: string, input: HostedCheckoutInput) {
+    try {
+      const response = await send(`/api/charges/${chargeId}/checkout-link`, { method: "GET", signal: AbortSignal.timeout(2000) });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        return null;
+      }
+      const result = publicLink.parse(await readBoundedJson(response));
+      const link = safePulsoCheckoutUrl(result.checkoutUrl);
+      if (!link) return null;
+      const encoded = new URL(link).pathname.split(".")[1];
+      const [, plan, cents, id, expires] = publicLinkFields.parse(JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")));
+      const expiresAt = Date.parse(result.expiresAt);
+      const now = Date.now();
+      if (plan !== input.planId || cents !== input.amountCents || id !== providerId || expires * 1000 !== expiresAt
+        || expiresAt <= now || expiresAt > now + 60 * 60_000) return null;
+      return link;
+    } catch { return null; }
   }
 
   async function createHostedCheckout(input: HostedCheckoutInput) {
-    const origin = getAsaasCheckoutOrigin(env);
-    if (!origin.startsWith("https://")) throw new AsaasError("CONFIGURATION");
+    const configuredOrigin = getAsaasCheckoutOrigin(env);
+    if (!configuredOrigin.startsWith("https://")) throw new AsaasError("CONFIGURATION");
+    const origin = input.planId && configuredOrigin === "https://pingchatbr.app" ? "https://www.pingchatbr.app" : configuredOrigin;
     const callback = (result: string) => `${origin}/settings/billing?checkout=${encodeURIComponent(input.reference)}&result=${result}`;
+    const callbacks = { successUrl: callback("success"), cancelUrl: callback("canceled"), expiredUrl: callback("expired") };
+    if (input.planId && BILLING_PLANS[input.planId].amountCents !== input.amountCents) throw new AsaasError("INVALID_REQUEST");
     try {
-      const response = await send("/api/checkouts", {
+      const response = await send(input.planId ? "/api/commerce/ping-chat" : "/api/checkouts", {
         method: "POST",
         signal: AbortSignal.timeout(18_000),
-        body: JSON.stringify({
+        body: JSON.stringify(input.planId ? {
+          orderId: input.reference, plan: input.planId, nextDueDate: input.firstChargeDate, callback: callbacks,
+        } : {
           orderId: input.reference,
           description: input.name,
           value: input.amountCents / 100,
           minutesToExpire: 60,
-          callback: { successUrl: callback("success"), cancelUrl: callback("canceled"), expiredUrl: callback("expired") },
+          callback: callbacks,
           subscription: { cycle: "MONTHLY", nextDueDate: input.firstChargeDate },
         }),
-      });
+      }, input.planId ? input.offerReference : undefined);
       if (response.status === 422) {
         const failure = z.object({ error: z.string() }).parse(await readBoundedJson(response));
         if (failure.error === "asaas_rejected" || failure.error === "invalid_input") throw new AsaasError("REJECTED", 422);
@@ -76,7 +111,9 @@ export function createPulsoClient(
         await response.body?.cancel().catch(() => {});
         throw new Error();
       }
-      return parseCheckout(await readBoundedJson(response), input);
+      const { chargeId, id, url } = parseCheckout(await readBoundedJson(response), input);
+      const branded = input.planId && chargeId && environment === "production" ? await catalogLink(chargeId, id, input) : null;
+      return { id, url: branded ?? url };
     } catch (error) {
       if (error instanceof AsaasError && error.code === "REJECTED") throw error;
       throw new AsaasError("UNKNOWN_OUTCOME");
@@ -89,7 +126,8 @@ export function createPulsoClient(
     if (!response.ok) throw new AsaasError("UNAVAILABLE", response.status);
     const orders = z.object({ app: z.literal(PULSO_APP), data: z.array(z.unknown()).length(1), nextOffset: z.null() })
       .parse(await readBoundedJson(response));
-    return parseCheckout(orders.data[0], input);
+    const { id, url: paymentUrl } = parseCheckout(orders.data[0], input);
+    return { id, url: paymentUrl };
   }
 
   return { request: (path: string, options: RequestInit) => send(`/api/billing${path}`, options), createHostedCheckout, findCheckout };

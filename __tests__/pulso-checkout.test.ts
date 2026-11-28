@@ -31,6 +31,21 @@ const result = {
   value: 149,
   dueDate: "2026-11-23",
 };
+const production = { ...environment, ASAAS_ENVIRONMENT: "production", PULSO_CHECKOUT_ENVIRONMENT: "production",
+  NEXTAUTH_URL: "https://pingchatbr.app" };
+const catalogInput = { ...input, planId: "pro-v1" as const };
+const productionResult = { ...result, id: "30000000-0000-4000-8000-000000000003",
+  paymentUrl: result.paymentUrl.replace("sandbox.asaas.com", "asaas.com") };
+
+function brandedLink(overrides: Partial<{ product: string; plan: string; cents: number; id: string; expiration: number }> = {}) {
+  const { product = "ping-chat", plan = catalogInput.planId, cents = catalogInput.amountCents,
+    id = result.providerId, expiration = Math.floor(Date.now() / 1000) + 60 } = overrides;
+  const proof = Buffer.from(JSON.stringify([product, plan, cents, id, expiration])).toString("base64url");
+  return {
+    checkoutUrl: `https://catalogo.pulsofinance.app/c/p1.${proof}.${"a".repeat(86)}`,
+    expiresAt: new Date(expiration * 1000).toISOString(),
+  };
+}
 
 describe("Pulso recurring checkout", () => {
   it("sends the immutable order to Pulso and returns the verified Asaas checkout", async () => {
@@ -68,6 +83,87 @@ describe("Pulso recurring checkout", () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: "asaas_rejected" }, { status: 422 }));
     const { createHostedCheckout: createCheckout } = createPulsoClient("sandbox", environment, fetcher)!;
     await expect(createCheckout(input)).rejects.toMatchObject({ code: "REJECTED" });
+  });
+
+  it("asks Pulso for a versioned plan and returns the matching branded link", async () => {
+    const link = brandedLink();
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(productionResult, { status: 201 }))
+      .mockResolvedValueOnce(Response.json(link));
+    const transport = createPulsoClient("production", production, fetcher)!;
+    const gateway = createAsaasClient(production, fetcher, transport);
+    await expect(gateway.createHostedCheckout(catalogInput)).resolves.toEqual({ id: result.providerId, url: link.checkoutUrl });
+    const [[url, creation], [proofUrl, proofCall]] = fetcher.mock.calls;
+    expect(String(url)).toBe("https://pulso.example.test/api/commerce/ping-chat");
+    expect(JSON.parse(String(creation?.body))).toEqual({
+      orderId: input.reference, plan: "pro-v1", nextDueDate: input.firstChargeDate,
+      callback: {
+        successUrl: `https://www.pingchatbr.app/settings/billing?checkout=${input.reference}&result=success`,
+        cancelUrl: `https://www.pingchatbr.app/settings/billing?checkout=${input.reference}&result=canceled`,
+        expiredUrl: `https://www.pingchatbr.app/settings/billing?checkout=${input.reference}&result=expired`,
+      },
+    });
+    expect(String(proofUrl)).toBe(`https://pulso.example.test/api/charges/${productionResult.id}/checkout-link`);
+    expect(proofCall).toMatchObject({ method: "GET", cache: "no-store", redirect: "error" });
+  });
+
+  it.each([
+    ["other checkout", () => brandedLink({ id: productionResult.id })],
+    ["another product", () => brandedLink({ product: "criora" })],
+    ["different plan", () => brandedLink({ plan: "essential-v1" })],
+    ["different price", () => brandedLink({ cents: 1 })],
+    ["expired proof", () => brandedLink({ expiration: 1_000 })],
+    ["redirect origin", () => ({ ...brandedLink(), checkoutUrl: brandedLink().checkoutUrl.replace("pulsofinance.app/", "pulsofinance.app.example.test/") })],
+  ])("retains the same Asaas checkout if the proof has %s", async (_name, issue) => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(productionResult, { status: 201 }))
+      .mockResolvedValueOnce(Response.json(issue()));
+    const transport = createPulsoClient("production", production, fetcher)!;
+    await expect(transport.createHostedCheckout(catalogInput)).resolves.toEqual({ id: result.providerId, url: productionResult.paymentUrl });
+    expect(fetcher.mock.calls.map(([, options]) => options?.method)).toEqual(["POST", "GET"]);
+  });
+
+  it("retains the proved checkout when the link lookup is unavailable", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(productionResult, { status: 201 }))
+      .mockRejectedValueOnce(new Error("link service unavailable"));
+    const transport = createPulsoClient("production", production, fetcher)!;
+    await expect(transport.createHostedCheckout(catalogInput)).resolves.toEqual({ id: result.providerId, url: productionResult.paymentUrl });
+    expect(fetcher.mock.calls.map(([, options]) => options?.method)).toEqual(["POST", "GET"]);
+  });
+
+  it("uses the versioned plan in Sandbox and opens only its Asaas checkout", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ ...result, id: productionResult.id }, { status: 201 }));
+    const transport = createPulsoClient("sandbox", environment, fetcher)!;
+    await expect(transport.createHostedCheckout(catalogInput)).resolves.toEqual({ id: result.providerId, url: result.paymentUrl });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(String(fetcher.mock.calls[0][0])).toBe("https://pulso.example.test/api/commerce/ping-chat");
+  });
+
+  it("sends the opaque offer reference only on the versioned creation call", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json(productionResult, { status: 201 }))
+      .mockResolvedValueOnce(Response.json(brandedLink()));
+    const gateway = createAsaasClient(production, fetcher, createPulsoClient("production", production, fetcher));
+    await gateway.createHostedCheckout({ ...catalogInput, offerReference: productionResult.id });
+    expect(new Headers(fetcher.mock.calls[0][1]?.headers).get("x-pulso-offer-ref")).toBe(productionResult.id);
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).not.toHaveProperty("offerReference");
+    expect(new Headers(fetcher.mock.calls[1][1]?.headers).get("x-pulso-offer-ref")).toBeNull();
+  });
+
+  it("refuses a divergent price before calling Pulso", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const transport = createPulsoClient("production", production, fetcher)!;
+    await expect(transport.createHostedCheckout({ ...catalogInput, amountCents: 1 })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("keeps a new order uncertain when Asaas returns a URL for a different checkout", async () => {
+    const other = { ...productionResult, paymentUrl: productionResult.paymentUrl.replace(result.providerId, input.reference) };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(other, { status: 201 }));
+    const transport = createPulsoClient("production", production, fetcher)!;
+    await expect(transport.createHostedCheckout(catalogInput)).rejects.toMatchObject({ code: "UNKNOWN_OUTCOME" });
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it("requires consistent settings before checkout can be enabled", () => {

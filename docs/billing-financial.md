@@ -200,3 +200,8 @@ original `orderId` from Pulso. For a sales rollback, set
 - [Remove subscription](https://docs.asaas.com/reference/remover-assinatura)
 - [Webhook idempotence](https://docs.asaas.com/docs/how-to-implement-idempotence-in-webhooks)
 - [Provider URL changes](https://docs.asaas.com/changelog/altera%C3%A7%C3%A3o-na-estrutura-de-urls-p%C3%BAblicas-do-asaas)
+## Checkout dos planos no catálogo Pulso
+
+Com a integração Pulso habilitada, o backend envia o plano versionado ao catálogo e valida o valor, o pedido, o vencimento e o ID do checkout retornado. Em produção, consulta a prova do catálogo para esse mesmo checkout e confere o produto, o plano, o preço e a expiração antes de enviar o endereço ao navegador. O catálogo mostra o resumo do Ping Chat e o Asaas captura o cartão. Se a prova estiver indisponível, o servidor abre o checkout já criado no Asaas. Em Sandbox, usa o endereço Asaas Sandbox após a confirmação da criação. Nenhuma dessas decisões emite um segundo checkout.
+
+Links de ofertas do Pulso apontam para `/api/billing/offer/[reference]`. O servidor remove a referência do redirecionamento e leva o visitante ao plano correspondente. Quando o checkout Pulso está ativo, a referência fica em um cookie privado de 90 minutos com escopo limitado à criação do checkout. O servidor envia a referência do plano que o titular confirmar. O Pulso valida o vínculo ao pedido de origem e ao plano antes de atribuir receita. O fluxo de afiliados da Batida conserva sua precedência.

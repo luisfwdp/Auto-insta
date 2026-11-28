@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   billingPlansSchema, billingStatusSchema, billingUsageSchema, checkoutSchema, cancellationSchema, savedBillingSchema,
-  safeAsaasCheckoutUrl, billingRequest, createBrowserCheckout, createBrowserCancellation, pollBillingOperation,
+  safeAsaasCheckoutUrl, safeBillingCheckoutUrl, billingRequest, createBrowserCheckout, createBrowserCancellation, pollBillingOperation,
   resumeBrowserCancellation, isWorkspaceContextError,
   type PendingBillingRequest,
 } from "@/lib/billing/browser-contract";
@@ -34,6 +34,15 @@ describe("allowlisted browser billing DTOs", () => {
   it.each(["https://asaas.com/checkout/path?opaque=1", "https://www.asaas.com/c/opaque", "https://sandbox.asaas.com/checkoutSession/show?id=fixture"])("preserves the server provider URL verbatim: %s", url => {
     expect(safeAsaasCheckoutUrl(url)).toBe(url);
     expect(checkoutSchema.safeParse({ ...checkout, status: "OPEN", url }).success).toBe(true);
+  });
+  it("allows the card proof only on the exact public Pulso checkout path", () => {
+    const url = `https://catalogo.pulsofinance.app/c/p1.payload.${"a".repeat(86)}`;
+    expect(safeBillingCheckoutUrl(url)).toBe(url);
+    expect(checkoutSchema.safeParse({ ...checkout, status: "OPEN", url }).success).toBe(true);
+    for (const altered of [url + "?extra=1", url + "\n", url.replace("/c/", "/p/"), url.replace("/p1.", "/p2."),
+      url.replace("pulsofinance.app/", "pulsofinance.app.example.test/"), url.replace("https://", "http://")]) {
+      expect(safeBillingCheckoutUrl(altered)).toBeNull();
+    }
   });
   it.each(["javascript:alert(1)", "http://asaas.com/path", "https://asaas.com.attacker.test/pay", "https://asaas.com@attacker.test/pay",
     "https://attacker@asaas.com/pay", "https://asaas.com:444/pay", "https://asaas.com/pay#fragment", "https://asaas.com/\\evil",

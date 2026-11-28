@@ -5,6 +5,7 @@ import LanguageSwitcher from "@/components/language-switcher";
 import { I18nProvider } from "@/lib/i18n/provider";
 import { getI18n } from "@/lib/i18n/server";
 import { BILLING_PLANS, BILLING_PLAN_IDS } from "@/lib/billing/catalog";
+import { pulsoOfferPlan } from "@/lib/billing/pulso-offer";
 import { isBillingEnabled } from "@/lib/billing/trial";
 import { isBillingSalesEnabled } from "@/lib/billing/sales";
 import styles from "./pricing.module.css";
@@ -14,10 +15,11 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t("Pricing - PING CHAT"), description: t(isBillingEnabled() ? "Subscription plans and a 3-day card-free trial." : "New subscriptions are temporarily unavailable.") };
 }
 
-export default async function PricingPage() {
+export default async function PricingPage({ searchParams }: { searchParams?: Promise<{ plan?: string | string[] }> } = {}) {
   const { locale, t } = await getI18n();
   const enabled = isBillingEnabled();
   const selling = enabled && isBillingSalesEnabled();
+  const featuredPlan = pulsoOfferPlan.safeParse((await searchParams)?.plan).data ?? "pro-v1";
   const amount = (cents: number) => new Intl.NumberFormat(locale, { style: "currency", currency: "BRL" }).format(cents / 100);
   const number = (value: number) => new Intl.NumberFormat(locale).format(value);
   const labels = {
@@ -40,7 +42,7 @@ export default async function PricingPage() {
         {selling ? <section className={styles.grid} aria-label={t("Pricing plans")}>
           {BILLING_PLAN_IDS.map(id => {
             const plan = BILLING_PLANS[id];
-            const featured = id === "pro-v1";
+            const featured = id === featuredPlan;
             const features = [
               t("Instagram accounts: {count}", { count: plan.accounts }),
               t("Team members: {count}", { count: plan.members }),
@@ -48,7 +50,7 @@ export default async function PricingPage() {
               t("Publications per period: {count}", { count: number(plan.publications) }),
               t("Storage included: {size}", { size: `${number(plan.storageBytes / 1_000_000_000)} GB` }),
             ];
-            return <article key={id} className={`${styles.card} ${featured ? styles.featured : ""}`}>
+            return <article key={id} id={`plan-${id}`} className={`${styles.card} ${featured ? styles.featured : ""}`}>
               <h2>{labels[id].title}</h2><p className={styles.audience}>{labels[id].audience}</p>
               <div className={styles.price}><strong>{amount(plan.amountCents)}</strong></div>
               <p>{t("{price} per month", { price: amount(plan.amountCents) })}</p>

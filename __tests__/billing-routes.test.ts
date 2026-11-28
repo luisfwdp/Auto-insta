@@ -46,6 +46,16 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
+it("passes only the cookie scoped to the owner's chosen plan into checkout creation", async () => {
+  vi.stubEnv("PULSO_CHECKOUT_ENABLED", "true");
+  const cookie = `pulso-offer-pro-v1=${otherId}`;
+  expect((await checkoutPOST(post("checkout", checkoutBody, { cookie }))).status).toBe(200);
+  expect(state.create).toHaveBeenCalledExactlyOnceWith("workspace-a", checkoutBody, undefined, { affiliateCode: undefined, offerReference: otherId });
+  state.create.mockClear();
+  expect((await checkoutPOST(post("checkout", { ...checkoutBody, offerReference: otherId }, { cookie }))).status).toBe(400);
+  expect(state.create).not.toHaveBeenCalled();
+});
+
 describe.each(routes)("billing %s route boundaries", (kind, POST, GET) => {
   it.each([undefined, "https://evil.example.test", "null"])("rejects untrusted/missing browser Origin %s before authentication or body parsing", async value => {
     const request = post(kind);
