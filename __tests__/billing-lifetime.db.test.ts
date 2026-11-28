@@ -56,8 +56,11 @@ describe.skipIf(!url)("administrative lifetime license and runtime RLS", () => {
       }
       await sql.query(source);
     }
-    admin = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, options: `-c search_path=${schema}` }, { schema }) });
-    state.db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, max: 10, options: `-c search_path=${schema} -c role=${backend}` }, { schema }), transactionOptions: { maxWait: 10000 } });
+    // The reviewed grant records UTC. A runtime connection can have a different time zone.
+    admin = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, options: `-c search_path=${schema} -c timezone=UTC` }, { schema }) });
+    state.db = new PrismaClient({ adapter: new PrismaPg({
+      connectionString: url, max: 10, options: `-c search_path=${schema} -c role=${backend} -c timezone=America/Sao_Paulo`,
+    }, { schema }), transactionOptions: { maxWait: 10000 } });
     await admin.user.createMany({ data: [{ id: "owner-a", email: "a@example.test" }, { id: "owner-b", email: "b@example.test" }] });
     await admin.workspace.createMany({ data: [{ id: "workspace-a", name: "A", ownerId: "owner-a" }, { id: "workspace-b", name: "B", ownerId: "owner-a" }, { id: "workspace-c", name: "C", ownerId: "owner-b" }] });
   });
@@ -142,6 +145,24 @@ describe.skipIf(!url)("administrative lifetime license and runtime RLS", () => {
     await admin.instagramAccount.create({ data: { workspaceId: "workspace-a", instagramId: "licensed-account", username: "licensed_fixture", accessToken: "fixture" } });
     await expect(withCommercialAccountCapacity("workspace-b", "trial-account", tx => tx.instagramAccount.create({ data: { workspaceId: "workspace-b", instagramId: "trial-account", username: "trial_fixture", accessToken: "fixture" } }))).resolves.toMatchObject({ workspaceId: "workspace-b" });
     await expect(withCommercialAccountCapacity("workspace-b", "extra-trial", async () => null)).rejects.toMatchObject({ code: "COMMERCIAL_ACCOUNT_LIMIT" });
+  });
+  it("rejects a future grant even when the database session is ahead of UTC", async () => {
+    await reserveCommercialUsage("workspace-a", "DM", "released-before-reschedule");
+    const bucket = await admin.commercialUsageBucket.findFirstOrThrow();
+    await admin.workspaceLifetimeAccess.update({ where: { workspaceId: "workspace-a" },
+      data: { grantedAt: new Date(Date.now() + 60 * 60_000) } });
+    await expect(reserveCommercialUsage("workspace-a", "DM", "future-grant")).rejects.toMatchObject({ code: "COMMERCIAL_ACCESS_REQUIRED" });
+    await sql.query("SET TIME ZONE 'Asia/Tokyo'");
+    try {
+      await asRole(backend, async () => {
+        await expect(sql.query(`INSERT INTO "CommercialUsageReservation"
+          (id,"workspaceId","bucketId",resource,"operationKey",amount,"updatedAt")
+          VALUES ($1,'workspace-a',$2,'DM','future-grant',1,CURRENT_TIMESTAMP)`, [randomUUID(), bucket.id]))
+          .rejects.toMatchObject({ code: "23514" });
+      });
+      expect((await sql.query<{ zone: string }>("SELECT current_setting('TimeZone') AS zone")).rows).toEqual([{ zone: "Asia/Tokyo" }]);
+    } finally { await sql.query("RESET TIME ZONE"); }
+    expect(await admin.commercialUsageReservation.count()).toBe(1);
   });
   it("rejects borrowing a licensed bucket from another workspace even for the same owner", async () => {
     await reserveCommercialUsage("workspace-a", "DM", "legitimate-binding");
