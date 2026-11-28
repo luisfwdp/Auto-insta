@@ -107,6 +107,7 @@ export async function reconcileButtonTaps(
     const directCampaigns = group.filter((campaign) =>
       isDirectMessageOnly(campaign) && !campaign.matchAnyWord && campaign.keywords.length > 0,
     );
+    const checkKeywordMessages = directCampaigns.length > 0 && ["recent", "full"].includes(mode);
 
     // Button title -> the campaigns on this account that send that button.
     const labels = new Map<string, Candidate[]>();
@@ -140,18 +141,19 @@ export async function reconcileButtonTaps(
       instagramAccountId: account.id,
       status: "SENT" as const,
     };
-    const pending = await prisma.dmLog.findFirst({
+    const recentPrompt = await prisma.dmLog.findFirst({
       where: { ...sentByAccount, automationId: { in: automationIds }, dmSentAt: { gte: promptedSince } },
       select: { id: true },
     });
-    if (!pending && !recentOnly && !directCampaigns.length) continue;
+    const pending = checkKeywordMessages || Boolean(recentPrompt);
+    if (!pending && !recentOnly) continue;
 
     let recovered = 0;
     let recoveredMessages = 0;
     const redis = getRedisConnection();
     const rateLimitKey = `button_tap_scan_rate_limit:${account.id}`;
     try {
-      if (!pending && !directCampaigns.length && !await redis.exists(recentButtonPromptKey(account.id))) continue;
+      if (!pending && !await redis.exists(recentButtonPromptKey(account.id))) continue;
       if (await redis.exists(rateLimitKey)) continue;
       const context = await createInstagramContext(account, `button-taps:${account.id}`);
       if (context.provider !== "META") continue;
@@ -160,7 +162,7 @@ export async function reconcileButtonTaps(
         context.accessToken, account.instagramId, {
           signal: AbortSignal.timeout(recentOnly ? RECENT_SCAN_TIMEOUT_MS : CONVERSATION_SCAN_TIMEOUT_MS),
           firstPageOnly: recentOnly,
-          ...(directCampaigns.length ? { includeMessageType: true } : {}),
+          ...(checkKeywordMessages ? { includeMessageType: true } : {}),
         },
       );
       for await (const conversation of conversations) {
@@ -171,7 +173,7 @@ export async function reconcileButtonTaps(
         if (!sentAt || Number.isNaN(sentAt.getTime()) || sentAt < since || sentAt > now) continue;
         const candidates = labels.get(normalize(message.message));
         const messageText = message.message;
-        const isKeywordMessage = !candidates?.length && messageText?.trim()
+        const isKeywordMessage = checkKeywordMessages && !candidates?.length && messageText?.trim()
           && !message.story && !message.is_unsupported
           && now.getTime() - sentAt.getTime() <= DIRECT_MESSAGE_LOOKBACK_MS
           && directCampaigns.some((campaign) => sentAt >= campaign.updatedAt
